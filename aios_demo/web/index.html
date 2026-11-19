@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Order intake | SME AIOS</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="shell">
+    <div class="wrap top">
+      <span class="brand"><span class="mark" aria-hidden="true">A.</span> SME AIOS</span>
+      <span class="top-label">Wholesale operations</span>
+      <span class="environment"><i></i> Local demo</span>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="heading">
+      <div><div class="crumb">Operations <span>/</span> Orders</div>
+        <h1>Order intake</h1>
+        <p>Read the source, resolve exceptions, and verify the ERP draft.</p>
+      </div>
+      <div class="scenarios" aria-label="Sample scenarios">
+        <button type="button" data-sample="standard" aria-pressed="true">Standard PO</button>
+        <button type="button" data-sample="review" aria-pressed="false">Quantity conflict</button>
+      </div>
+    </div>
+
+    <div id="message" role="status" aria-live="polite" hidden></div>
+
+    <div class="workspace">
+      <section class="panel source" aria-labelledby="source-title">
+        <header class="panel-head">
+          <div>
+            <h2 id="source-title">Source document</h2>
+            <span class="muted">Synthetic purchase order · Page 1</span>
+          </div>
+          <span class="tag" id="source-status">Loading</span>
+        </header>
+        <div class="page-area">
+          <div class="page"><img id="source" alt="Synthetic purchase order" width="1200" height="940">
+            <div id="bbox" hidden></div>
+          </div>
+        </div>
+        <footer><span>Evidence region</span><strong id="active-field">—</strong></footer>
+      </section>
+      <section class="panel fields" aria-labelledby="fields-title">
+        <header class="panel-head">
+          <div><h2 id="fields-title">Field evidence</h2><span class="muted" id="reader-mode">Running local OCR…</span></div>
+          <span class="tag" id="decision">Reading</span>
+        </header>
+        <div id="fields"></div>
+        <div id="review" hidden></div>
+        <div id="preview" hidden></div>
+      </section>
+    </div>
+
+    <section class="panel ledger" aria-labelledby="ledger-title">
+      <header class="panel-head">
+        <div><h2 id="ledger-title">ERP write ledger</h2><span class="muted" id="ledger-context">Approval creates a durable outbox job.</span></div>
+        <div class="ledger-right"><span class="tag" id="command-state">Waiting for approval</span><button id="tick" class="secondary" disabled>Run worker step</button></div>
+      </header>
+      <div id="events" class="events"></div>
+    </section>
+  </main>
+</body>
+</html>
