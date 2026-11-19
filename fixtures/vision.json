@@ -1,0 +1,23 @@
+{
+  "common": {
+    "buyer": "HBR-47",
+    "delivery": "2026-11-25",
+    "currency": "HKD",
+    "total": "804.00",
+    "line.1.sku": "TEA-24",
+    "line.1.quantity": "2",
+    "line.1.unit": "CASE",
+    "line.1.unit_price": "240.00",
+    "line.1.amount": "480.00",
+    "line.2.sku": "SODA-12",
+    "line.2.quantity": "3",
+    "line.2.unit": "CASE",
+    "line.2.unit_price": "108.00",
+    "line.2.amount": "324.00"
+  },
+  "orders": {
+    "harbour-po.png": {"po": "PO-1042"},
+    "harbour-review.png": {"po": "PO-1043", "line.1.quantity": "8"}
+  },
+  "second": {"line.1.quantity": "2"}
+}
