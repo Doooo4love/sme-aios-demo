@@ -2,7 +2,7 @@
 
 An auditable prototype that turns a wholesale customer's purchase order into a verified sales-order draft. The reviewer handles only disputed fields. The outbox preserves the approved draft and lets a separate worker resolve ambiguous ERP responses.
 
-![Real OCR execution evidence with extracted fields and the image region for quantity](docs/images/01-extracted-fields.png)
+![Live workbench run with Tesseract OCR, field evidence and draft preview](docs/browser/01-extracted-fields.png)
 
 ## A two-minute demo
 
@@ -12,9 +12,9 @@ An auditable prototype that turns a wholesale customer's purchase order into a v
 
 | Exception review | ERP reconciliation |
 |---|---|
-| [View execution evidence](docs/images/02-quantity-review.png) | [View execution evidence](docs/images/03-erp-reconciliation.png) |
+| [View browser screenshot](docs/browser/02-quantity-review.png) | [View browser screenshot](docs/browser/03-erp-reconciliation.png) |
 
-The images above are rendered from a local execution of the repository code. The [verification workflow](.github/workflows/demo.yml) also captures the interactive browser flow via Playwright. See [the demo guide](docs/demo.md) for the operator script and interpretation.
+The images above are actual screenshots of the running workbench. The [verification workflow](.github/workflows/demo.yml) captured them in [GitHub Actions run #2](https://github.com/Doooo4love/sme-aios-demo/actions/runs/44605802929). Separately, [pitch evidence cards](docs/images/) are rendered from a local execution. See [the demo guide](docs/demo.md) for the operator script and interpretation.
 
 ## Run locally
 
