@@ -41,7 +41,10 @@ jobs:
         run: python -m unittest discover -s tests -p test_demo.py -v
       - name: Capture the live browser journey
         run: |
-          python -m playwright install --with-deps chromium
+          export CHROMIUM_BIN="$(command -v google-chrome || command -v chromium || true)"
+          if [ -z "$CHROMIUM_BIN" ]; then
+            python -m playwright install --with-deps chromium
+          fi
           export AIOS_STATE_DIR="$(mktemp -d)"
           python -m uvicorn aios_demo.api:app --host 127.0.0.1 --port 8758 > /tmp/aios-server.log 2>&1 &
           app_pid=$!
