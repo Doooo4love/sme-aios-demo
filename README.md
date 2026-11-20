@@ -2,7 +2,7 @@
 
 A working prototype for wholesale purchase-order intake. Upload a purchase-order image, examine field-level evidence, review exceptions, approve a sales-order draft, and verify it in the mock ERP. The inbox preserves the document, reviewed preview, and command so the workflow can resume after refresh or restart.
 
-![Live workbench run with Tesseract OCR, field evidence and draft preview](docs/browser/01-extracted-fields.png)
+![Current workbench showing a local upload, the intake inbox, OCR evidence and the draft preview](docs/browser/04-upload-and-inbox.png)
 
 ## A two-minute demo
 
@@ -15,7 +15,7 @@ A working prototype for wholesale purchase-order intake. Upload a purchase-order
 |---|---|
 | [View browser screenshot](docs/browser/02-quantity-review.png) | [View browser screenshot](docs/browser/03-erp-reconciliation.png) |
 
-The screenshots above show the original pitch walkthrough. The [verification workflow](.github/workflows/demo.yml) also captures the current upload and inbox screen. See the [demo guide](docs/demo.md) for the operator script.
+The upload and inbox screen was captured from the [verified browser run](https://github.com/Doooo4love/sme-aios-demo/actions/runs/44757111231). The two linked images show the original review and reconciliation walkthrough. See the [demo guide](docs/demo.md) for the operator script.
 
 ## Run locally
 
