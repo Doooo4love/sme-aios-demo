@@ -135,3 +135,14 @@ GRANT SELECT, INSERT ON aios_assurance_head, aios_assurance_review TO aios_api;
 GRANT INSERT ON aios_assurance_audit TO aios_api;
 GRANT UPDATE (tip_seq, tip_hash) ON aios_assurance_head TO aios_api;
 GRANT UPDATE (state, decisions) ON aios_assurance_review TO aios_api;
+
+ALTER TABLE aios_assurance_attempt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_assurance_attempt FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_assurance_tenant ON aios_assurance_attempt;
+CREATE POLICY aios_assurance_tenant ON aios_assurance_attempt TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+REVOKE ALL ON aios_assurance_attempt FROM PUBLIC, aios_worker, aios_api;
+GRANT SELECT, INSERT ON aios_assurance_attempt TO aios_api;
+GRANT UPDATE (run_id, started_at, expires_at, state) ON aios_assurance_attempt TO aios_api;
