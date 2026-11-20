@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 import unittest
 from unittest.mock import patch
 
@@ -182,6 +183,134 @@ class PlatformTests(unittest.TestCase):
         service = self.assurance(invoke=lambda *_: self.fail("Denied evidence must not leave"), restrictions=restrictions)
         with TestClient(build_app(self.runtime, self.identity, DemoPlanner(), assurance=service)) as client:
             self.assertEqual(client.post(endpoint, headers=headers, json={"client_id": "hidden"}).status_code, 422)
+
+    def test_assurance_concurrent_replay_keeps_provider_ownership(self):
+        entered, release = Event(), Event()
+        seen = []
+
+        def invoke(_payload, run_id):
+            seen.append(run_id)
+            entered.set()
+            if not release.wait(10):
+                raise TimeoutError("test did not release the adapter")
+            return b'{"finding_codes":[]}'
+
+        service = self.assurance(invoke=invoke)
+        endpoint = "/v1/assurance/cases/PO-100/reviews"
+        headers, body = self.auth("operator"), {"client_id": "one-dispatch"}
+        with TestClient(build_app(self.runtime, self.identity, DemoPlanner(), assurance=service)) as client:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pending = pool.submit(client.post, endpoint, headers=headers, json=body)
+                try:
+                    self.assertTrue(entered.wait(5))
+                    overlap = client.post(endpoint, headers=headers, json=body)
+                    self.assertEqual(overlap.status_code, 409)
+                    self.assertEqual(overlap.json()["detail"]["code"], "REVIEW_IN_PROGRESS")
+                    self.assertEqual(overlap.headers["Retry-After"], "2")
+                    changed = client.post(endpoint, headers=headers, json={**body, "instruction": "预审"})
+                    self.assertEqual(changed.json()["detail"]["code"], "REVIEW_REQUEST_CONFLICT")
+                    with patch("aios_platform.assurance.time", return_value=time.time() + 121):
+                        unknown = client.post(endpoint, headers=headers, json=body)
+                    self.assertEqual(unknown.json()["detail"]["code"], "REVIEW_OUTCOME_UNKNOWN")
+                    self.assertNotIn("Retry-After", unknown.headers)
+                finally:
+                    release.set()
+                final = pending.result(timeout=10)
+            self.assertEqual(final.status_code, 201, final.text)
+            self.assertEqual(client.post(endpoint, headers=headers, json=body).json(), final.json())
+        self.assertEqual(seen, [final.json()["run_id"]])
+
+    def test_assurance_only_retries_a_known_predispatch_denial(self):
+        seen = []
+
+        def invoke(_payload, run_id):
+            seen.append(run_id)
+            raise TimeoutError("simulated response lost")
+
+        service = self.assurance(invoke=invoke)
+        endpoint = "/v1/assurance/cases/PO-100/reviews"
+        headers, body = self.auth("operator"), {"client_id": "budget"}
+        with TestClient(build_app(self.runtime, self.identity, DemoPlanner(), assurance=service)) as client:
+            with patch.object(service.workflow, "take_planner_budget", return_value=False):
+                denied = client.post(endpoint, headers=headers, json=body)
+            self.assertEqual(denied.status_code, 429)
+            self.assertEqual(denied.headers["Retry-After"], "60")
+            self.assertEqual(seen, [])
+            timeout = client.post(endpoint, headers=headers, json=body)
+            self.assertEqual(timeout.json()["detail"]["code"], "MODEL_UNAVAILABLE")
+            replay = client.post(endpoint, headers=headers, json=body)
+            self.assertEqual(replay.json()["detail"]["code"], "REVIEW_ATTEMPT_FAILED")
+        self.assertEqual(len(seen), 1)
+
+    def test_assurance_expiry_and_audit_rollback(self):
+        service = self.assurance()
+        endpoint = "/v1/assurance/cases/PO-100/reviews"
+        headers, body = self.auth("operator"), {"client_id": "atomic"}
+        with TestClient(build_app(self.runtime, self.identity, DemoPlanner(), assurance=service),
+                        raise_server_exceptions=False) as client:
+            with patch.object(service.audit, "append", side_effect=RuntimeError("signer unavailable")):
+                self.assertEqual(client.post(endpoint, headers=headers, json=body).status_code, 500)
+            self.assertEqual(client.get(endpoint, headers=headers).json()["items"], [])
+            saved = client.post(endpoint, headers=headers, json=body)
+            self.assertEqual(saved.status_code, 201, saved.text)
+            review = saved.json()
+            path = "/v1/assurance/reviews/" + review["id"]
+            approve = {"track": "procurement", "action": "approve", "snapshot": review["snapshot"]}
+            with patch.object(service.audit, "append", side_effect=RuntimeError("signer unavailable")):
+                approval = client.post(path + "/decisions", headers=self.auth("manager"), json=approve)
+                self.assertEqual(approval.status_code, 500)
+            self.assertEqual(client.get(path, headers=headers).json()["decisions"], {})
+            with patch("aios_platform.assurance.time", return_value=review["expires_at"]):
+                self.assertTrue(client.get(path, headers=headers).json()["expired"])
+                rejected = client.post(path + "/decisions", headers=self.auth("manager"), json=approve)
+                self.assertEqual(rejected.status_code, 409)
+                self.assertEqual(rejected.json()["detail"]["code"], "REVIEW_EXPIRED")
+            with service.workflow.tx("harbour") as run:
+                run("DELETE FROM aios_assurance_attempt WHERE tenant = ? AND id = ?", ("harbour", review["id"]))
+            legacy = client.get(path, headers=headers).json()
+            self.assertIsNone(legacy["expires_at"])
+            self.assertTrue(legacy["expired"])
+            self.assertEqual(service.audit.checkpoint("harbour")["seq"], 1)
+
+    def test_assurance_storage_lock_returns_retry_after(self):
+        service = self.assurance()
+        endpoint = "/v1/assurance/cases/PO-100/reviews"
+        headers = self.auth("operator")
+        with TestClient(build_app(self.runtime, self.identity, DemoPlanner(), assurance=service)) as client:
+            with service.workflow.tx("harbour") as run:
+                # PostgreSQL locks the audit row. SQLite's write transaction locks the writer.
+                run("INSERT INTO aios_assurance_head VALUES (?, ?, ?)", ("harbour", 0, "0" * 64))
+                busy = client.post(endpoint, headers=headers, json={"client_id": "lock-test"})
+                self.assertEqual(busy.status_code, 503, busy.text)
+                self.assertEqual(busy.json()["detail"]["code"], "STORAGE_UNAVAILABLE")
+                self.assertEqual(busy.headers["Retry-After"], "2")
+            final = client.post(endpoint, headers=headers, json={"client_id": "lock-test"})
+            self.assertEqual(final.status_code, 201, final.text)
+            self.assertEqual(service.audit.checkpoint("harbour")["seq"], 1)
+
+    def test_assurance_bounds_source_concurrency_and_recovers(self):
+        service = self.assurance()
+        entered, release = Event(), Event()
+        endpoint, headers = "/v1/assurance/cases/PO-100", self.auth("operator")
+
+        def unavailable(*args):
+            entered.set()
+            release.wait(10)
+            raise TimeoutError("source connection timed out")
+
+        app = build_app(self.runtime, self.identity, DemoPlanner(), assurance=service, assurance_concurrency=1)
+        with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as pool:
+            with patch.object(service.source, "get", side_effect=unavailable):
+                first = pool.submit(client.get, endpoint, headers=headers)
+                try:
+                    self.assertTrue(entered.wait(5))
+                    busy = client.get(endpoint, headers=headers)
+                    self.assertEqual(busy.status_code, 503)
+                    self.assertEqual(busy.json()["detail"]["code"], "ASSURANCE_OVERLOADED")
+                finally:
+                    release.set()
+                self.assertEqual(first.result(timeout=10).json()["detail"]["code"], "ASSURANCE_SOURCE_UNAVAILABLE")
+            self.assertEqual(client.get(endpoint, headers=headers).json()["id"], "PO-100")
 
     def auth(self, actor):
         return {"Authorization": f"Bearer {self.secret}.{actor}"}
@@ -684,12 +813,21 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual(draft.status_code, 201, draft.text)
             checkpoint = client.get("/v1/assurance/audit/checkpoint", headers=self.auth("admin"))
             self.assertEqual(checkpoint.json()["seq"], 1)
+            review = draft.json()
+            decision = client.post(f"/v1/assurance/reviews/{review['id']}/decisions", headers=self.auth("manager"),
+                                   json={"track": "procurement", "action": "approve", "snapshot": review["snapshot"]})
+            self.assertEqual(decision.status_code, 200, decision.text)
             with api.tx("harbour") as run:
                 privileges = run("""SELECT has_table_privilege('aios_assurance_audit', 'SELECT, UPDATE, DELETE')
                                     AS can_mutate_or_read""").fetchone()
                 self.assertFalse(privileges["can_mutate_or_read"])
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_assurance_attempt").fetchone()["n"], 1)
+            with api.tx("island", write=False) as run:
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_assurance_attempt").fetchone()["n"], 0)
             with worker.tx("harbour", write=False) as run:
                 self.assertFalse(run("SELECT has_table_privilege('aios_assurance_audit', 'INSERT') AS allowed")
+                                 .fetchone()["allowed"])
+                self.assertFalse(run("SELECT has_any_column_privilege('aios_assurance_attempt', 'SELECT, UPDATE') AS allowed")
                                  .fetchone()["allowed"])
             request = {"orders": [self.wholesale_order()]}
             headers = self.auth("operator")

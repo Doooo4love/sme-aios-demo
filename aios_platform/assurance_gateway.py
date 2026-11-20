@@ -21,9 +21,10 @@ SUSPECT = re.compile(r"ignore (previous|all)|system prompt|reveal|bypass|忽略.
 
 
 class GateFailure(ValueError):
-    def __init__(self, code: str, status: int):
+    def __init__(self, code: str, status: int, *, retry_after: int | None = None, run_id: str | None = None):
         super().__init__(code)
-        self.code, self.status = code, status
+        self.code, self.status, self.retry_after = code, status, retry_after
+        self.run_id = run_id
 
 
 @dataclass(frozen=True)
@@ -67,9 +68,9 @@ class ReviewGateway:
             raise GateFailure("ZONE_MISMATCH", 403)
         if self.provider is None:
             return []
-        if not self.audit.workflow.take_planner_budget(actor.tenant, self.planner_limit):
+        if not self.audit.workflow.take_planner_budget(actor.tenant, self.planner_limit, bounded=True):
             self.audit.append(actor, run_id, "MODEL_BUDGET_BLOCKED", b"{}")
-            raise GateFailure("MODEL_BUDGET_EXHAUSTED", 429)
+            raise GateFailure("MODEL_BUDGET_EXHAUSTED", 429, retry_after=60)
         prompt = canonical({
             "task": "identify_review_findings", "kind": case.kind, "facts": facts,
             "allowed_findings": sorted(FINDINGS[case.kind]), "policy": SCHEMA_VERSION,

@@ -18,9 +18,10 @@ def verify_database(database: Database, *, worker: bool):
               AND c.relname IN ('aios_intake', 'aios_proposal', 'aios_audit',
                   'aios_request_key', 'aios_write_control', 'aios_suspension', 'aios_planner_budget',
                   'aios_chat_room', 'aios_chat_member', 'aios_chat_message',
-                  'aios_assurance_head', 'aios_assurance_audit', 'aios_assurance_review')
+                  'aios_assurance_head', 'aios_assurance_audit', 'aios_assurance_review',
+                  'aios_assurance_attempt')
         """).fetchall()
-        if len(tables) != 13 or any(row["owner_member"] or not row["relrowsecurity"]
+        if len(tables) != 14 or any(row["owner_member"] or not row["relrowsecurity"]
                                 or not row["relforcerowsecurity"] for row in tables):
             raise RuntimeError("Apply platform migrations and forced row-level security as the migration owner")
         privileges = run("""
@@ -33,15 +34,29 @@ def verify_database(database: Database, *, worker: bool):
                    has_table_privilege('aios_chat_message', 'UPDATE, DELETE, TRUNCATE') AS chat_mutable,
                    has_table_privilege('aios_assurance_audit', 'SELECT, UPDATE, DELETE, TRUNCATE') AS audit_disclosed,
                    has_table_privilege('aios_assurance_audit', 'INSERT') AS audit_append,
-                   has_table_privilege('aios_assurance_review', 'SELECT') AS assurance_read
+                   has_table_privilege('aios_assurance_review', 'SELECT') AS assurance_read,
+                   has_any_column_privilege('aios_assurance_attempt', 'SELECT, INSERT, UPDATE, REFERENCES')
+                       OR has_table_privilege('aios_assurance_attempt', 'DELETE, TRUNCATE, TRIGGER') AS attempt_access,
+                   has_table_privilege('aios_assurance_attempt', 'SELECT') AS attempt_read,
+                   has_table_privilege('aios_assurance_attempt', 'INSERT') AS attempt_insert,
+                   has_column_privilege('aios_assurance_attempt', 'run_id', 'UPDATE')
+                       AND has_column_privilege('aios_assurance_attempt', 'started_at', 'UPDATE')
+                       AND has_column_privilege('aios_assurance_attempt', 'expires_at', 'UPDATE')
+                       AND has_column_privilege('aios_assurance_attempt', 'state', 'UPDATE') AS attempt_transition,
+                   has_table_privilege('aios_assurance_attempt', 'DELETE, TRUNCATE, TRIGGER')
+                       OR has_column_privilege('aios_assurance_attempt', 'tenant', 'UPDATE')
+                       OR has_column_privilege('aios_assurance_attempt', 'id', 'UPDATE')
+                       OR has_column_privilege('aios_assurance_attempt', 'binding', 'UPDATE') AS attempt_mutable_key
         """).fetchone()
         if privileges["audit_mutable"] or privileges["chat_mutable"] or privileges["audit_disclosed"] or (
             worker and (privileges["can_propose"] or privileges["can_change_pause"]
                         or privileges["can_read_intakes"] or privileges["can_read_chat"]
-                        or privileges["audit_append"] or privileges["assurance_read"]
+                        or privileges["audit_append"] or privileges["assurance_read"] or privileges["attempt_access"]
                         or not privileges["receipt_writable"])
         ) or (not worker and (not privileges["can_propose"] or not privileges["can_change_pause"]
                              or privileges["receipt_writable"] or not privileges["can_read_intakes"]
                              or not privileges["can_read_chat"] or not privileges["audit_append"]
-                             or not privileges["assurance_read"])):
+                             or not privileges["assurance_read"] or not privileges["attempt_read"]
+                             or not privileges["attempt_insert"] or not privileges["attempt_transition"]
+                             or privileges["attempt_mutable_key"])):
             raise RuntimeError("Platform PostgreSQL grants do not match API/worker separation")

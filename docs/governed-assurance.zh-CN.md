@@ -64,7 +64,7 @@ flowchart TB
 |---|---|
 | 预审案件 | `GET /v1/assurance/cases/{reference}`，只显示返回字段。区分证据、规则发现、模型建议和人工决定。来源没有返回的字段按不可用处理 |
 | 发起预审 | `POST /v1/assurance/cases/{reference}/reviews`，提交 `client_id` 和可选受控 `instruction`。重复提交沿用同一 ID，源版本或指令变化使用新 ID。查看案件历史用同一路径 GET，按 `next` 继续 |
-| 审批轨道 | `GET /v1/assurance/reviews/{id}` 展示 `tracks, decisions, state, stale, snapshot`。提交 `POST /v1/assurance/reviews/{id}/decisions`，JSON 为 `track, action, snapshot`。409 刷新或重开，403 表示缺轨道权限，`HELD` 显示处置原因 |
+| 审批轨道 | `GET /v1/assurance/reviews/{id}` 展示 `tracks, decisions, state, stale, snapshot, expires_at, expired`。提交 `POST /v1/assurance/reviews/{id}/decisions`，JSON 为 `track, action, snapshot`。源版本变化或过期时禁用新审批，403 显示权限提示，`HELD` 显示处置原因 |
 | 治理与审计 | 审计员调用 `GET /v1/assurance/audit/checkpoint`，界面显示序号、摘要、签名和密钥 ID。独立归档端保存检查点。前端不下载审计正文，不显示未经核实的“不可篡改”状态 |
 | 建模和运行状态 | 第一版允许管理员导入 CLI 生成的草案进行字段分类与对照。部署审批、目录映射和草案发布 API 需后续实现。界面区分未配置、已注册、已验收，不静默降级到外网 |
 
@@ -86,9 +86,33 @@ python -m uvicorn aios_platform.api:create_app --factory --host 127.0.0.1 --port
 
 用演示 Bearer `$AIOS_DEMO_SECRET.operator` 发起 `PO-100`、`QA-200`、`CT-300`。采购用 `manager` 与 `finance` 分轨，来料用 `quality`，合同用 `legal`，审计检查点用 `admin`。只读建模可用 `python -m aios_platform.assurance_catalog --template procurement --openapi source.json`；数据库从专用 `AIOS_DISCOVERY_DSN` 环境变量取连接，要求 `--table` 白名单；Excel 试验用 `--csv-headers headers.csv`。签名验证由独立身份取按序 JSON Lines（`seq,envelope,digest,signature`），运行 `python -m aios_platform.assurance_audit verify TENANT --ledger ledger.jsonl --checkpoint checkpoint.json --public-key public.json`。公钥必须从可信配置取得。
 
+## 异常恢复与并发压力
+
+`client_id` 按租户、案件和申请人隔离。一次提交期间保留该 ID，重试时原样提交。已完成请求的重试返回 `201` 和原预审记录。`expires_at` 为 Unix 秒，是否接受新审批由服务端的 `expired` 决定。迁移前缺少可信有效期的待审批、待处置记录按已过期处理，已经完成的决定仍可查。无模型模式把规则预审结果与签名事件一起提交。将来绑定模型时，先持久化调用归属，模型输入完成审计后才发送。
+
+| HTTP 状态与 `detail.code` | 前端与值班操作 |
+|---|---|
+| `409 REVIEW_IN_PROGRESS` | 显示处理中。以原请求和原 ID 按 `Retry-After` 加少量随机延迟重试，限制重试时长。 |
+| `409 REVIEW_OUTCOME_UNKNOWN` 或 `REVIEW_ATTEMPT_FAILED` | 转人工核查。把 `detail.run_id`、`X-Request-ID` 和案件号交给值班人员。先查签名审计与模型服务回执，再决定能否发起替代预审。没有回执时，结果仍待确认。 |
+| `409 REVIEW_REQUEST_CONFLICT`、`REVIEW_SNAPSHOT_CONFLICT`、`REVIEW_SOURCE_CHANGED`、`REVIEW_EXPIRED` | 刷新证据并说明原因。员工确认后可为过期或已变化的证据重新发起预审。历史决定继续绑定原快照。 |
+| `429 MODEL_BUDGET_EXHAUSTED` | 模型尚未调用。沿用原 ID，按 `Retry-After` 加随机延迟重试。 |
+| `503 ASSURANCE_OVERLOADED`、`ASSURANCE_SOURCE_UNAVAILABLE` 或 `STORAGE_UNAVAILABLE` | 保留输入与原 ID，按 `Retry-After` 有限退避。持续故障期间转只读或人工处理。 |
+| `502 MODEL_OUTPUT_BLOCKED` 或 `503 MODEL_UNAVAILABLE` | 保留关联 ID，转人工核查。模型故障可能发生在请求已发出之后。 |
+
+每个 API 进程默认同时处理八个预审相关请求（`AIOS_ASSURANCE_CONCURRENCY`，范围 1–32）。PostgreSQL 预审事务的锁等待上限为 1.5 秒，单语句上限为五秒。DSN 未指定超时时，PostgreSQL 默认对每个主机限定五秒连接时间。SQLite 演示中同类操作的锁等待为 0.5 秒。模型调用超过 120 秒未完成时，重复提交会报告 `REVIEW_OUTCOME_UNKNOWN`，原调用保留归属。无模型演示的审批有效期默认为 3,600 秒（`AIOS_ASSURANCE_REVIEW_TTL`，范围 1–86,400）。生产绑定需按负载配置审批有效期和连接器 I/O 时限。各时限作用于不同环节。[PostgreSQL 客户端超时](https://www.postgresql.org/docs/current/runtime-config-client.html) · [重试和随机退避](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/)
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m unittest discover -s tests -v
+python scripts/assurance_load.py --clients 16 --reviews 100
+```
+
+压测使用合成数据和本地规则。每个 ID 在突发阶段提交两次，脚本报告延迟和限流情况，恢复阶段验证每个 ID 仅有一份预审结果和一条有效签名事件。用临时 PostgreSQL 数据库设置 `AIOS_PLATFORM_TEST_DSN`，执行 `test_platform.py` 验证实际行锁和角色分离。部署新 API 前由迁移角色执行 Alembic 至 `0006_assurance_runtime`，再应用 `deploy/platform/postgres-security.sql`。旧的待审批或待处置记录需要重新发起预审。
+
 ## 首客验收缺口
 
 1. 提供首个站点的脱敏采购单、来料抽检和合同条款样例，绑定已有系统记录、角色与工厂映射、币种／质量／责任规则和历史人工结果。
 2. 确认客户源系统 API／数据库的只读账户与沙盒，挑选允许写入的动作、版本和外部幂等回执。只读影子先验证闭环；上线窗口由客户授权及连接复杂度决定。
 3. 签署安全域、字段与模型用途、保留和密钥责任。选定客户内本地模型与专用模型进程，验证拒绝出区、提示词和附件攻击、签名检查点及跨厂断链行为。
 4. 执行客户侧验收，覆盖身份撤销、隐藏字段推断、源表漂移、跨站点黑名单、重复事件、陈旧或失败审批、外部写入回执、备份恢复。真实采购、制造、合同、报销及 HR 规则逐项签署，禁止把模板草案直接发布为权限或可执行流程。
+5. 在目标部署验证租户限流、连接池容量、工作进程并发、审计留存和独立检查点。演练多进程流量突发、数据库恢复和故障转移、签名失败、时钟偏差。用有人工作业结果的历史样本测自动处理覆盖率、人工异常率、节省时间和误批率，再订服务指标。确认 ERP 支持条件写入和回执，接入有独立验收的适配器后才能按内部审批结果更新源系统。

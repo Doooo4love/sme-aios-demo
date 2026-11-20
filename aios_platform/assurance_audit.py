@@ -51,7 +51,7 @@ class SignedAudit:
     def append(self, actor, run_id: str, event: str, payload: bytes, *, transaction=None):
         if transaction is not None:
             return self._append(transaction, actor, run_id, event, payload)
-        with self.workflow.tx(actor.tenant) as run:
+        with self.workflow.tx(actor.tenant, bounded=True) as run:
             return self._append(run, actor, run_id, event, payload)
 
     def _append(self, run, actor, run_id: str, event: str, payload: bytes):
@@ -75,7 +75,7 @@ class SignedAudit:
         return {"seq": header["seq"], "hash": digest}
 
     def checkpoint(self, tenant: str) -> dict:
-        with self.workflow.tx(tenant, write=False) as run:
+        with self.workflow.tx(tenant, write=False, bounded=True) as run:
             tip = run("SELECT tip_seq, tip_hash FROM aios_assurance_head WHERE tenant = ?", (tenant,)).fetchone()
         body = {"type": "aios-assurance-checkpoint-v1", "tenant": tenant,
                 "seq": tip["tip_seq"] if tip else 0, "hash": tip["tip_hash"] if tip else GENESIS,
