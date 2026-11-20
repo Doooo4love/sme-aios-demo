@@ -1,0 +1,19 @@
+{
+  "harbour": {
+    "ocr_template": "demo-wholesale-v1",
+    "warehouses": {
+      "HK01": {"legal_entity": "HK01", "max_total": {"HKD": "50000.00"}},
+      "HK02": {"legal_entity": "HK02", "max_total": {"HKD": "25000.00"}}
+    },
+    "catalogue": [
+      {"buyer": "HBR-47", "sku": "TEA-24", "unit": "CASE", "erp_sku": "SKU-1028", "erp_unit": "EACH", "units_per_pack": 24},
+      {"buyer": "HBR-47", "sku": "SODA-12", "unit": "CASE", "erp_sku": "SKU-1092", "erp_unit": "EACH", "units_per_pack": 12}
+    ]
+  },
+  "island": {
+    "warehouses": {"HK01": {"legal_entity": "ISL", "max_total": {"HKD": "10000.00"}}},
+    "catalogue": [
+      {"buyer": "ISL-10", "sku": "SHIP-BOX", "unit": "PACK", "erp_sku": "BOX-SM", "erp_unit": "EACH", "units_per_pack": 6}
+    ]
+  }
+}

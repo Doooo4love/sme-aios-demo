@@ -1,0 +1,33 @@
+[Unit]
+Description=AIOS approved ERP outbox worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aios-worker
+Group=aios-worker
+WorkingDirectory=/opt/aios
+Environment=AIOS_PROFILE=oidc
+EnvironmentFile=/etc/aios/platform.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+LoadCredential=database-dsn:/etc/aios/secrets/worker-dsn
+LoadCredential=erp-key:/etc/aios/secrets/erp-write
+Environment=AIOS_PLATFORM_DSN_FILE=%d/database-dsn
+Environment=AIOS_ERP_WRITE_CREDENTIAL_FILE=%d/erp-key
+ExecStart=/opt/aios/.venv/bin/python -m aios_platform.run_worker
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
