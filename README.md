@@ -18,6 +18,8 @@ python scripts/platform_smoke.py
 Read the [backend architecture and ERP bridge contract](docs/platform.en.md) for tenant configuration,
 Linux and PostgreSQL isolation, API usage, LLM options and the customer onboarding checklist. The [production hardening guide](docs/production-readiness.en.md) covers migrations, controls and release gates. The [pilot automation guide](docs/pilot-automation.md) describes bulk intake and approval, exception handling, and reproducible performance measurements.
 
+Read the [enterprise workbench and frontend handoff](docs/workbench-handoff.md) for role-scoped tools, employee chat, and customer integration gates.
+
 ![Current workbench showing a local upload, the intake inbox, OCR evidence and the draft preview](docs/browser/04-upload-and-inbox.png)
 
 ## A two-minute demo

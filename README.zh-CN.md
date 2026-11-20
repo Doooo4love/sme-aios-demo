@@ -15,6 +15,8 @@ python scripts/platform_smoke.py
 
 [后端架构及 ERP 合同](docs/platform.md)涵盖租户配置、Linux 和 PostgreSQL 隔离、API、模型与客户接入。[生产加固指南](docs/production-readiness.md)涵盖迁移、操作控制和上线条件。[试点自动化指南](docs/pilot-automation.zh-CN.md)说明批量接单、审批、异常处理和可复现的效率测试。
 
+[企业工作台与前端交接](docs/workbench-handoff.zh-CN.md)包含岗位工具、员工聊天及生产接入边界。
+
 ![采购单工作台、收件箱、OCR 证据和草稿预览](docs/browser/04-upload-and-inbox.png)
 
 ## 两分钟演示
