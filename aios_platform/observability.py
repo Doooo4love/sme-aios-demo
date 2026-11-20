@@ -12,7 +12,9 @@ from starlette.responses import JSONResponse
 LOG = logging.getLogger("aios.platform")
 JSON_LIMIT = 65_536
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
-BOUNDED_JSON_PATHS = ("/v1/actions", "/v1/intakes/", "/v1/proposals/", "/v1/operations/")
+BOUNDED_JSON_PATHS = (
+    "/v1/actions", "/v1/intakes/", "/v1/proposals/", "/v1/operations/", "/v1/workbench/", "/v1/chat/",
+)
 
 
 class RequestEnvelope:
@@ -34,8 +36,11 @@ class RequestEnvelope:
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message["status"]
-                message = {**message, "headers": [*message.get("headers", []),
-                                                  (b"x-request-id", request_id.encode())]}
+                headers = [*message.get("headers", []), (b"x-request-id", request_id.encode())]
+                if raw_path.startswith("/v1/"):
+                    headers = [(name, value) for name, value in headers if name != b"cache-control"]
+                    headers.append((b"cache-control", b"no-store"))
+                message = {**message, "headers": headers}
             await send(message)
 
         try:

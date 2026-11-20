@@ -16,9 +16,10 @@ def verify_database(database: Database, *, worker: bool):
             FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
             WHERE n.nspname = current_schema()
               AND c.relname IN ('aios_intake', 'aios_proposal', 'aios_audit',
-                  'aios_request_key', 'aios_write_control', 'aios_suspension', 'aios_planner_budget')
+                  'aios_request_key', 'aios_write_control', 'aios_suspension', 'aios_planner_budget',
+                  'aios_chat_room', 'aios_chat_member', 'aios_chat_message')
         """).fetchall()
-        if len(tables) != 7 or any(row["owner_member"] or not row["relrowsecurity"]
+        if len(tables) != 10 or any(row["owner_member"] or not row["relrowsecurity"]
                                 or not row["relforcerowsecurity"] for row in tables):
             raise RuntimeError("Apply platform migrations and forced row-level security as the migration owner")
         privileges = run("""
@@ -26,11 +27,15 @@ def verify_database(database: Database, *, worker: bool):
                    has_column_privilege('aios_proposal', 'receipt', 'UPDATE') AS receipt_writable,
                    has_table_privilege('aios_proposal', 'INSERT') AS can_propose,
                    has_column_privilege('aios_write_control', 'paused', 'UPDATE') AS can_change_pause,
-                   has_table_privilege('aios_intake', 'SELECT') AS can_read_intakes
+                   has_table_privilege('aios_intake', 'SELECT') AS can_read_intakes,
+                   has_table_privilege('aios_chat_message', 'SELECT') AS can_read_chat,
+                   has_table_privilege('aios_chat_message', 'UPDATE, DELETE, TRUNCATE') AS chat_mutable
         """).fetchone()
-        if privileges["audit_mutable"] or (
+        if privileges["audit_mutable"] or privileges["chat_mutable"] or (
             worker and (privileges["can_propose"] or privileges["can_change_pause"]
-                        or privileges["can_read_intakes"] or not privileges["receipt_writable"])
+                        or privileges["can_read_intakes"] or privileges["can_read_chat"]
+                        or not privileges["receipt_writable"])
         ) or (not worker and (not privileges["can_propose"] or not privileges["can_change_pause"]
-                             or privileges["receipt_writable"] or not privileges["can_read_intakes"])):
+                             or privileges["receipt_writable"] or not privileges["can_read_intakes"]
+                             or not privileges["can_read_chat"])):
             raise RuntimeError("Platform PostgreSQL grants do not match API/worker separation")

@@ -6,6 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 Capability = Literal["shipment.read", "shipment.reschedule", "sales_order.create_draft"]
+Grant = Literal[
+    "shipment.read", "shipment.reschedule", "order.work", "finance.read",
+    "mail.read", "decision.read", "chat.use", "operations.manage",
+]
 
 
 class Strict(BaseModel):
@@ -17,6 +21,7 @@ class Actor(Strict):
     tenant: Identifier
     role: Literal["viewer", "operator", "manager", "admin"]
     warehouses: frozenset[Identifier]
+    grants: frozenset[Grant] = frozenset()
 
 
 class ShipmentRead(Strict):

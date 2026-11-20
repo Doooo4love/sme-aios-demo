@@ -6,6 +6,8 @@ import sqlite3
 import subprocess
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
 from psycopg import Error as PostgresError
@@ -16,14 +18,17 @@ from aios_demo.extract_po import analyze_upload
 from aios_demo.parsing import MAX_UPLOAD_BYTES
 from aios_demo.storage import business_key, digest_of
 
+from .chat import DirectoryLookup, chat_routes
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
 from .erp import ERPRejected
 from .identity import Identity
 from .observability import instrument
-from .providers import OPA, Planner, allowed, can_approve
+from .providers import OPA, Planner, allowed, can_approve, can_use_action
 from .purchase import OrderIssue, PurchaseOrder, draft_order, from_ocr
 from .service import Services, identity_for, optional_opa, planner_for, services, setting
 from .workflow import Conflict, tick
+from .workbench import WorkbenchPlanner, workbench_routes
+from .workbench_tools import SyntheticWorkData, WorkData
 
 
 class ActionRequest(Strict):
@@ -58,7 +63,9 @@ class SuspensionRequest(Strict):
 
 
 def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA | None = None,
-              *, planner_limit: int = 60, metrics_token: str | None = None) -> FastAPI:
+              *, planner_limit: int = 60, metrics_token: str | None = None,
+              chat_directory: DirectoryLookup | None = None,
+              workbench_data: WorkData | None = None, workbench_planner: WorkbenchPlanner | None = None) -> FastAPI:
     app = FastAPI(title="SME AIOS Platform", version="0.1.0", docs_url="/docs" if runtime.demo else None,
                   redoc_url=None, openapi_url="/openapi.json" if runtime.demo else None)
     if not 1 <= planner_limit <= 10000:
@@ -67,6 +74,11 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     workflow = runtime.workflow
     erp = runtime.erp
     bearer = HTTPBearer(auto_error=False)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(_request: Request, error: RequestValidationError):
+        issues = [{"loc": item["loc"], "type": item["type"]} for item in error.errors()[:20]]
+        return JSONResponse(status_code=422, content={"detail": issues})
 
     def authenticate(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Actor:
         try:
@@ -97,7 +109,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def visible_proposal(actor: Actor, proposal_id: str, *, include_events: bool = True) -> dict:
         try:
             result = workflow.get(actor.tenant, proposal_id, include_events=include_events)
-            if result["warehouse"] not in actor.warehouses or (
+            if not allowed(actor, result["plan"]["action"], result["warehouse"]) or (
                 result["requester"] != actor.subject and actor.role not in {"manager", "admin"}
             ):
                 raise KeyError(proposal_id)
@@ -108,7 +120,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def visible_intake(actor: Actor, intake_id: str) -> dict:
         try:
             record = workflow.intake(actor.tenant, intake_id)
-            if not allowed(actor, "shipment.read", record["warehouse"]):
+            if not allowed(actor, "sales_order.create_draft", record["warehouse"]):
                 raise KeyError(intake_id)
             return record
         except KeyError as error:
@@ -123,6 +135,27 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         return Plan(tenant=actor.tenant, warehouse=warehouse, action="sales_order.create_draft",
                     target=business_key(payload), expected_version=None,
                     before={"intake_id": intake_id, "source_sha256": evidence["artifact_sha256"]}, after=payload)
+
+    def prepare_order(actor: Actor, intake_id: str, overrides=None, *, expected_warehouse=None) -> Plan:
+        record = visible_intake(actor, intake_id)
+        warehouse = record["warehouse"]
+        if expected_warehouse is not None and warehouse != expected_warehouse:
+            raise HTTPException(404, "Intake not found")
+        try:
+            evidence = record["evidence"]
+            if evidence["kind"] == "structured":
+                if overrides:
+                    raise ValueError("Submit a new structured record to correct an order")
+                order = PurchaseOrder.model_validate(evidence["order"])
+            else:
+                order = from_ocr(evidence, overrides or {})
+            return order_plan(actor, warehouse, intake_id, evidence, order)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    def operator_grant(actor: Actor):
+        if "operations.manage" not in actor.grants or actor.role not in {"manager", "admin"}:
+            raise HTTPException(403, "Operational management permission required")
 
     @app.get("/healthz")
     def health():
@@ -139,6 +172,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     if runtime.demo:
         @app.post("/v1/demo/worker-tick")
         def demo_worker(actor: Actor = Depends(authenticate)):
+            operator_grant(actor)
             if actor.role != "admin":
                 raise HTTPException(403, "Demo administrator required")
             return {"worked": tick(workflow, erp, actor.tenant)}
@@ -149,8 +183,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
 
     @app.get("/v1/operations/summary")
     def operations(actor: Actor = Depends(authenticate)):
-        if actor.role not in {"manager", "admin"}:
-            raise HTTPException(403, "Manager access required")
+        operator_grant(actor)
         return {"proposals_by_state": workflow.summary(actor), "writes_paused": workflow.write_paused(actor.tenant)}
 
     @app.get("/v1/operations/exceptions")
@@ -160,8 +193,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         after_due: Annotated[float | None, Query(ge=0, le=1e12)] = None,
         after_id: Identifier | None = None,
     ):
-        if actor.role not in {"manager", "admin"}:
-            raise HTTPException(403, "Manager access required")
+        operator_grant(actor)
         if (after_due is None) != (after_id is None):
             raise HTTPException(422, "Both cursor values are required")
         rows = workflow.exceptions(actor, limit + 1, None if after_due is None else (after_due, after_id))
@@ -171,6 +203,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
 
     @app.put("/v1/operations/write-control")
     def control(body: PauseRequest, actor: Actor = Depends(authenticate)):
+        operator_grant(actor)
         try:
             workflow.set_write_pause(actor, body.paused)
         except PermissionError as error:
@@ -180,6 +213,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     @app.put("/v1/operations/subjects/{subject}/suspension")
     def suspend(subject: Annotated[str, Field(min_length=1, max_length=150)],
                 body: SuspensionRequest, actor: Actor = Depends(authenticate)):
+        operator_grant(actor)
         try:
             workflow.set_suspension(actor, subject, body.suspended)
         except PermissionError as error:
@@ -274,6 +308,8 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         body: ActionRequest, actor: Actor = Depends(authenticate),
         key: Annotated[str | None, Header(alias="Idempotency-Key", pattern=r"^[A-Za-z0-9._:-]{1,128}$")] = None,
     ):
+        if not actor.grants.intersection({"shipment.read", "order.work"}):
+            raise HTTPException(403, "Operational action permission required")
         fingerprint = digest_of(body.model_dump(mode="json"))
         if key is not None:
             try:
@@ -290,24 +326,11 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             raise HTTPException(503, "Planner unavailable") from error
         if isinstance(intent, Clarify):
             return {"status": "clarify", "question": intent.question}
-        if not isinstance(intent, ShipmentRead) and actor.role == "viewer":
-            workflow.audit(actor, intent.action, "ROLE_DENIED")
-            raise HTTPException(403, "Viewer access is read-only")
+        if not can_use_action(actor, intent.action):
+            workflow.audit(actor, intent.action, "ACTION_GRANT_DENIED")
+            raise HTTPException(403, "Action permission required")
         if isinstance(intent, DraftSalesOrder):
-            record = visible_intake(actor, intent.intake_id)
-            warehouse = record["warehouse"]
-            require_scope(actor, intent.action, warehouse)
-            try:
-                evidence = record["evidence"]
-                if evidence["kind"] == "structured":
-                    if body.overrides:
-                        raise ValueError("Submit a new structured record to correct an order")
-                    order = PurchaseOrder.model_validate(evidence["order"])
-                else:
-                    order = from_ocr(evidence, body.overrides)
-                plan = order_plan(actor, warehouse, intent.intake_id, evidence, order)
-            except ValueError as error:
-                raise HTTPException(422, str(error)) from error
+            plan = prepare_order(actor, intent.intake_id, body.overrides)
         else:
             try:
                 shipment = erp.shipment(actor.tenant, intent.shipment_id)
@@ -315,7 +338,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                 raise HTTPException(404, "Shipment not found") from error
             except (httpx.HTTPError, OSError, ValueError) as error:
                 raise HTTPException(503, "ERP read unavailable") from error
-            if shipment is None or shipment.warehouse not in runtime.profiles[actor.tenant].warehouses or (
+            if shipment is None or shipment.shipment_id != intent.shipment_id or (
                 not allowed(actor, "shipment.read", shipment.warehouse)
             ):
                 workflow.audit(actor, intent.shipment_id, "SHIPMENT_NOT_VISIBLE")
@@ -378,6 +401,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
 
     @app.post("/v1/proposals/{proposal_id}/reconcile", status_code=202)
     def reconcile(proposal_id: Identifier, actor: Actor = Depends(authenticate)):
+        operator_grant(actor)
         visible_proposal(actor, proposal_id)
         try:
             workflow.reopen_verification(actor, proposal_id)
@@ -387,6 +411,16 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             raise HTTPException(403, str(error)) from error
         return visible_proposal(actor, proposal_id)
 
+    if chat_directory is None and runtime.demo:
+        chat_directory = getattr(identity, "known_subject", None)
+    if runtime.demo and workbench_data is None:
+        workbench_data = SyntheticWorkData()
+    if not runtime.demo and isinstance(workbench_data, SyntheticWorkData):
+        raise ValueError("Synthetic workbench data requires the demo profile")
+    app.include_router(workbench_routes(runtime, authenticate, require_policy, visible_proposal, prepare_order,
+                                       data=workbench_data, chat_available=chat_directory is not None,
+                                       planner=workbench_planner, planner_limit=planner_limit))
+    app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
     return app
 
 
