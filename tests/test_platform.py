@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -161,6 +162,90 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(result.status_code, 403)
 
 
+    def test_retry_same_idempotency_key_keeps_one_approved_proposal(self):
+        headers = {**self.auth("operator"), "Idempotency-Key": "external-123"}
+        body = {"text": f"Move shipment SHP-1001 to {self.day}"}
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            replies = list(pool.map(lambda _: self.client.post("/v1/actions", headers=headers, json=body), range(3)))
+        self.assertEqual([reply.status_code for reply in replies], [200] * 3)
+        proposals = [reply.json() for reply in replies]
+        self.assertEqual(len({record["id"] for record in proposals}), 1)
+        self.assertEqual(self.approve(proposals[0]).status_code, 202)
+        replay = self.client.post("/v1/actions", headers=headers, json=body)
+        self.assertEqual(replay.json()["state"], "QUEUED")
+        different = self.client.post("/v1/actions", headers=headers, json={"text": "Show shipment SHP-1001"})
+        self.assertEqual(different.status_code, 409)
+        counts = self.client.get("/v1/operations/summary", headers=self.auth("manager")).json()
+        self.assertEqual(counts["proposals_by_state"], {"QUEUED": 1})
+
+    def test_pause_verifies_inflight_and_holds_new_dispatch(self):
+        first = self.propose()
+        self.assertEqual(self.approve(first).status_code, 202)
+        tick(self.runtime.workflow, self.runtime.erp, "harbour")
+        self.assertEqual(self.stored(first)["state"], "VERIFYING")
+        second = self.propose(target_date=(date.today() + timedelta(days=16)).isoformat())
+        self.assertEqual(self.approve(second).status_code, 202)
+        path = "/v1/operations/write-control"
+        self.assertEqual(self.client.put(path, json={"paused": True}, headers=self.auth("manager")).status_code, 403)
+        self.assertEqual(self.client.put(path, json={"paused": True}, headers=self.auth("admin")).status_code, 200)
+        self.assertTrue(tick(self.runtime.workflow, self.runtime.erp, "harbour"))
+        self.assertEqual(self.stored(first)["state"], "VERIFIED")
+        self.assertFalse(tick(self.runtime.workflow, self.runtime.erp, "harbour"))
+        self.assertEqual(self.stored(second)["state"], "QUEUED")
+        self.client.put(path, json={"paused": False}, headers=self.auth("admin")).raise_for_status()
+        self.assertTrue(tick(self.runtime.workflow, self.runtime.erp, "harbour"))
+        self.assertEqual(self.stored(second)["state"], "VERIFYING")
+
+    def test_suspended_approver_prevents_dispatch(self):
+        record = self.propose()
+        self.assertEqual(self.approve(record).status_code, 202)
+        endpoint = "/v1/operations/subjects/manager/suspension"
+        suspended = self.client.put(endpoint, json={"suspended": True}, headers=self.auth("admin"))
+        self.assertEqual(suspended.status_code, 200)
+        self.assertEqual(self.client.get("/v1/me", headers=self.auth("manager")).status_code, 403)
+        with patch.object(self.runtime.erp, "apply") as apply:
+            self.assertTrue(tick(self.runtime.workflow, self.runtime.erp, "harbour"))
+            apply.assert_not_called()
+        self.assertEqual(self.stored(record)["state"], "REJECTED")
+        self.assertEqual(self.stored(record)["events"][-1]["event"], "ACCESS_SUSPENDED_BEFORE_SEND")
+
+    def test_operator_recheck_only_reads_receipt(self):
+        record = self.propose()
+        self.assertEqual(self.approve(record).status_code, 202)
+        workflow, erp = self.runtime.workflow, self.runtime.erp
+        tick(workflow, erp, "harbour")
+        with patch.object(erp, "receipt", return_value=None):
+            for delay in (0, 2, 4):
+                with patch("aios_platform.workflow.time.time", return_value=time.time() + delay):
+                    tick(workflow, erp, "harbour")
+        self.assertEqual(self.stored(record)["state"], "NEEDS_OPERATOR")
+        path = f"/v1/proposals/{record['id']}/reconcile"
+        self.assertEqual(self.client.post(path, headers=self.auth("operator")).status_code, 403)
+        self.assertEqual(self.client.post(path, headers=self.auth("manager")).status_code, 202)
+        with patch.object(erp, "apply") as apply:
+            tick(workflow, erp, "harbour")
+            apply.assert_not_called()
+        self.assertEqual(self.stored(record)["state"], "VERIFIED")
+
+    def test_request_limits_and_metrics_do_not_expose_request_data(self):
+        metrics = "dedicated-test-metrics-token-with-length"
+        app = build_app(self.runtime, self.identity, DemoPlanner(), planner_limit=1, metrics_token=metrics)
+        with TestClient(app) as client, patch("aios_platform.workflow.time.time", return_value=120):
+            self.assertEqual(client.get("/readyz").json(), {"status": "ready"})
+            path = "/v1/actions"
+            response = client.post(path, headers=self.auth("operator"), content=b"x" * 70000)
+            self.assertEqual(response.status_code, 413)
+            self.assertIn("X-Request-ID", response.headers)
+            body = {"text": "Show shipment SHP-1001"}
+            self.assertEqual(client.post(path, headers=self.auth("operator"), json=body).status_code, 200)
+            self.assertEqual(client.post(path, headers=self.auth("operator"), json=body).status_code, 429)
+            self.assertEqual(client.post(path, headers=self.auth("island-manager"), json=body).status_code, 200)
+            self.assertEqual(client.get("/metrics", headers=self.auth("admin")).status_code, 401)
+            exposed = client.get("/metrics", headers={"Authorization": "Bearer " + metrics}).text
+            self.assertIn('route="/v1/actions",status="429"', exposed)
+            for value in (self.secret, metrics, "SHP-1001", "harbour", "island"):
+                self.assertNotIn(value, exposed)
+
     @unittest.skipUnless(TEST_DSN, "PostgreSQL test DSN is not configured")
     def test_postgres_role_cannot_read_other_tenant_or_edit_audit(self):
         import psycopg
@@ -177,8 +262,9 @@ class PlatformTests(unittest.TestCase):
                 for name in names:
                     conn.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(name)))
                 schema = conn.execute("SELECT current_schema()").fetchone()[0]
-                conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
-                    sql.Identifier(schema), sql.Identifier(names[0])))
+                for name in names:
+                    conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                        sql.Identifier(schema), sql.Identifier(name)))
                 for statement in secure_sql.split(";"):
                     if statement.strip():
                         conn.execute(statement)
@@ -187,8 +273,17 @@ class PlatformTests(unittest.TestCase):
                 conn.execute("SELECT set_config('aios.tenant', 'harbour', true)")
                 self.assertEqual(conn.execute("SELECT DISTINCT tenant FROM aios_proposal").fetchall(),
                                  [("harbour",)])
-                with self.assertRaises(errors.InsufficientPrivilege):
+                with self.assertRaises(errors.InsufficientPrivilege), conn.transaction():
                     conn.execute("UPDATE aios_audit SET event = 'tampered'")
+                with self.assertRaises(errors.InsufficientPrivilege), conn.transaction():
+                    conn.execute("UPDATE aios_proposal SET receipt = 'tampered'")
+                conn.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(names[1])))
+                self.assertEqual(conn.execute("SELECT DISTINCT tenant FROM aios_proposal").fetchall(),
+                                 [("harbour",)])
+                with self.assertRaises(errors.InsufficientPrivilege), conn.transaction():
+                    conn.execute("UPDATE aios_write_control SET paused = 0")
+                with self.assertRaises(errors.InsufficientPrivilege), conn.transaction():
+                    conn.execute("SELECT * FROM aios_intake")
 
 
 class IdentityTests(unittest.TestCase):
