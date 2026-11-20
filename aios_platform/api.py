@@ -1,4 +1,5 @@
 """Factory for the production-shaped gateway. The existing PO demo is separate."""
+from pathlib import Path
 from typing import Annotated
 import asyncio
 import os
@@ -18,12 +19,16 @@ from aios_demo.extract_po import analyze_upload
 from aios_demo.parsing import MAX_UPLOAD_BYTES
 from aios_demo.storage import business_key, digest_of
 
+from .assurance import Assurance, assurance_routes
+from .assurance_audit import AuditKeys, SignedAudit
+from .assurance_gateway import ReviewGateway
+from .assurance_policy import DemoCaseSource
 from .chat import DirectoryLookup, chat_routes
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
 from .erp import ERPRejected
 from .identity import Identity
 from .observability import instrument
-from .providers import OPA, Planner, allowed, can_approve, can_use_action
+from .providers import DemoPlanner, OPA, Planner, allowed, can_approve, can_use_action
 from .purchase import OrderIssue, PurchaseOrder, draft_order, from_ocr
 from .service import Services, identity_for, optional_opa, planner_for, services, setting
 from .workflow import Conflict, tick
@@ -65,7 +70,15 @@ class SuspensionRequest(Strict):
 def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA | None = None,
               *, planner_limit: int = 60, metrics_token: str | None = None,
               chat_directory: DirectoryLookup | None = None,
-              workbench_data: WorkData | None = None, workbench_planner: WorkbenchPlanner | None = None) -> FastAPI:
+              workbench_data: WorkData | None = None, workbench_planner: WorkbenchPlanner | None = None,
+              assurance: Assurance | None = None) -> FastAPI:
+    if assurance is not None:
+        if not isinstance(planner, DemoPlanner) or workbench_planner is not None:
+            raise ValueError("Assurance requires disabling planners outside the governed provider gateway")
+        if assurance.workflow is not runtime.workflow:
+            raise ValueError("Assurance must use the current tenant workflow")
+        if not runtime.demo and isinstance(assurance.source, DemoCaseSource):
+            raise ValueError("Synthetic assurance sources require the demo profile")
     app = FastAPI(title="SME AIOS Platform", version="0.1.0", docs_url="/docs" if runtime.demo else None,
                   redoc_url=None, openapi_url="/openapi.json" if runtime.demo else None)
     if not 1 <= planner_limit <= 10000:
@@ -421,6 +434,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                                        data=workbench_data, chat_available=chat_directory is not None,
                                        planner=workbench_planner, planner_limit=planner_limit))
     app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
+    app.include_router(assurance_routes(authenticate, assurance))
     return app
 
 
@@ -428,5 +442,12 @@ def create_app() -> FastAPI:
     runtime = services()
     metrics = (setting("AIOS_METRICS_TOKEN")
                if os.getenv("AIOS_METRICS_TOKEN") or os.getenv("AIOS_METRICS_TOKEN_FILE") else None)
+    assurance = None
+    if key_file := os.getenv("AIOS_ASSURANCE_DEMO_KEY_FILE"):
+        if not runtime.demo:
+            raise ValueError("Demo assurance keys require the demo profile")
+        audit = SignedAudit(runtime.workflow, AuditKeys.from_file(Path(key_file)))
+        assurance = Assurance(DemoCaseSource(), ReviewGateway(audit, "hk-factory"))
     return build_app(runtime, identity_for(runtime.demo), planner_for(runtime.demo), optional_opa(),
-                     planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")), metrics_token=metrics)
+                     planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")),
+                     metrics_token=metrics, assurance=assurance)

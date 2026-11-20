@@ -107,3 +107,31 @@ REVOKE ALL ON aios_chat_room, aios_chat_member, aios_chat_message FROM PUBLIC, a
 GRANT SELECT, INSERT ON aios_chat_room, aios_chat_member, aios_chat_message TO aios_api;
 GRANT UPDATE (next_seq) ON aios_chat_room TO aios_api;
 GRANT DELETE ON aios_chat_member TO aios_api;
+
+ALTER TABLE aios_assurance_head ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_assurance_head FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_assurance_tenant ON aios_assurance_head;
+CREATE POLICY aios_assurance_tenant ON aios_assurance_head TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_assurance_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_assurance_audit FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_assurance_tenant ON aios_assurance_audit;
+CREATE POLICY aios_assurance_tenant ON aios_assurance_audit TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_assurance_review ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_assurance_review FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_assurance_tenant ON aios_assurance_review;
+CREATE POLICY aios_assurance_tenant ON aios_assurance_review TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+REVOKE ALL ON aios_assurance_head, aios_assurance_audit, aios_assurance_review FROM PUBLIC, aios_worker;
+REVOKE UPDATE, DELETE, TRUNCATE ON aios_assurance_audit FROM aios_api;
+GRANT SELECT, INSERT ON aios_assurance_head, aios_assurance_review TO aios_api;
+GRANT INSERT ON aios_assurance_audit TO aios_api;
+GRANT UPDATE (tip_seq, tip_hash) ON aios_assurance_head TO aios_api;
+GRANT UPDATE (state, decisions) ON aios_assurance_review TO aios_api;

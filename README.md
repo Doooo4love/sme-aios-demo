@@ -1,6 +1,6 @@
 # SME AIOS · Wholesale order intake
 
-[简体中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md) · [Governed AI assurance and deployment handoff](docs/governed-assurance.md)
 
 A working prototype for wholesale purchase-order intake. Upload a purchase-order image, examine field-level evidence, review exceptions, approve a sales-order draft, and verify it in the mock ERP. The inbox preserves the document, reviewed preview, and command so the workflow can resume after refresh or restart.
 

@@ -9,6 +9,8 @@ Capability = Literal["shipment.read", "shipment.reschedule", "sales_order.create
 Grant = Literal[
     "shipment.read", "shipment.reschedule", "order.work", "finance.read",
     "mail.read", "decision.read", "chat.use", "operations.manage",
+    "assurance.purchase", "assurance.incoming", "assurance.contract", "assurance.procurement",
+    "assurance.finance", "assurance.quality", "assurance.legal", "assurance.audit",
 ]
 
 
