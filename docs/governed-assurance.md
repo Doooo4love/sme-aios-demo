@@ -64,7 +64,7 @@ The sequence is **approved inventory → metadata snapshot → draft classificat
 |---|---|
 | Case | `GET /v1/assurance/cases/{reference}`. Display only supplied fields. Separate evidence, rules, model suggestions and human decisions. Missing fields are unavailable |
 | Submit review | `POST /v1/assurance/cases/{reference}/reviews` with `client_id` and optional controlled `instruction`. Reuse the key on retries and obtain a new key for a new instruction or source version. GET the same path for history and continue with `next` |
-| Approval tracks | `GET /v1/assurance/reviews/{id}` lists `tracks, decisions, state, stale, snapshot`. POST `track, action, snapshot` to `/v1/assurance/reviews/{id}/decisions`. Refresh or reopen after 409. Show scope denial for 403 and disposition instructions for `HELD` |
+| Approval tracks | `GET /v1/assurance/reviews/{id}` lists `tracks, decisions, state, stale, snapshot, expires_at, expired`. POST `track, action, snapshot` to `/v1/assurance/reviews/{id}/decisions`. Disable new decisions for stale or expired reviews. Show scope denial for 403 and disposition instructions for `HELD` |
 | Governance and audit | Auditors use `GET /v1/assurance/audit/checkpoint`. Display sequence, hash, signature and key ID. Retain the checkpoint independently. Keep transcript bodies out of the browser and show verification status only from a trusted verifier |
 | Discovery and operations | Admin UI can start by importing CLI drafts for classification and comparison. Approval, identity mapping and publication APIs are future work. Distinguish unconfigured, registered and validated connectors. Avoid silent egress fallback |
 
@@ -86,9 +86,33 @@ python -m uvicorn aios_platform.api:create_app --factory --host 127.0.0.1 --port
 
 For demo bearer tokens, use `$AIOS_DEMO_SECRET.operator` to start `PO-100`, `QA-200` or `CT-300`. Use `manager` and `finance` for purchasing, `quality` for inspection, `legal` for contracts and `admin` for checkpoints. Run discovery with `python -m aios_platform.assurance_catalog --template procurement --openapi source.json`. Database discovery reads a dedicated `AIOS_DISCOVERY_DSN` and explicit `--table` arguments. Test Excel exports with `--csv-headers headers.csv`. Verify a trusted ordered JSON Lines export containing `seq,envelope,digest,signature` using `python -m aios_platform.assurance_audit verify TENANT --ledger ledger.jsonl --checkpoint checkpoint.json --public-key public.json`. Public keys come from independently trusted configuration.
 
+## Recovery and traffic pressure
+
+`client_id` is scoped to the tenant, case and actor. Persist it for the life of a submission and replay it with identical input. A completed replay returns `201` with the existing review. `expires_at` is Unix seconds. `expired` is the server's approval gate. It is true for pending or held reviews migrated without trusted expiry. Completed decisions remain visible. Rules-only evaluation, review creation and the signed event commit together. With a future provider, a durable attempt is reserved before dispatch and model input is audited before invocation.
+
+| HTTP response and `detail.code` | Frontend and operations |
+|---|---|
+| `409 REVIEW_IN_PROGRESS` | Keep the submitted item pending. Retry the original request with the same key after `Retry-After`, with jitter and a bounded retry window. |
+| `409 REVIEW_OUTCOME_UNKNOWN` or `REVIEW_ATTEMPT_FAILED` | Offer manual review. Capture `detail.run_id` and `X-Request-ID` with the case reference. Inspect the signed ledger and provider receipt before creating a replacement. A missing receipt leaves the outcome unresolved. |
+| `409 REVIEW_REQUEST_CONFLICT`, `REVIEW_SNAPSHOT_CONFLICT`, `REVIEW_SOURCE_CHANGED`, or `REVIEW_EXPIRED` | Refresh evidence and show the reason. An employee may actively start a fresh review for the new evidence or expiry. Existing decisions stay attached to the prior snapshot. |
+| `429 MODEL_BUDGET_EXHAUSTED` | The model was never invoked. Retry with the same key after `Retry-After` and jitter. |
+| `503 ASSURANCE_OVERLOADED`, `ASSURANCE_SOURCE_UNAVAILABLE`, or `STORAGE_UNAVAILABLE` | Respect `Retry-After` with jitter and bounded retries. Retain entered fields and the same key. Escalate to read-only/manual operation during a sustained outage. |
+| `502 MODEL_OUTPUT_BLOCKED` or `503 MODEL_UNAVAILABLE` | Preserve the correlation IDs. Route to manual review. Provider failures can occur after dispatch. |
+
+The default limit is eight concurrent assurance calls per API process (`AIOS_ASSURANCE_CONCURRENCY`, 1–32). PostgreSQL assurance transactions use a 1.5-second lock timeout and a five-second per-statement timeout. The PostgreSQL connection timeout defaults to five seconds per host when the DSN omits it. The SQLite demo uses a 0.5-second lock wait for those operations. A provider attempt reports `REVIEW_OUTCOME_UNKNOWN` after 120 seconds without completion and keeps its ownership. The rules-only demo expiry defaults to 3,600 seconds (`AIOS_ASSURANCE_REVIEW_TTL`, 1–86,400). Production bindings must set the review TTL and connector I/O deadlines for their workload. These limits apply at different layers and have separate clocks. [PostgreSQL client timeouts](https://www.postgresql.org/docs/current/runtime-config-client.html) · [Retries and jitter](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/)
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m unittest discover -s tests -v
+python scripts/assurance_load.py --clients 16 --reviews 100
+```
+
+The load run uses synthetic rules-only input and pairs two requests for each key. The burst reports latency and load shedding. The recovery phase verifies one finalized review and one signed event per key. Run `test_platform.py` with `AIOS_PLATFORM_TEST_DSN` against a disposable PostgreSQL database for actual row locks and separated-role checks. Apply Alembic through `0006_assurance_runtime` and then rerun `deploy/platform/postgres-security.sql` before deploying the new API. Existing pending and held requests require fresh review.
+
 ## First-customer release gates
 
 1. Obtain de-identified purchase orders, inspection samples and contract clause facts for one site. Map the source records, employees, roles, factories, currency, quality standards, responsibility and historical human results.
 2. Confirm read-only identities and sandboxes. Select specific authorized write methods, source versions and idempotent response contracts. Validate read-only shadow operation first. The rollout window depends on authorization and integration complexity.
 3. Approve zone, field and model-use boundaries, retention and key responsibilities. Pick an internal provider and test egress denial, indirect injection, hostile documents, audit anchoring and factory disconnection.
 4. Acceptance drills cover revocation, aggregate inference, schema drift, cross-site denial, replays, stale or denied decisions, external reconciliation and restores. Review actual sales, buying, manufacturing, expenses, legal and HR policy before promotion.
+5. Validate per-tenant ingress quotas, pool sizing, worker concurrency, audit retention and independent checkpoints on target infrastructure. Exercise multi-process bursts, DB restore/failover, signing failure and clock skew. Compare auto-processing coverage, exception rate, time saved and false approvals with labelled historical outcomes before setting the service-level targets. Confirm the ERP supports conditional writes and receipts. The internal approval state carries no authority to change source records without that adapter and its separate release gate.
