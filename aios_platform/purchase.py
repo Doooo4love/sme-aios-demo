@@ -58,7 +58,10 @@ class TenantProfile(Strict):
 
 
 def load_profiles(path: Path) -> dict[str, TenantProfile]:
-    return TypeAdapter(dict[Identifier, TenantProfile]).validate_json(path.read_bytes())
+    profiles = TypeAdapter(dict[Identifier, TenantProfile]).validate_json(path.read_bytes())
+    if not profiles or any(not profile.warehouses for profile in profiles.values()):
+        raise ValueError("Configure at least one tenant and a warehouse for each tenant")
+    return profiles
 
 
 def draft_order(order: PurchaseOrder, warehouse: str, profile: TenantProfile) -> dict:

@@ -1,10 +1,14 @@
 """Factory for the production-shaped gateway. The existing PO demo is separate."""
 from typing import Annotated
+import asyncio
+import os
+import sqlite3
 import subprocess
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
+from psycopg import Error as PostgresError
 from pydantic import Field
 from starlette.concurrency import run_in_threadpool
 
@@ -15,9 +19,10 @@ from aios_demo.storage import business_key, digest_of
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
 from .erp import ERPRejected
 from .identity import Identity
+from .observability import instrument
 from .providers import OPA, Planner, allowed, can_approve
 from .purchase import PurchaseOrder, draft_order, from_ocr
-from .service import Services, identity_for, optional_opa, planner_for, services
+from .service import Services, identity_for, optional_opa, planner_for, services, setting
 from .workflow import Conflict, tick
 
 
@@ -32,9 +37,21 @@ class ApprovalRequest(Strict):
     digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
-def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA | None = None) -> FastAPI:
+class PauseRequest(Strict):
+    paused: bool
+
+
+class SuspensionRequest(Strict):
+    suspended: bool
+
+
+def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA | None = None,
+              *, planner_limit: int = 60, metrics_token: str | None = None) -> FastAPI:
     app = FastAPI(title="SME AIOS Platform", version="0.1.0", docs_url="/docs" if runtime.demo else None,
                   redoc_url=None, openapi_url="/openapi.json" if runtime.demo else None)
+    if not 1 <= planner_limit <= 10000:
+        raise ValueError("Planner limit must be between 1 and 10000 per tenant per minute")
+    instrument(app, metrics_token)
     workflow = runtime.workflow
     erp = runtime.erp
     bearer = HTTPBearer(auto_error=False)
@@ -46,10 +63,12 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             actor = identity.authenticate(credentials.credentials)
             if actor.tenant not in runtime.profiles:
                 raise ValueError("Tenant is unavailable")
-            return actor
         except (ValueError, OSError) as error:
             raise HTTPException(401, "A valid access token is required",
                                 headers={"WWW-Authenticate": "Bearer"}) from error
+        if workflow.is_suspended(actor):
+            raise HTTPException(403, "AIOS access is suspended")
+        return actor
 
     def require_scope(actor: Actor, action: str, warehouse: str):
         if warehouse not in runtime.profiles[actor.tenant].warehouses or not allowed(actor, action, warehouse):
@@ -85,6 +104,14 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def health():
         return {"status": "up"}
 
+    @app.get("/readyz")
+    def readiness():
+        try:
+            workflow.ping(next(iter(runtime.profiles)))
+        except (sqlite3.Error, PostgresError, OSError) as error:
+            raise HTTPException(503, "Database unavailable") from error
+        return {"status": "ready"}
+
     if runtime.demo:
         @app.post("/v1/demo/worker-tick")
         def demo_worker(actor: Actor = Depends(authenticate)):
@@ -100,7 +127,24 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def operations(actor: Actor = Depends(authenticate)):
         if actor.role not in {"manager", "admin"}:
             raise HTTPException(403, "Manager access required")
-        return {"proposals_by_state": workflow.summary(actor)}
+        return {"proposals_by_state": workflow.summary(actor), "writes_paused": workflow.write_paused(actor.tenant)}
+
+    @app.put("/v1/operations/write-control")
+    def control(body: PauseRequest, actor: Actor = Depends(authenticate)):
+        try:
+            workflow.set_write_pause(actor, body.paused)
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        return {"paused": body.paused}
+
+    @app.put("/v1/operations/subjects/{subject}/suspension")
+    def suspend(subject: Annotated[str, Field(min_length=1, max_length=150)],
+                body: SuspensionRequest, actor: Actor = Depends(authenticate)):
+        try:
+            workflow.set_suspension(actor, subject, body.suspended)
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        return {"suspended": body.suspended}
 
     @app.post("/v1/intakes/{warehouse}", status_code=201)
     async def upload(warehouse: Identifier, request: Request, actor: Actor = Depends(authenticate)):
@@ -110,10 +154,14 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         if request.headers.get("content-type") != "application/octet-stream":
             raise HTTPException(415, "Send PNG/JPEG bytes as application/octet-stream")
         data = bytearray()
-        async for chunk in request.stream():
-            if len(data) + len(chunk) > MAX_UPLOAD_BYTES:
-                raise HTTPException(413, "Image exceeds 8 MB")
-            data.extend(chunk)
+        try:
+            async with asyncio.timeout(15):
+                async for chunk in request.stream():
+                    if len(data) + len(chunk) > MAX_UPLOAD_BYTES:
+                        raise HTTPException(413, "Image exceeds 8 MB")
+                    data.extend(chunk)
+        except TimeoutError as error:
+            raise HTTPException(408, "Upload timed out") from error
         try:
             evidence, _ = await run_in_threadpool(analyze_upload, bytes(data))
         except ValueError as error:
@@ -137,7 +185,20 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         return visible_intake(actor, intake_id)
 
     @app.post("/v1/actions")
-    def interpret(body: ActionRequest, actor: Actor = Depends(authenticate)):
+    def interpret(
+        body: ActionRequest, actor: Actor = Depends(authenticate),
+        key: Annotated[str | None, Header(alias="Idempotency-Key", pattern=r"^[A-Za-z0-9._:-]{1,128}$")] = None,
+    ):
+        fingerprint = digest_of(body.model_dump(mode="json"))
+        if key is not None:
+            try:
+                prior = workflow.find_request(actor, key, fingerprint)
+            except Conflict as error:
+                raise HTTPException(409, str(error)) from error
+            if prior:
+                return {"status": "proposed", **visible_proposal(actor, prior)}
+        if not workflow.take_planner_budget(actor.tenant, planner_limit):
+            raise HTTPException(429, "Tenant planner budget exhausted", headers={"Retry-After": "60"})
         try:
             intent = planner.plan(body.text)
         except (httpx.HTTPError, OSError, ValueError, KeyError, TypeError, IndexError) as error:
@@ -189,7 +250,10 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                         target=shipment.shipment_id, expected_version=shipment.version, before=current,
                         after={"delivery_date": intent.delivery_date.isoformat()})
         require_policy(actor, plan, actor.subject, "propose")
-        proposal_id = workflow.propose(actor, plan)
+        try:
+            proposal_id = workflow.propose(actor, plan, idempotency=(key, fingerprint) if key else None)
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from error
         return {"status": "proposed", **visible_proposal(actor, proposal_id)}
 
     @app.get("/v1/proposals/{proposal_id}")
@@ -208,6 +272,19 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             workflow.approve(actor, proposal_id, body.digest)
         except Conflict as error:
             raise HTTPException(409, str(error)) from error
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        return visible_proposal(actor, proposal_id)
+
+    @app.post("/v1/proposals/{proposal_id}/reconcile", status_code=202)
+    def reconcile(proposal_id: Identifier, actor: Actor = Depends(authenticate)):
+        visible_proposal(actor, proposal_id)
+        try:
+            workflow.reopen_verification(actor, proposal_id)
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from error
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
         return visible_proposal(actor, proposal_id)
 
     return app
@@ -215,4 +292,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
 
 def create_app() -> FastAPI:
     runtime = services()
-    return build_app(runtime, identity_for(runtime.demo), planner_for(runtime.demo), optional_opa())
+    metrics = (setting("AIOS_METRICS_TOKEN")
+               if os.getenv("AIOS_METRICS_TOKEN") or os.getenv("AIOS_METRICS_TOKEN_FILE") else None)
+    return build_app(runtime, identity_for(runtime.demo), planner_for(runtime.demo), optional_opa(),
+                     planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")), metrics_token=metrics)

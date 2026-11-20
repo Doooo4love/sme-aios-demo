@@ -7,6 +7,7 @@ from pathlib import Path
 from aios_demo.storage import Database
 
 from .contracts import Shipment
+from .database_security import verify_database
 from .erp import ERP, ERPNext, LocalERP, OdooERP
 from .identity import DemoIdentity, Identity, OIDCIdentity
 from .providers import CompatiblePlanner, DemoPlanner, OPA, Planner
@@ -39,6 +40,12 @@ def services(*, worker: bool = False) -> Services:
     dsn = setting("AIOS_PLATFORM_DSN") if not demo or os.getenv("AIOS_PLATFORM_DSN_FILE") else (
         os.getenv("AIOS_PLATFORM_DSN") or None
     )
+    if dsn:
+        from psycopg.conninfo import make_conninfo
+
+        if not demo and not dsn.startswith(("postgresql://", "postgres://")):
+            raise ValueError("OIDC mode requires a PostgreSQL URL")
+        dsn = make_conninfo(dsn, connect_timeout=5)
     workflow = Workflow(Database(path / "store.sqlite", dsn))
     if demo:
         config = Path(__file__).resolve().parents[1] / "deploy/platform/demo-profiles.json"
@@ -57,8 +64,7 @@ def services(*, worker: bool = False) -> Services:
                 version=1, status="OPEN",
             ))
     else:
-        if not dsn.startswith(("postgresql://", "postgres://")):
-            raise ValueError("OIDC mode requires a PostgreSQL URL")
+        verify_database(workflow.db, worker=worker)
         key_name = "AIOS_ERP_WRITE_CREDENTIAL" if worker else "AIOS_ERP_READ_CREDENTIAL"
         tenant = setting("AIOS_CONNECTOR_TENANT")
         profiles = load_profiles(Path(setting("AIOS_TENANT_PROFILES")))
