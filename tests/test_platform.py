@@ -11,13 +11,15 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from aios_demo.storage import Database
 from aios_platform.api import build_app
 from aios_platform.contracts import Plan
+from aios_platform.database_security import verify_database
 from aios_platform.erp import ERPNext, OdooERP, plan_digest
 from aios_platform.identity import DemoIdentity, OIDCIdentity
 from aios_platform.providers import DemoPlanner, OPA, checked_intent
-from aios_platform.service import services
-from aios_platform.workflow import tick
+from aios_platform.service import Services, services
+from aios_platform.workflow import Workflow, tick
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -284,6 +286,64 @@ class PlatformTests(unittest.TestCase):
                     conn.execute("UPDATE aios_write_control SET paused = 0")
                 with self.assertRaises(errors.InsufficientPrivilege), conn.transaction():
                     conn.execute("SELECT * FROM aios_intake")
+
+
+    @unittest.skipUnless(TEST_DSN, "PostgreSQL test DSN is not configured")
+    def test_postgres_restricted_logins_complete_approved_write(self):
+        import psycopg
+        from psycopg import sql
+        from psycopg.conninfo import make_conninfo
+
+        dsn = self.runtime.workflow.db.dsn
+        names = ("aios_api", "aios_worker")
+        credentials = {name: uuid4().hex for name in names}
+        with psycopg.connect(dsn) as admin:
+            schema = admin.execute("SELECT current_schema()").fetchone()[0]
+            for name in names:
+                admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+                    sql.Identifier(name), sql.Literal(credentials[name])))
+                admin.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                    sql.Identifier(schema), sql.Identifier(name)))
+            for statement in (ROOT / "deploy/platform/postgres-security.sql").read_text().split(";"):
+                if statement.strip():
+                    admin.execute(statement)
+
+        def drop_roles():
+            with psycopg.connect(dsn) as admin:
+                for name in names:
+                    role = sql.Identifier(name)
+                    admin.execute(sql.SQL("DROP OWNED BY {}").format(role))
+                    admin.execute(sql.SQL("DROP ROLE {}").format(role))
+
+        self.addCleanup(drop_roles)
+        workflows = {
+            name: Workflow(Database(Path("unused.sqlite"), make_conninfo(
+                dsn, user=name, password=secret)))
+            for name, secret in credentials.items()
+        }
+        api, worker = workflows["aios_api"], workflows["aios_worker"]
+        verify_database(api.db, worker=False)
+        verify_database(worker.db, worker=True)
+        with self.assertRaisesRegex(RuntimeError, "requires|must use"):
+            verify_database(api.db, worker=True)
+
+        runtime = Services(api, self.runtime.erp, True, self.runtime.profiles)
+        with TestClient(build_app(runtime, self.identity, DemoPlanner())) as client:
+            request = {"text": f"Move shipment SHP-1001 to {self.day}"}
+            headers = {**self.auth("operator"), "Idempotency-Key": "postgres-smoke"}
+            response = client.post("/v1/actions", json=request, headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            record = response.json()
+            replay = client.post("/v1/actions", json=request, headers=headers)
+            self.assertEqual(replay.json()["id"], record["id"])
+            response = client.post(f"/v1/proposals/{record['id']}/approve",
+                                   json={"digest": record["digest"]}, headers=self.auth("manager"))
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertTrue(tick(worker, runtime.erp, "harbour"))
+            self.assertTrue(tick(worker, runtime.erp, "harbour"))
+            status = api.get("harbour", record["id"])
+            self.assertEqual(status["state"], "VERIFIED")
+            self.assertEqual(status["receipt"]["operation_id"], record["id"])
 
 
 class IdentityTests(unittest.TestCase):
