@@ -8,11 +8,17 @@
 - **Make the reviewer decision tangible.** Scripted Vision A returns 8 for the original quantity 2. Scripted Vision B agrees with OCR. The sketch routes to a human rather than allowing a majority vote to write a business value. A reviewer who selects 8 still fails the unit-price × quantity rule. The confirmed 2 becomes 48 units through a catalog mapping.
 - **Finish with resilience.** Approval stores an exact-payload digest and queues the command in one database transaction. The worker commits to the mock ERP and deliberately raises a timeout. The next worker step performs a read-back and recovers the existing draft; a valid reply is never required for the system to discover the side effect.
 
+## Show the complete workflow
+
+Open the **Quantity conflict** sample, resolve the disputed line, and approve its saved preview. Step the worker twice. Reload the page to show the same intake, reviewed fields, and ERP verification. Then select **Upload a purchase order**, choose `fixtures/harbour-po.png`, and select **Extract fields**. The uploaded file appears in **Recent intakes** and follows the same approval and verification flow.
+
+You can leave the vision checkbox clear for a zero-key presentation. To run the configured reader, select **Use configured vision for disputed crops** with a supported, approved source. A clean order uses zero vision calls, and each request sends one located crop. Unknown layouts, unresolved contradictions, and missing anchors stay in review.
+
 ## Reproduce the supporting visuals
 
 Run `python scripts/run_demo.py` for machine-readable evidence. It executes Tesseract, routing, the review branch, dispatch and read-back locally with temporary databases. `python scripts/render_run_evidence.py` recreates the evidence cards from that run (requires DejaVu installed at the paths referenced by the script).
 
-To capture the actual workbench, run the API with a fresh state directory, install `requirements-test.txt` and run `python -m playwright install chromium`. Then run `python scripts/capture_demo.py`. The script checks the standard route, the conflict and invalid override, the approved queue, the timeout and the final read-back, and saves three screenshots. Set `CHROMIUM_BIN` to use a local Chromium or `AIOS_CAPTURE_DIR` to select the output directory. The GitHub Actions workflow uploads the same screenshots as an artifact.
+To capture the actual workbench, run the API with a fresh state directory, install `requirements-test.txt` and run `python -m playwright install chromium`. Then run `python scripts/capture_demo.py`. The script checks the standard route, the conflict and invalid override, the approved queue, the timeout and the final read-back, and saves four screenshots, including the upload and persisted inbox. Set `CHROMIUM_BIN` to use a local Chromium or `AIOS_CAPTURE_DIR` to select the output directory. The GitHub Actions workflow uploads the same screenshots as an artifact.
 
 ## Implementation boundaries
 
