@@ -1,4 +1,5 @@
 """Bounded HTTP and model adapters. Language output is data for the action gateway."""
+import asyncio
 import json
 import re
 from typing import Protocol
@@ -117,30 +118,36 @@ class OPA:
 
 
 class PydanticPlanner:
-    """Optional Pydantic AI harness, with typed output and no tools."""
+    """Optional Pydantic AI harness, with typed output and no executable tools."""
     def __init__(self, base_url: str, model: str, secret: str):
-        from pydantic_ai import Agent
+        self.base_url = https_base(base_url)
+        self.model = model
+        self.secret = secret
+
+    def plan(self, text: str) -> Intent:
+        from openai import AsyncOpenAI, OpenAIError
+        from pydantic_ai import Agent, UsageLimits, exceptions
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        self.agent = Agent(
-            OpenAIChatModel(model, provider=OpenAIProvider(base_url=https_base(base_url), api_key=secret)),
-            output_type=Intent,
-            instructions=(
-                "Map the user's sentence to a supported operation. Ask for missing identifiers "
-                "or dates. Never infer authorization. You have no executable tools."
-            ),
-            retries=0,
-        )
-
-    def plan(self, text: str) -> Intent:
-        from pydantic_ai import UsageLimits, exceptions
+        async def interpret() -> Intent:
+            async with httpx.AsyncClient(timeout=8, trust_env=False, follow_redirects=False) as transport:
+                client = AsyncOpenAI(base_url=self.base_url, api_key=self.secret, http_client=transport,
+                                     max_retries=0)
+                agent = Agent(
+                    OpenAIChatModel(self.model, provider=OpenAIProvider(openai_client=client)),
+                    output_type=Intent,
+                    instructions=(
+                        "Map the user's sentence to a supported operation. Ask for missing identifiers "
+                        "or dates. Never infer authorization. You have no executable tools."
+                    ),
+                    retries=0,
+                )
+                result = await agent.run(text, usage_limits=UsageLimits(request_limit=1),
+                                         model_settings={"max_tokens": 450})
+                return result.output
 
         try:
-            result = self.agent.run_sync(
-                text, usage_limits=UsageLimits(request_limit=1),
-                model_settings={"timeout": 8, "max_tokens": 450},
-            )
-        except exceptions.AgentRunError as error:
+            return asyncio.run(interpret())
+        except (exceptions.AgentRunError, OpenAIError) as error:
             raise ValueError("Planner could not produce a validated intent") from error
-        return result.output
