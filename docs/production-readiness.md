@@ -1,18 +1,20 @@
 # SME AIOS 生产加固与验收
 
+[English](production-readiness.en.md)
+
 代码覆盖一条物流和一条批发主链，以及复用它们的执行、审批、身份和 ERP 连接边界。下表按工程证据区分本轮可复现结果和首客上线验收。
 
 | 环节 | 本轮可验证的能力 | 首客上线必验 |
 |---|---|---|
 | 租户隔离 | PostgreSQL 强制 RLS，API 和 Worker 分开。生产启动检查角色、表所有权、RLS 与关键权限 | 用实际 Keycloak 角色、有效期、仓库映射和撤权同步验收。验证租户网络隔离及数据库事故演练 |
 | 写入控制 | 主管审批与受限 Worker。租户停写、账户暂停、请求去重、失联读回、只读重查 | 和 ERP 管理员做停写与恢复演练。ERP bridge 需原子验证权限、版本和幂等回执。连接到真实沙盒后才能评估 |
-| 迁移 | Alembic 有基线与安全迁移。测试已存在数据可升级，重复执行能通过 | 备份恢复演练、回滚窗口、服务账户和上游连接器的生产配置 |
+| 迁移 | Alembic 管理基线、安全控制及异常队列索引。测试已存在数据可升级，重复执行能通过 | 备份恢复演练、回滚窗口、服务账户和上游连接器的生产配置 |
 | 模型与资料 | 模型输出只能成为结构化意图。租户每分钟预算、上传限制、无模型本地样例 | 模型测试数据、供应商协议与出站范围。验证香港客户单据和语言覆盖、错误率、费用与延迟 |
 | 观测 | API 请求计数与耗时、受保护的 metrics、就绪检查、请求 ID 和业务审计 | 按实际 P95、积压、租约回收和未知回执建立 SLO。备份与灾备 RTO/RPO 通过恢复测量 |
 
 ## 升级步骤
 
-服务迁移和常态运行使用不同数据库身份。给 migration owner 配置 `AIOS_MIGRATION_DATABASE_URL_FILE`，文件内放 SQLAlchemy 可读取的 URL。生产地址示例为 `postgresql://migration_user:...@db.example/aios?sslmode=verify-full`。当前迁移只创建缺少的表及版本状态，原有数据保留。部署先升级数据库和授予权限，再启动新 API 和 Worker。
+服务迁移和常态运行使用不同数据库身份。给 migration owner 配置 `AIOS_MIGRATION_DATABASE_URL_FILE`，文件内放 SQLAlchemy 可读取的 URL。生产地址示例为 `postgresql://migration_user:...@db.example/aios?sslmode=verify-full`。当前迁移创建缺少的表与索引并更新版本状态，原有数据保留。部署先升级数据库和授予权限，再启动新 API 和 Worker。
 
 ```bash
 python -m pip install -r requirements-platform.txt
@@ -29,6 +31,8 @@ python -m alembic current
 - `POST /v1/proposals/{id}/reconcile` 允许仓库主管把 `NEEDS_OPERATOR` 转回只读回执查询，有限重查到阈值再次交人工。只有 ERP 回执的 tenant、操作 ID、摘要和目标都一致时，结果才转到 `VERIFIED`。
 - 在 `POST /v1/actions` 的变更提案附 `Idempotency-Key`。允许 1–128 个 ASCII 字母、数字和 `._:-`，以租户、主体为命名空间。同键同请求返回原提案的当前状态，同键异内容返回 409。并发 JSON 请求验证不会产生两张提案。幂等记录跟随提案保留，后续清理必须和审计留存约定一致。
 - `AIOS_PLANNER_CALLS_PER_MINUTE` 默认每租户 60 次。请求消耗按同一个 PostgreSQL 分钟窗口扣除，命中已保存幂等键的重放直接返回。结构化请求采用 64 KiB 上限，影像上限 8 MB。两种请求读取均限制在 15 秒内。外部网关仍应按客户并发与带宽加连接上限和速率控制。
+
+- `GET /v1/operations/exceptions` 提供按仓库隔离的待核对队列和最近的处理原因。批量来单、审批及客服验收见[试点自动化指南](pilot-automation.zh-CN.md)。
 
 ## 指标与工具选择
 

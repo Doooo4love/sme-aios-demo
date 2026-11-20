@@ -1,5 +1,7 @@
 # Pitch operator guide
 
+[简体中文](demo.zh-CN.md)
+
 ## What to say while the demo runs
 
 > A wholesale team receives purchase orders in different forms. The expensive work is often deciding which product and package the customer meant. Here the order clerk sees the exact OCR region, the disputed reading, and the multiplication that takes two cases to 48 units. After approval, the ERP write survives a lost reply and we can show which draft the system actually verified.
