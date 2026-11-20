@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from aios_demo.storage import Database
 from aios_platform.api import build_app
-from aios_platform.contracts import Plan
+from aios_platform.contracts import Plan, Receipt
 from aios_platform.database_security import verify_database
 from aios_platform.erp import ERPNext, OdooERP, plan_digest
 from aios_platform.identity import DemoIdentity, OIDCIdentity
@@ -76,6 +76,83 @@ class PlatformTests(unittest.TestCase):
 
     def stored(self, record):
         return self.runtime.workflow.get("harbour", record["id"])
+
+    def wholesale_order(self, reference="B-100"):
+        return {"po": reference, "buyer": "HBR-47", "delivery": self.day, "currency": "HKD", "total": "50",
+                "lines": [{"sku": "TEA-24", "unit": "CASE", "quantity": 2,
+                           "unit_price": "25.0", "amount": "50.00"}]}
+
+    def test_structured_batch_isolates_errors_and_deduplicates_concurrent_imports(self):
+        order = self.wholesale_order()
+        changed = self.wholesale_order("B-102")
+        path = "/v1/intakes/HK01/structured/batch"
+        orders = [order, {**order, "total": "50.00"}, None,
+                  self.wholesale_order("B-101") | {"total": "51"},
+                  changed, {**changed, "delivery": (date.today() + timedelta(days=13)).isoformat()}]
+        auth = self.auth("operator")
+        self.assertEqual(self.client.post(path, headers=self.auth("viewer"), json={"orders": orders}).status_code, 403)
+        with patch.object(DemoPlanner, "plan", side_effect=AssertionError("Structured batch must use no model")):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                responses = list(pool.map(lambda _: self.client.post(path, headers=auth, json={"orders": orders}),
+                                          range(4)))
+        for response in responses:
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json(), responses[0].json())
+        records = responses[0].json()["items"]
+        self.assertEqual(records[0]["proposal_id"], records[1]["proposal_id"])
+        self.assertEqual([record.get("code") for record in records[2:]],
+                         ["INVALID_ORDER", "ORDER_TOTAL_MISMATCH", "CONFLICTING_ORDER_REVISIONS",
+                          "CONFLICTING_ORDER_REVISIONS"])
+        single = self.client.post("/v1/intakes/HK01/structured", headers=auth, json=order).json()
+        self.assertEqual(single["intake_id"], records[0]["intake_id"])
+        self.assertEqual(self.client.get("/v1/operations/summary", headers=self.auth("manager")).json()
+                         ["proposals_by_state"], {"PROPOSED": 1})
+
+    def test_batch_approval_keeps_scope_and_exact_digest_for_each_item(self):
+        path = "/v1/intakes/HK01/structured/batch"
+        orders = [self.wholesale_order("B-201"), self.wholesale_order("B-202")]
+        result = self.client.post(path, headers=self.auth("operator"), json={"orders": orders}).json()
+        approvals = [{"proposal_id": item["proposal_id"], "digest": item["digest"]} for item in result["items"]]
+        approvals[1]["digest"] = "0" * 64
+        payload = {"proposals": [*approvals, {"proposal_id": "does-not-exist", "digest": "0" * 64}]}
+        path = "/v1/proposals/approve-batch"
+        self.assertEqual(self.client.post(path, headers=self.auth("operator"), json=payload).status_code, 403)
+        foreign = self.client.post(path, headers=self.auth("island-manager"), json=payload)
+        self.assertEqual([item["status"] for item in foreign.json()["items"]], [404, 404, 404])
+        for _ in range(2):
+            approved = self.client.post(path, headers=self.auth("manager"), json=payload)
+            self.assertEqual([item["status"] for item in approved.json()["items"]], [202, 409, 404])
+        self.assertTrue(tick(self.runtime.workflow, self.runtime.erp, "harbour"))
+        self.assertTrue(tick(self.runtime.workflow, self.runtime.erp, "harbour"))
+        states = [self.runtime.workflow.get("harbour", entry["proposal_id"])["state"] for entry in approvals]
+        self.assertEqual(states, ["VERIFIED", "PROPOSED"])
+
+    def test_exception_queue_paginates_and_does_not_hide_receipt_mismatch(self):
+        first, second = self.propose(), self.propose()
+        for record in (first, second):
+            self.assertEqual(self.approve(record).status_code, 202)
+        erp = self.runtime.erp
+        with patch.object(erp, "apply", side_effect=TimeoutError("unknown outcome")):
+            for _ in range(2):
+                self.assertTrue(tick(self.runtime.workflow, erp, "harbour"))
+            page = self.client.get("/v1/operations/exceptions", headers=self.auth("manager"), params={"limit": 1})
+            self.assertEqual(page.status_code, 200, page.text)
+            item = page.json()["items"][0]
+            next_page = self.client.get("/v1/operations/exceptions", headers=self.auth("manager"),
+                                        params=page.json()["next"]).json()
+            self.assertNotEqual(next_page["items"][0]["proposal_id"], item["proposal_id"])
+            self.assertIsNone(next_page["next"])
+        receipt = Receipt(tenant="harbour", operation_id=item["proposal_id"], plan_digest="0" * 64,
+                          target="SHP-1001", remote_id="SHP-1001")
+        with patch.object(erp, "receipt", return_value=receipt):
+            tick(self.runtime.workflow, erp, "harbour")
+        path = "/v1/operations/exceptions"
+        queue = self.client.get(path, headers=self.auth("manager")).json()["items"]
+        mismatch = next(row for row in queue if row["proposal_id"] == item["proposal_id"])
+        self.assertEqual((mismatch["state"], mismatch["last_event"]), ("NEEDS_OPERATOR", "ERP_RECEIPT_MISMATCH"))
+        self.assertEqual(self.client.get(path, headers=self.auth("island-manager")).json()["items"], [])
+        self.assertEqual(self.client.get(path, headers=self.auth("operator")).status_code, 403)
+        self.assertEqual(self.client.get(path, headers=self.auth("manager"), params={"after_due": 1}).status_code, 422)
 
     def test_role_tenant_warehouse_and_digest_bound_approval(self):
         self.assertEqual(self.client.get("/v1/me").status_code, 401)
@@ -329,21 +406,24 @@ class PlatformTests(unittest.TestCase):
 
         runtime = Services(api, self.runtime.erp, True, self.runtime.profiles)
         with TestClient(build_app(runtime, self.identity, DemoPlanner())) as client:
-            request = {"text": f"Move shipment SHP-1001 to {self.day}"}
-            headers = {**self.auth("operator"), "Idempotency-Key": "postgres-smoke"}
-            response = client.post("/v1/actions", json=request, headers=headers)
+            request = {"orders": [self.wholesale_order()]}
+            headers = self.auth("operator")
+            path = "/v1/intakes/HK01/structured/batch"
+            response = client.post(path, json=request, headers=headers)
             self.assertEqual(response.status_code, 200, response.text)
-            record = response.json()
-            replay = client.post("/v1/actions", json=request, headers=headers)
-            self.assertEqual(replay.json()["id"], record["id"])
-            response = client.post(f"/v1/proposals/{record['id']}/approve",
-                                   json={"digest": record["digest"]}, headers=self.auth("manager"))
-            self.assertEqual(response.status_code, 202, response.text)
+            record = response.json()["items"][0]
+            identifier = record["proposal_id"]
+            replay = client.post(path, json=request, headers=headers)
+            self.assertEqual(replay.json()["items"][0]["proposal_id"], identifier)
+            response = client.post("/v1/proposals/approve-batch",
+                                   json={"proposals": [{"proposal_id": identifier, "digest": record["digest"]}]},
+                                   headers=self.auth("manager"))
+            self.assertEqual(response.json()["items"][0]["status"], 202)
             self.assertTrue(tick(worker, runtime.erp, "harbour"))
             self.assertTrue(tick(worker, runtime.erp, "harbour"))
-            status = api.get("harbour", record["id"])
+            status = api.get("harbour", identifier)
             self.assertEqual(status["state"], "VERIFIED")
-            self.assertEqual(status["receipt"]["operation_id"], record["id"])
+            self.assertEqual(status["receipt"]["operation_id"], identifier)
 
 
 class IdentityTests(unittest.TestCase):
