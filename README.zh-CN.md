@@ -1,6 +1,6 @@
 # SME AIOS · 批发订单接入
 
-[English](README.md)
+[English](README.md) · [受控 AI 预审与部署交接](docs/governed-assurance.zh-CN.md)
 
 上传采购单、检查字段证据、处理异常、审批销售订单草稿，然后在本地 ERP 沙盒核对写入。收件箱保存原单、已复核预览和命令。刷新或重启后可继续处理。
 
@@ -14,6 +14,8 @@ python scripts/platform_smoke.py
 ```
 
 [后端架构及 ERP 合同](docs/platform.md)涵盖租户配置、Linux 和 PostgreSQL 隔离、API、模型与客户接入。[生产加固指南](docs/production-readiness.md)涵盖迁移、操作控制和上线条件。[试点自动化指南](docs/pilot-automation.zh-CN.md)说明批量接单、审批、异常处理和可复现的效率测试。
+
+[企业工作台与前端交接](docs/workbench-handoff.zh-CN.md)包含岗位工具、员工聊天及生产接入边界。
 
 ![采购单工作台、收件箱、OCR 证据和草稿预览](docs/browser/04-upload-and-inbox.png)
 

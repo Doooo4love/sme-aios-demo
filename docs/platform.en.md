@@ -1,6 +1,6 @@
 # SME AIOS backend architecture
 
-[简体中文](platform.md)
+[简体中文](platform.md) · [Workbench handoff](workbench-handoff.md)
 
 The first release targets Hong Kong wholesalers and logistics operators. It supports sales-order drafts, shipment lookup and shipment rescheduling. Two synthetic tenants with different settings exercise the same business logic. ERP or WMS remains authoritative for orders, shipments, inventory and accounting. AIOS keeps evidence, proposals, approvals and receipts.
 
@@ -79,7 +79,7 @@ Odoo 19 opens a transaction for each JSON-2 call. Apply and receipt persistence 
 
 | Method | Arguments and result |
 |---|---|
-| `aios_read_shipment` | `tenant, shipment_id`. Returns ID, warehouse, date, state and monotonic version, or null |
+| `aios_read_shipment` | `tenant, shipment_id`. Returns tenant, ID, warehouse, date, state and monotonic version, or null |
 | `aios_apply` | `tenant, operation_id, digest, plan`. Authenticate the tenant, verify warehouse, rights, version and digest, and commit the write and receipt atomically. Replay requires the same digest |
 | `aios_receipt` | `tenant, operation_id`. Returns `tenant, operation_id, plan_digest, target, remote_id` or null |
 
@@ -88,7 +88,7 @@ The bridge returns `{"status":"ok","result":…}`. A trusted bridge can use `{"s
 ## Production isolation and acceptance
 
 1. Run `python -m alembic upgrade head` as a separate migration owner. Create the `aios_api` and `aios_worker` logins, then apply `deploy/platform/postgres-security.sql`. Tenant scope is transaction-local. Application principals cannot update or delete audit history. A sensitive deployment should consider a dedicated database and application instance.
-2. Configure the OIDC audience, bearer type and administrator-managed `aios_tenant`, `aios_role`, and `aios_warehouses` claims. Use a suitable token TTL. Workers check local account suspension before dispatch. The customer's IdP lifecycle must feed that control.
+2. Configure the OIDC audience, bearer type and administrator-managed `aios_tenant`, `aios_role`, `aios_warehouses`, and `aios_grants` claims. Use a suitable token TTL. Workers check local account suspension before dispatch. The customer's IdP lifecycle must feed that control.
 3. Give the [Linux units](../deploy/platform/) separate UIDs, logins and ERP credentials. Put TLS, body caps and rate limits at the gateway. Restrict service outbound destinations. A customer-side bridge can keep the ERP admin surface on the private network.
 4. Collect de-identified POs, real SKU and package mappings, role examples and sandbox access. Compare shadow-mode proposals with manual entries first. Then verify draft writes and bounded rescheduling. Test lost responses, concurrent edits, wrong warehouses, replay, partial batches and reconciliation. Inventory movement, payments and financial postings need their own action contracts and risk approval.
 5. Measure backlog, unknown receipts, latency and operator effort. Acceptance includes customer-side ERP, IdP, policy, network and a database restore exercise. [Production runbook](production-readiness.en.md)

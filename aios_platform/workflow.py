@@ -10,7 +10,7 @@ from aios_demo.storage import Database, canonical, digest_of
 
 from .contracts import Actor, Plan, Receipt
 from .erp import ERP, ERPRejected, ERP_TRANSPORT_ERRORS, plan_digest
-from .providers import can_approve
+from .providers import can_approve, can_use_action
 
 
 class Conflict(ValueError):
@@ -23,7 +23,7 @@ class Workflow:
 
     def initialize(self):
         with self.db.transaction() as run:
-            for name in ("schema.sql", "hardening.sql", "operations.sql"):
+            for name in ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql"):
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():
                         run(statement)
@@ -234,6 +234,28 @@ class Workflow:
                     AND p.state IN ('NEEDS_OPERATOR', 'OUTCOME_UNKNOWN')
                     {cursor} ORDER BY p.due, p.id LIMIT ?""",
                 (actor.tenant, *warehouses, *(after or ()), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def pending_approvals(self, actor: Actor, limit: int, after: tuple[float, str] | None) -> list[dict]:
+        warehouses = sorted(actor.warehouses)
+        actions = [action for action in ("shipment.reschedule", "sales_order.create_draft")
+                   if can_use_action(actor, action)]
+        if actor.role not in {"manager", "admin"} or not warehouses or not actions:
+            return []
+        warehouse_slots = ",".join("?" for _ in warehouses)
+        action_slots = ",".join("?" for _ in actions)
+        action_field = ("CASE WHEN plan IS JSON THEN CAST(plan AS JSONB) ->> 'action' END" if self.db.dsn
+                        else "CASE WHEN json_valid(plan) THEN json_extract(plan, '$.action') END")
+        cursor = "AND (due, id) > (?, ?)" if after else ""
+        with self.tx(actor.tenant, write=False) as run:
+            rows = run(
+                f"""SELECT id, warehouse, state, expires, due, {action_field} AS action
+                    FROM aios_proposal WHERE tenant = ? AND state = 'PROPOSED'
+                      AND requester != ? AND expires > ? AND warehouse IN ({warehouse_slots})
+                      AND {action_field} IN ({action_slots}) {cursor}
+                    ORDER BY due, id LIMIT ?""",
+                (actor.tenant, actor.subject, time.time(), *warehouses, *actions, *(after or ()), limit),
             ).fetchall()
         return [dict(row) for row in rows]
 

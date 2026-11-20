@@ -1,6 +1,6 @@
 # SME AIOS · Wholesale order intake
 
-[简体中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md) · [Governed AI assurance and deployment handoff](docs/governed-assurance.md)
 
 A working prototype for wholesale purchase-order intake. Upload a purchase-order image, examine field-level evidence, review exceptions, approve a sales-order draft, and verify it in the mock ERP. The inbox preserves the document, reviewed preview, and command so the workflow can resume after refresh or restart.
 
@@ -17,6 +17,8 @@ python scripts/platform_smoke.py
 
 Read the [backend architecture and ERP bridge contract](docs/platform.en.md) for tenant configuration,
 Linux and PostgreSQL isolation, API usage, LLM options and the customer onboarding checklist. The [production hardening guide](docs/production-readiness.en.md) covers migrations, controls and release gates. The [pilot automation guide](docs/pilot-automation.md) describes bulk intake and approval, exception handling, and reproducible performance measurements.
+
+Read the [enterprise workbench and frontend handoff](docs/workbench-handoff.md) for role-scoped tools, employee chat, and customer integration gates.
 
 ![Current workbench showing a local upload, the intake inbox, OCR evidence and the draft preview](docs/browser/04-upload-and-inbox.png)
 
