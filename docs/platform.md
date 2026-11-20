@@ -1,6 +1,6 @@
 # SME AIOS 后端架构
 
-[English](platform.en.md)
+[English](platform.en.md) · [企业工作台交接](workbench-handoff.zh-CN.md)
 
 面向香港批发商和物流企业，第一版覆盖订单草稿与运单查询/改期。代码以两个配置不同的合成租户验证同一套业务内核。客户 ERP 或 WMS 保留订单、运单、库存和财务的权威状态。AIOS 保存单据证据、提案、审批和回执。
 
@@ -79,7 +79,7 @@ Odoo 19 对每个 JSON-2 调用启动单独事务，所以 `aios_apply` 必须�
 
 | 方法 | 参数与结果 |
 |---|---|
-| `aios_read_shipment` | `tenant, shipment_id` → 运单 ID、仓库、日期、状态、单调版本，或 null |
+| `aios_read_shipment` | `tenant, shipment_id` → 租户、运单 ID、仓库、日期、状态、单调版本，或 null |
 | `aios_apply` | `tenant, operation_id, digest, plan` → 成功状态。服务端从身份确认租户，复核 warehouse、权限、版本和摘要，同事务写操作回执。重复 ID 只允许相同摘要 |
 | `aios_receipt` | `tenant, operation_id` → `tenant, operation_id, plan_digest, target, remote_id`，或 null；证明写操作，而非推测最新状态 |
 
@@ -88,7 +88,7 @@ Odoo 19 对每个 JSON-2 调用启动单独事务，所以 `aios_apply` 必须�
 ## 生产隔离与首客验收
 
 1. 独立 migration owner 运行 `python -m alembic upgrade head`，创建专用 `aios_api` 和 `aios_worker` 登录账户，再执行 `deploy/platform/postgres-security.sql`。API 事务在使用租户前设置 transaction-local scope。审计表不可由这些角色更新或删除。数据库角色和 SQL 执行入口由受信应用管理，RLS 不能抵消被攻破的应用凭据。高敏客户首选独立数据库与租户部署。
-2. Keycloak 配置 audience、Bearer token 和管理员管理的 `aios_tenant`、`aios_role`、`aios_warehouses` claims。设置业务允许的 token TTL。排队动作在派发前重查 AIOS 账户停权。客户 IdP 撤权向 AIOS 同步仍需接入。试点上线前确定账户撤销、在途停写和异常接管流程。
+2. Keycloak 配置 audience、Bearer token 和管理员管理的 `aios_tenant`、`aios_role`、`aios_warehouses`、`aios_grants` claims。设置业务允许的 token TTL。排队动作在派发前重查 AIOS 账户停权。客户 IdP 撤权向 AIOS 同步仍需接入。试点上线前确定账户撤销、在途停写和异常接管流程。
 3. 使用 [Linux units](../deploy/platform/) 分配独立 UID、数据库登录和读取/写入凭据。API 仅监听本机，内网反代负责 TLS、请求体限额和速率。生产网络限制 ERP/API/IdP/模型等配置目的地。客户内网 ERP 可以通过本地受控网关接入，避免对公网开放 ERP 管理面。
 4. 首次接入取得脱敏 PO、实际 SKU 与包装、两种仓库岗位、只读测试 ERP。先按只读 shadow 对照人工录入，再上草稿与有限改期。确认 ERP 写成功而客户端断线、并发改单、跨仓权限、重复传、批次不完整和对账最终状态。库存扣减、自动付款和财务过账需另做动作合同与风险审批。
 5. 运营按租户记录排队量、未知回执数量、延迟和 OCR 复核成本。生产验收用数据库恢复实测与 CI 以外的真 ERP、Keycloak、OPA 和网络部署验证。不把 demo 的正确性、性能或覆盖率外推到客户单据。
