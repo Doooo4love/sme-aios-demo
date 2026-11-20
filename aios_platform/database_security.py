@@ -1,0 +1,36 @@
+"""Fail startup if the production role or tenant isolation is misconfigured."""
+from aios_demo.storage import Database
+
+
+def verify_database(database: Database, *, worker: bool):
+    role = "aios_worker" if worker else "aios_api"
+    with database.transaction(write=False) as run:
+        principal = run("""SELECT rolname, rolsuper, rolbypassrls, rolcreaterole
+                           FROM pg_roles WHERE rolname = CURRENT_USER""").fetchone()
+        if principal["rolname"] != role or any(principal[key] for key in
+                ("rolsuper", "rolbypassrls", "rolcreaterole")):
+            raise RuntimeError(f"Platform service must use the restricted {role} PostgreSQL login")
+        tables = run("""
+            SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
+                   pg_has_role(c.relowner, 'MEMBER') AS owner_member
+            FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema()
+              AND c.relname IN ('aios_intake', 'aios_proposal', 'aios_audit',
+                  'aios_request_key', 'aios_write_control', 'aios_suspension', 'aios_planner_budget')
+        """).fetchall()
+        if len(tables) != 7 or any(row["owner_member"] or not row["relrowsecurity"]
+                                or not row["relforcerowsecurity"] for row in tables):
+            raise RuntimeError("Apply platform migrations and forced row-level security as the migration owner")
+        privileges = run("""
+            SELECT has_table_privilege('aios_audit', 'UPDATE, DELETE, TRUNCATE') AS audit_mutable,
+                   has_column_privilege('aios_proposal', 'receipt', 'UPDATE') AS receipt_writable,
+                   has_table_privilege('aios_proposal', 'INSERT') AS can_propose,
+                   has_column_privilege('aios_write_control', 'paused', 'UPDATE') AS can_change_pause,
+                   has_table_privilege('aios_intake', 'SELECT') AS can_read_intakes
+        """).fetchone()
+        if privileges["audit_mutable"] or (
+            worker and (privileges["can_propose"] or privileges["can_change_pause"]
+                        or privileges["can_read_intakes"] or not privileges["receipt_writable"])
+        ) or (not worker and (not privileges["can_propose"] or not privileges["can_change_pause"]
+                             or privileges["receipt_writable"] or not privileges["can_read_intakes"])):
+            raise RuntimeError("Platform PostgreSQL grants do not match API/worker separation")

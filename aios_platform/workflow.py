@@ -22,11 +22,11 @@ class Workflow:
         self.db = database
 
     def initialize(self):
-        schema = Path(__file__).with_name("schema.sql").read_text()
         with self.db.transaction() as run:
-            for statement in schema.split(";"):
-                if statement.strip():
-                    run(statement)
+            for name in ("schema.sql", "hardening.sql"):
+                for statement in Path(__file__).with_name(name).read_text().split(";"):
+                    if statement.strip():
+                        run(statement)
 
     @contextmanager
     def tx(self, tenant: str, *, write: bool = True):
@@ -34,6 +34,79 @@ class Workflow:
             if self.db.dsn:
                 run("SELECT set_config('aios.tenant', ?, true)", (tenant,))
             yield run
+
+    @staticmethod
+    def _suspended(run, tenant: str, *subjects: str) -> bool:
+        marks = ",".join("?" for _ in subjects)
+        return run(
+            f"""SELECT 1 FROM aios_suspension WHERE tenant = ? AND subject IN ({marks})
+                AND suspended = 1 LIMIT 1""",
+            (tenant, *subjects),
+        ).fetchone() is not None
+
+    def is_suspended(self, actor: Actor) -> bool:
+        with self.tx(actor.tenant, write=False) as run:
+            return self._suspended(run, actor.tenant, actor.subject)
+
+    @staticmethod
+    def _paused(run, tenant: str) -> bool:
+        row = run("SELECT paused FROM aios_write_control WHERE tenant = ?", (tenant,)).fetchone()
+        return bool(row and row["paused"])
+
+    def write_paused(self, tenant: str) -> bool:
+        with self.tx(tenant, write=False) as run:
+            return self._paused(run, tenant)
+
+    def set_write_pause(self, actor: Actor, paused: bool):
+        if actor.role != "admin":
+            raise PermissionError("Tenant administrator required")
+        with self.tx(actor.tenant) as run:
+            run("""INSERT INTO aios_write_control VALUES (?, ?) ON CONFLICT (tenant)
+                   DO UPDATE SET paused = excluded.paused""", (actor.tenant, int(paused)))
+            self._audit(run, actor.tenant, actor.subject, "write-control",
+                        "WRITES_PAUSED" if paused else "WRITES_RESUMED")
+
+    def set_suspension(self, actor: Actor, subject: str, suspended: bool):
+        if actor.role != "admin" or actor.subject == subject:
+            raise PermissionError("An administrator must manage another subject")
+        with self.tx(actor.tenant) as run:
+            run("""INSERT INTO aios_suspension VALUES (?, ?, ?) ON CONFLICT (tenant, subject)
+                   DO UPDATE SET suspended = excluded.suspended""", (actor.tenant, subject, int(suspended)))
+            self._audit(run, actor.tenant, actor.subject, subject,
+                        "ACCESS_SUSPENDED" if suspended else "ACCESS_RESTORED")
+
+    def take_planner_budget(self, tenant: str, limit: int) -> bool:
+        window = int(time.time()) // 60
+        with self.tx(tenant) as run:
+            return run(
+                """INSERT INTO aios_planner_budget VALUES (?, ?, 1)
+                   ON CONFLICT (tenant) DO UPDATE SET window_id = excluded.window_id,
+                   calls = CASE WHEN aios_planner_budget.window_id = excluded.window_id
+                                THEN aios_planner_budget.calls + 1 ELSE 1 END
+                   WHERE aios_planner_budget.window_id < excluded.window_id
+                      OR (aios_planner_budget.window_id = excluded.window_id
+                          AND aios_planner_budget.calls < ?)
+                   RETURNING calls""", (tenant, window, limit),
+            ).fetchone() is not None
+
+    @staticmethod
+    def _find_request(run, actor: Actor, key: str, fingerprint: str) -> str | None:
+        row = run("""SELECT fingerprint, proposal_id FROM aios_request_key
+                     WHERE tenant = ? AND subject = ? AND request_key = ?""",
+                  (actor.tenant, actor.subject, key)).fetchone()
+        if row is None:
+            return None
+        if row["fingerprint"] != fingerprint:
+            raise Conflict("Idempotency key already used for a different request")
+        return row["proposal_id"]
+
+    def find_request(self, actor: Actor, key: str, fingerprint: str) -> str | None:
+        with self.tx(actor.tenant, write=False) as run:
+            return self._find_request(run, actor, key, fingerprint)
+
+    def ping(self, tenant: str):
+        with self.tx(tenant, write=False) as run:
+            run("SELECT paused FROM aios_write_control WHERE tenant = ?", (tenant,)).fetchone()
 
     @staticmethod
     def _audit(run, tenant: str, subject: str, target: str, event: str):
@@ -60,10 +133,21 @@ class Workflow:
             raise KeyError(intake_id)
         return {"warehouse": row["warehouse"], "evidence": json.loads(row["document"])}
 
-    def propose(self, actor: Actor, plan: Plan) -> str:
+    def propose(self, actor: Actor, plan: Plan, *, idempotency: tuple[str, str] | None = None) -> str:
         proposal_id = uuid4().hex
         now = time.time()
         with self.tx(actor.tenant) as run:
+            if idempotency is not None:
+                key, fingerprint = idempotency
+                inserted = run("""INSERT INTO aios_request_key VALUES (?, ?, ?, ?, ?)
+                                  ON CONFLICT (tenant, subject, request_key) DO NOTHING
+                                  RETURNING proposal_id""",
+                               (actor.tenant, actor.subject, key, fingerprint, proposal_id)).fetchone()
+                if not inserted:
+                    prior = self._find_request(run, actor, key, fingerprint)
+                    if prior is None:
+                        raise Conflict("The original request is unavailable")
+                    return prior
             run("""INSERT INTO aios_proposal
                    (tenant, id, warehouse, requester, digest, plan, state, due, expires)
                    VALUES (?, ?, ?, ?, ?, ?, 'PROPOSED', ?, ?)""",
@@ -107,6 +191,8 @@ class Workflow:
             plan = Plan.model_validate_json(row["plan"])
             if not can_approve(actor, row["requester"], plan):
                 raise PermissionError("This action requires an independent warehouse approver")
+            if self._suspended(run, actor.tenant, actor.subject, row["requester"]):
+                raise PermissionError("Requester or approver access is suspended")
             if digest != row["digest"] or digest != plan_digest(plan):
                 raise Conflict("Preview digest changed")
             if row["approver"] == actor.subject:
@@ -119,21 +205,39 @@ class Workflow:
                 raise Conflict("Proposal expired or was already acted on")
             self._audit(run, actor.tenant, actor.subject, proposal_id, "APPROVED_AND_QUEUED")
 
+    def reopen_verification(self, actor: Actor, proposal_id: str):
+        if actor.role not in {"manager", "admin"}:
+            raise PermissionError("Warehouse manager access required")
+        with self.tx(actor.tenant) as run:
+            row = run("SELECT warehouse FROM aios_proposal WHERE tenant = ? AND id = ?",
+                      (actor.tenant, proposal_id)).fetchone()
+            if not row or row["warehouse"] not in actor.warehouses:
+                raise KeyError(proposal_id)
+            changed = run("""UPDATE aios_proposal SET state = 'OUTCOME_UNKNOWN', checks = 0, due = ?
+                             WHERE tenant = ? AND id = ? AND state = 'NEEDS_OPERATOR'""",
+                          (time.time(), actor.tenant, proposal_id))
+            if changed.rowcount != 1:
+                raise Conflict("Only an operator-held proposal can be rechecked")
+            self._audit(run, actor.tenant, actor.subject, proposal_id, "READBACK_REOPENED")
+
     def claim(self, tenant: str) -> dict | None:
         now = time.time()
         with self.tx(tenant) as run:
-            # A stranded send becomes read-only recovery. Its prior epoch cannot finalize the row.
-            recovered = run(
-                """UPDATE aios_proposal SET state = 'OUTCOME_UNKNOWN', due = ?
-                   WHERE tenant = ? AND state IN ('SENDING', 'CHECKING') AND due <= ? RETURNING id""",
-                (now, tenant, now),
-            ).fetchall()
-            for row in recovered:
-                self._audit(run, tenant, "worker", row["id"], "LEASE_EXPIRED_VERIFY_ONLY")
             lock = " FOR UPDATE SKIP LOCKED" if self.db.dsn else ""
+            # Recover leases in small batches. Use verification only after an abandoned send.
+            recovered = run(
+                """SELECT id FROM aios_proposal WHERE tenant = ? AND due <= ?
+                   AND state IN ('SENDING', 'CHECKING') ORDER BY due, id LIMIT 25""" + lock,
+                (tenant, now),
+            ).fetchall()
+            for abandoned in recovered:
+                run("UPDATE aios_proposal SET state = 'OUTCOME_UNKNOWN', due = ? WHERE tenant = ? AND id = ?",
+                    (now, tenant, abandoned["id"]))
+                self._audit(run, tenant, "worker", abandoned["id"], "LEASE_EXPIRED_VERIFY_ONLY")
+            paused = self._paused(run, tenant)
             row = run("""SELECT * FROM aios_proposal WHERE tenant = ? AND due <= ?
-                         AND state IN ('QUEUED','VERIFYING','OUTCOME_UNKNOWN')
-                         ORDER BY due, id LIMIT 1""" + lock, (tenant, now)).fetchone()
+                         AND (state IN ('VERIFYING','OUTCOME_UNKNOWN') OR (state = 'QUEUED' AND ? = 0))
+                         ORDER BY due, id LIMIT 1""" + lock, (tenant, now, int(paused))).fetchone()
             if not row:
                 return None
             sending = row["state"] == "QUEUED"
@@ -155,7 +259,24 @@ class Workflow:
             self._audit(run, tenant, "worker", row["id"], state)
             return {**dict(row), "state": state, "epoch": epoch, "checks": checks, "due": now + 45}
 
-    def finish(self, job: dict, state: str, *, receipt: Receipt | None = None, delay: int = 0):
+    def dispatch_gate(self, job: dict) -> tuple[str, str] | None:
+        """Recheck just before ERP I/O. None means a still-valid lease may send."""
+        tenant = job["tenant"]
+        with self.tx(tenant, write=False) as run:
+            if not run("""SELECT 1 FROM aios_proposal WHERE tenant = ? AND id = ? AND epoch = ?
+                          AND state = 'SENDING' AND due > ?""",
+                       (tenant, job["id"], job["epoch"], time.time())).fetchone():
+                return "OUTCOME_UNKNOWN", "LEASE_LOST_BEFORE_SEND"
+            if self._suspended(run, tenant, job["requester"], job["approver"]):
+                return "REJECTED", "ACCESS_SUSPENDED_BEFORE_SEND"
+            if job["expires"] <= time.time():
+                return "REJECTED", "APPROVAL_EXPIRED_BEFORE_SEND"
+            if self._paused(run, tenant):
+                return "QUEUED", "WRITES_PAUSED_BEFORE_SEND"
+        return None
+
+    def finish(self, job: dict, state: str, *, receipt: Receipt | None = None, delay: int = 0,
+               event: str | None = None):
         with self.tx(job["tenant"]) as run:
             now = time.time()
             result = run(
@@ -165,7 +286,7 @@ class Workflow:
                  job["tenant"], job["id"], job["state"], job["epoch"], now),
             )
             if result.rowcount == 1:
-                self._audit(run, job["tenant"], "worker", job["id"], state)
+                self._audit(run, job["tenant"], "worker", job["id"], event or state)
 
 
 def tick(workflow: Workflow, erp: ERP, tenant: str) -> bool:
@@ -181,6 +302,10 @@ def tick(workflow: Workflow, erp: ERP, tenant: str) -> bool:
         workflow.finish(job, "NEEDS_OPERATOR")
         return True
     if job["state"] == "SENDING":
+        stop = workflow.dispatch_gate(job)
+        if stop:
+            workflow.finish(job, stop[0], event=stop[1])
+            return True
         try:
             erp.apply(job["id"], plan)
         except ERPRejected:

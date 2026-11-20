@@ -14,7 +14,7 @@ python scripts/platform_smoke.py
 ```
 
 Read the [backend architecture and ERP bridge contract](docs/platform.md) for tenant configuration,
-Linux and PostgreSQL isolation, API usage, LLM options and the customer onboarding checklist.
+Linux and PostgreSQL isolation, API usage, LLM options and the customer onboarding checklist. The [production hardening guide](docs/production-readiness.md) covers migrations, operational controls, monitoring and release gates.
 
 ![Current workbench showing a local upload, the intake inbox, OCR evidence and the draft preview](docs/browser/04-upload-and-inbox.png)
 
