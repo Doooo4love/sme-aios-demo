@@ -1,5 +1,7 @@
 # SME AIOS 后端架构
 
+[English](platform.en.md) · [企业工作台交接](workbench-handoff.zh-CN.md)
+
 面向香港批发商和物流企业，第一版覆盖订单草稿与运单查询/改期。代码以两个配置不同的合成租户验证同一套业务内核。客户 ERP 或 WMS 保留订单、运单、库存和财务的权威状态。AIOS 保存单据证据、提案、审批和回执。
 
 ## 共用内核与接入边界
@@ -19,14 +21,14 @@ flowchart TB
 |---|---|---|
 | 身份和角色 | JWT 签名、issuer、audience、expiry，租户、岗位、仓库；viewer 可查，operator 可提案，manager/admin 可独立审批。没有自我审批 | IdP、客户岗位与仓库/法人映射、访问权限、离职撤权流程 |
 | 意图与工具 | 双语规则 planner、OpenAI-compatible HTTP、可选 Pydantic AI；动作 schema 阻止模型指定身份、任意命令、SQL 或连接器地址 | LLM 提供商与模型、可以外发的字段、消歧词汇和语言样本 |
-| 数据接入 | 标准 PO JSON 与租户级价格上限、货品、箱件单位映射；图像入口按模板启用，搭载现有本地 OCR | EDI/CSV/邮件样本、版式、买方 SKU、单位、币种、行金额及税费口径 |
+| 数据接入 | 标准 PO JSON 与租户级价格上限、货品、箱件单位映射；图像入口按模板启用，搭载现有本地 OCR；已标准化订单可批量校验和生成提案 | EDI/CSV/邮件样本、版式、买方 SKU、单位、币种、行金额及税费口径 |
 | 业务动作 | 运单查询、运单改期、创建销售订单草稿。草稿金额用 Decimal 计算，改期绑定 ERP 当前版本 | 单据状态与时区定义、必填字段、可改范围、库存/运输约束 |
 | 工作流 | 预览摘要、审批与队列同事务、租约和 epoch、读回重试上限、操作审计与仓库级状态计数 | 审批矩阵、SLA、高风险动作和人工对账责任人 |
 | ERP 连接 | 本地事务型仿真；Odoo JSON-2 和 ERPNext/Frappe RPC 客户端。每个企业部署钉住一个租户与连接器 | ERP 版本/方案、测试租户、业务对象归属、专用读写账户、客户域 bridge 和对账验收 |
 | 部署 | systemd 分开 API 与 Worker 用户，PostgreSQL 最小权限和 RLS SQL | 数据区域、内网和出站允许列表、凭据轮换、备份恢复指标和部署窗口 |
 | 运维 | 状态及事件可查，提案和回执关联；核心测试覆盖隔离、复核、并发状态与错误恢复 | OTel 后端、告警、留存与脱敏要求、备份与恢复演练 |
 
-配置文件使用 [租户配置样例](../deploy/platform/demo-profiles.json) 的结构。通过自有主数据及客户 ERP bridge 处理客户特有逻辑。内部档号仅接受受限字符。原件映像在现有 PO 演示服务中保留。平台服务当前保存已规范化的 PO 或 OCR 证据及原始 SHA-256，首次部署要接经客户批准的对象存储和保留周期管理。图像识别只有示例模板。未知格式可由上游 EDI/CSV 映射到标准合同，或排队做人工复核。现有采购单演示独立运行。
+配置文件使用 [租户配置样例](../deploy/platform/demo-profiles.json) 的结构。通过自有主数据及客户 ERP bridge 处理客户特有逻辑。内部档号仅接受受限字符。原件映像在现有 PO 演示服务中保留。平台服务当前保存已规范化的 PO 或 OCR 证据及原始 SHA-256，首次部署要接经客户批准的对象存储和保留周期管理。图像识别只有示例模板。更多批量接口及异常处理见[试点自动化指南](pilot-automation.zh-CN.md)。未知格式可由上游 EDI/CSV 映射到标准合同，或排队做人工复核。现有采购单演示独立运行。
 
 ## 选型与引入顺序
 
@@ -60,6 +62,9 @@ uvicorn aios_platform.api:create_app --factory --host 127.0.0.1 --port 8760
 | `POST /v1/actions` | 输入 `text` 和可选 OCR `overrides`。返回澄清、就地查询结果，或含 `before` / `after`、审批摘要和操作 ID 的提案 |
 | `POST /v1/intakes/{warehouse}` | 向已启用模板的租户上传 PNG/JPEG，读取 OCR 证据 |
 | `POST /v1/intakes/{warehouse}/structured` | 已标准化 JSON。订单字段 `po, buyer, currency, delivery, total, lines`，订单行字段 `sku, unit, quantity, unit_price, amount` |
+| `POST /v1/intakes/{warehouse}/structured/batch` | 批量生成提案，逐条返回结果，无需模型 |
+| `POST /v1/proposals/approve-batch` | 独立主管逐条校验并批量放行，结果按项返回 |
+| `GET /v1/operations/exceptions` | 按仓库与租户分页列出回执待查及需人工处理的提案 |
 | `POST /v1/proposals/{id}/approve` | 独立主管提交 `digest`。登记审批与放行队列 |
 | `GET /v1/proposals/{id}` | 状态、审批人、回执和审计时间线 |
 | `GET /v1/operations/summary` | 主管可读授予仓库范围内的提案状态计数 |
@@ -74,7 +79,7 @@ Odoo 19 对每个 JSON-2 调用启动单独事务，所以 `aios_apply` 必须�
 
 | 方法 | 参数与结果 |
 |---|---|
-| `aios_read_shipment` | `tenant, shipment_id` → 运单 ID、仓库、日期、状态、单调版本，或 null |
+| `aios_read_shipment` | `tenant, shipment_id` → 租户、运单 ID、仓库、日期、状态、单调版本，或 null |
 | `aios_apply` | `tenant, operation_id, digest, plan` → 成功状态。服务端从身份确认租户，复核 warehouse、权限、版本和摘要，同事务写操作回执。重复 ID 只允许相同摘要 |
 | `aios_receipt` | `tenant, operation_id` → `tenant, operation_id, plan_digest, target, remote_id`，或 null；证明写操作，而非推测最新状态 |
 
@@ -82,8 +87,8 @@ Odoo 19 对每个 JSON-2 调用启动单独事务，所以 `aios_apply` 必须�
 
 ## 生产隔离与首客验收
 
-1. 独立 migration owner 运行 `aios_platform/schema.sql` 和 `deploy/platform/postgres-security.sql`，创建专用 `aios_api` 和 `aios_worker` 登录帐户。API 事务在使用租户前设置 transaction-local scope。审计表不可由这些角色更新或删除。数据库角色和 SQL 执行入口由受信应用管理，RLS 不能抵消被攻破的应用凭据。高敏客户首选独立数据库与租户部署。
-2. Keycloak 配置 audience、Bearer token 和管理员管理的 `aios_tenant`、`aios_role`、`aios_warehouses` claims。设置业务允许的 token TTL。当前未实现排队动作的实时人员撤权重查。试点上线前确定账户撤销、在途停写和异常接管流程。
+1. 独立 migration owner 运行 `python -m alembic upgrade head`，创建专用 `aios_api` 和 `aios_worker` 登录账户，再执行 `deploy/platform/postgres-security.sql`。API 事务在使用租户前设置 transaction-local scope。审计表不可由这些角色更新或删除。数据库角色和 SQL 执行入口由受信应用管理，RLS 不能抵消被攻破的应用凭据。高敏客户首选独立数据库与租户部署。
+2. Keycloak 配置 audience、Bearer token 和管理员管理的 `aios_tenant`、`aios_role`、`aios_warehouses`、`aios_grants` claims。设置业务允许的 token TTL。排队动作在派发前重查 AIOS 账户停权。客户 IdP 撤权向 AIOS 同步仍需接入。试点上线前确定账户撤销、在途停写和异常接管流程。
 3. 使用 [Linux units](../deploy/platform/) 分配独立 UID、数据库登录和读取/写入凭据。API 仅监听本机，内网反代负责 TLS、请求体限额和速率。生产网络限制 ERP/API/IdP/模型等配置目的地。客户内网 ERP 可以通过本地受控网关接入，避免对公网开放 ERP 管理面。
 4. 首次接入取得脱敏 PO、实际 SKU 与包装、两种仓库岗位、只读测试 ERP。先按只读 shadow 对照人工录入，再上草稿与有限改期。确认 ERP 写成功而客户端断线、并发改单、跨仓权限、重复传、批次不完整和对账最终状态。库存扣减、自动付款和财务过账需另做动作合同与风险审批。
 5. 运营按租户记录排队量、未知回执数量、延迟和 OCR 复核成本。生产验收用数据库恢复实测与 CI 以外的真 ERP、Keycloak、OPA 和网络部署验证。不把 demo 的正确性、性能或覆盖率外推到客户单据。

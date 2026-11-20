@@ -83,14 +83,22 @@ class CompatiblePlanner:
         return checked_intent(json.loads(content))
 
 
+def can_use_action(actor: Actor, action: str) -> bool:
+    if action == "shipment.read":
+        return "shipment.read" in actor.grants
+    if actor.role not in {"operator", "manager", "admin"}:
+        return False
+    if action == "shipment.reschedule":
+        return {"shipment.read", "shipment.reschedule"} <= actor.grants
+    return action == "sales_order.create_draft" and "order.work" in actor.grants
+
+
 def allowed(actor: Actor, action: str, warehouse: str) -> bool:
-    return warehouse in actor.warehouses and (
-        action == "shipment.read" or actor.role in {"operator", "manager", "admin"}
-    )
+    return warehouse in actor.warehouses and can_use_action(actor, action)
 
 
 def can_approve(actor: Actor, requester: str, plan: Plan) -> bool:
-    return actor.tenant == plan.tenant and actor.subject != requester and plan.warehouse in actor.warehouses \
+    return actor.tenant == plan.tenant and actor.subject != requester and allowed(actor, plan.action, plan.warehouse) \
         and actor.role in {"manager", "admin"}
 
 

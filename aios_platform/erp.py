@@ -113,7 +113,11 @@ class GatewayERP:
 
     def shipment(self, tenant: str, reference: str) -> Shipment | None:
         value = self._call(tenant, "aios_read_shipment", {"shipment_id": reference})
-        return Shipment.model_validate(value) if value is not None else None
+        if value is None:
+            return None
+        if not isinstance(value, dict) or value.get("tenant") != tenant:
+            raise ValueError("Invalid shipment tenant from ERP bridge")
+        return Shipment.model_validate({field: item for field, item in value.items() if field != "tenant"})
 
     def apply(self, operation_id: str, plan: Plan) -> None:
         if not self.write:

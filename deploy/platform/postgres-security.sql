@@ -68,3 +68,70 @@ GRANT UPDATE (paused) ON aios_write_control TO aios_api;
 GRANT UPDATE (suspended) ON aios_suspension TO aios_api;
 GRANT UPDATE (window_id, calls) ON aios_planner_budget TO aios_api;
 GRANT SELECT ON aios_write_control, aios_suspension TO aios_worker;
+
+ALTER TABLE aios_chat_room ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_chat_room FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_chat_tenant ON aios_chat_room;
+CREATE POLICY aios_chat_tenant ON aios_chat_room TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_chat_member ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_chat_member FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_chat_tenant ON aios_chat_member;
+CREATE POLICY aios_chat_tenant ON aios_chat_member TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_chat_message ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_chat_message FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_chat_message_read ON aios_chat_message;
+CREATE POLICY aios_chat_message_read ON aios_chat_message FOR SELECT TO aios_api USING (
+    tenant = current_setting('aios.tenant', true) AND EXISTS (
+        SELECT 1 FROM aios_chat_member AS m
+        WHERE m.tenant = aios_chat_message.tenant AND m.room_id = aios_chat_message.room_id
+          AND m.subject = current_setting('aios.subject', true) AND aios_chat_message.seq >= m.from_seq
+    )
+);
+DROP POLICY IF EXISTS aios_chat_message_insert ON aios_chat_message;
+CREATE POLICY aios_chat_message_insert ON aios_chat_message FOR INSERT TO aios_api WITH CHECK (
+    tenant = current_setting('aios.tenant', true) AND author = current_setting('aios.subject', true)
+    AND EXISTS (
+        SELECT 1 FROM aios_chat_member AS m
+        WHERE m.tenant = aios_chat_message.tenant AND m.room_id = aios_chat_message.room_id
+          AND m.subject = current_setting('aios.subject', true) AND aios_chat_message.seq >= m.from_seq
+    )
+);
+
+REVOKE ALL ON aios_chat_room, aios_chat_member, aios_chat_message FROM PUBLIC, aios_worker;
+GRANT SELECT, INSERT ON aios_chat_room, aios_chat_member, aios_chat_message TO aios_api;
+GRANT UPDATE (next_seq) ON aios_chat_room TO aios_api;
+GRANT DELETE ON aios_chat_member TO aios_api;
+
+ALTER TABLE aios_assurance_head ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_assurance_head FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_assurance_tenant ON aios_assurance_head;
+CREATE POLICY aios_assurance_tenant ON aios_assurance_head TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_assurance_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_assurance_audit FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_assurance_tenant ON aios_assurance_audit;
+CREATE POLICY aios_assurance_tenant ON aios_assurance_audit TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_assurance_review ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_assurance_review FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_assurance_tenant ON aios_assurance_review;
+CREATE POLICY aios_assurance_tenant ON aios_assurance_review TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+REVOKE ALL ON aios_assurance_head, aios_assurance_audit, aios_assurance_review FROM PUBLIC, aios_worker;
+REVOKE UPDATE, DELETE, TRUNCATE ON aios_assurance_audit FROM aios_api;
+GRANT SELECT, INSERT ON aios_assurance_head, aios_assurance_review TO aios_api;
+GRANT INSERT ON aios_assurance_audit TO aios_api;
+GRANT UPDATE (tip_seq, tip_hash) ON aios_assurance_head TO aios_api;
+GRANT UPDATE (state, decisions) ON aios_assurance_review TO aios_api;

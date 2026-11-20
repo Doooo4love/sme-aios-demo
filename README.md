@@ -1,5 +1,7 @@
 # SME AIOS · Wholesale order intake
 
+[简体中文](README.zh-CN.md) · [Governed AI assurance and deployment handoff](docs/governed-assurance.md)
+
 A working prototype for wholesale purchase-order intake. Upload a purchase-order image, examine field-level evidence, review exceptions, approve a sales-order draft, and verify it in the mock ERP. The inbox preserves the document, reviewed preview, and command so the workflow can resume after refresh or restart.
 
 ## Backend platform
@@ -13,8 +15,10 @@ python -m pip install -r requirements-platform.txt
 python scripts/platform_smoke.py
 ```
 
-Read the [backend architecture and ERP bridge contract](docs/platform.md) for tenant configuration,
-Linux and PostgreSQL isolation, API usage, LLM options and the customer onboarding checklist. The [production hardening guide](docs/production-readiness.md) covers migrations, operational controls, monitoring and release gates.
+Read the [backend architecture and ERP bridge contract](docs/platform.en.md) for tenant configuration,
+Linux and PostgreSQL isolation, API usage, LLM options and the customer onboarding checklist. The [production hardening guide](docs/production-readiness.en.md) covers migrations, controls and release gates. The [pilot automation guide](docs/pilot-automation.md) describes bulk intake and approval, exception handling, and reproducible performance measurements.
+
+Read the [enterprise workbench and frontend handoff](docs/workbench-handoff.md) for role-scoped tools, employee chat, and customer integration gates.
 
 ![Current workbench showing a local upload, the intake inbox, OCR evidence and the draft preview](docs/browser/04-upload-and-inbox.png)
 
@@ -81,4 +85,4 @@ flowchart LR
 
 ## Scope
 
-This is a single-tenant pitch prototype with synthetic documents, a fixed local reviewer, and a mock ERP backed by a separate database file. The predefined pitch scenarios use **scripted vision fixtures** by default. New uploads use local OCR by default, and the default command store is SQLite. A PostgreSQL path and an opt-in HTTPS vision adapter are included. Real ERP connectors, identity and role enforcement, and automatic production writes remain integration work. The app is intended for loopback use. See [implementation notes](docs/demo.md#implementation-boundaries) before adapting it to a customer environment.
+The workbench is a single-tenant pitch prototype with synthetic documents, a fixed local reviewer, and a mock ERP backed by a separate database file. The predefined pitch scenarios use **scripted vision fixtures** by default. New uploads use local OCR by default, and the default command store is SQLite. A PostgreSQL path and an opt-in HTTPS vision adapter are included. The backend platform provides separate role enforcement and ERP bridge clients. Customer-side ERP transactions, identity onboarding, and write acceptance are pilot integration work. The app is intended for loopback use. See [implementation notes](docs/demo.md#implementation-boundaries) before adapting it to a customer environment.

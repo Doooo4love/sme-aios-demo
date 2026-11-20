@@ -6,11 +6,11 @@ import sqlite3
 import time
 from uuid import uuid4
 
-from aios_demo.storage import Database, canonical
+from aios_demo.storage import Database, canonical, digest_of
 
 from .contracts import Actor, Plan, Receipt
 from .erp import ERP, ERPRejected, ERP_TRANSPORT_ERRORS, plan_digest
-from .providers import can_approve
+from .providers import can_approve, can_use_action
 
 
 class Conflict(ValueError):
@@ -23,7 +23,7 @@ class Workflow:
 
     def initialize(self):
         with self.db.transaction() as run:
-            for name in ("schema.sql", "hardening.sql"):
+            for name in ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql"):
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():
                         run(statement)
@@ -117,13 +117,42 @@ class Workflow:
         with self.tx(actor.tenant) as run:
             self._audit(run, actor.tenant, actor.subject, target, event)
 
-    def add_intake(self, actor: Actor, warehouse: str, document: dict) -> str:
-        intake_id = uuid4().hex
-        with self.tx(actor.tenant) as run:
-            run("INSERT INTO aios_intake VALUES (?, ?, ?, ?)",
-                (actor.tenant, intake_id, warehouse, canonical(document)))
+    @staticmethod
+    def structured_intake_id(warehouse: str, document: dict) -> str:
+        return digest_of({"warehouse": warehouse, "artifact_sha256": document["artifact_sha256"]})
+
+    def _store_intake(self, run, actor: Actor, warehouse: str, document: dict, intake_id: str):
+        inserted = run("""INSERT INTO aios_intake VALUES (?, ?, ?, ?)
+                         ON CONFLICT (tenant, id) DO NOTHING""",
+                       (actor.tenant, intake_id, warehouse, canonical(document)))
+        if inserted.rowcount == 1:
             self._audit(run, actor.tenant, actor.subject, intake_id, "PO_INTAKE")
+
+    def add_intake(self, actor: Actor, warehouse: str, document: dict) -> str:
+        intake_id = (self.structured_intake_id(warehouse, document)
+                     if document["kind"] == "structured" else uuid4().hex)
+        with self.tx(actor.tenant) as run:
+            self._store_intake(run, actor, warehouse, document, intake_id)
         return intake_id
+
+    def prepare_orders(
+        self, actor: Actor, warehouse: str, entries: list[tuple[dict, Plan | None]],
+    ) -> dict[str, dict]:
+        prepared = {}
+        # Consistent lock acquisition for concurrent submissions containing the same items.
+        ordered = sorted(entries, key=lambda entry: self.structured_intake_id(warehouse, entry[0]))
+        with self.tx(actor.tenant) as run:
+            for document, plan in ordered:
+                intake_id = self.structured_intake_id(warehouse, document)
+                self._store_intake(run, actor, warehouse, document, intake_id)
+                if plan is not None:
+                    # Slash is reserved for internal keys and excluded by the public key schema.
+                    key = ("batch/" + intake_id, document["artifact_sha256"])
+                    proposal_id = self._store_proposal(run, actor, plan, key)
+                    row = run("""SELECT id AS proposal_id, digest, state FROM aios_proposal
+                                 WHERE tenant = ? AND id = ?""", (actor.tenant, proposal_id)).fetchone()
+                    prepared[intake_id] = dict(row)
+        return prepared
 
     def intake(self, tenant: str, intake_id: str) -> dict:
         with self.tx(tenant, write=False) as run:
@@ -134,37 +163,42 @@ class Workflow:
         return {"warehouse": row["warehouse"], "evidence": json.loads(row["document"])}
 
     def propose(self, actor: Actor, plan: Plan, *, idempotency: tuple[str, str] | None = None) -> str:
+        with self.tx(actor.tenant) as run:
+            return self._store_proposal(run, actor, plan, idempotency)
+
+    def _store_proposal(self, run, actor: Actor, plan: Plan, idempotency: tuple[str, str] | None) -> str:
         proposal_id = uuid4().hex
         now = time.time()
-        with self.tx(actor.tenant) as run:
-            if idempotency is not None:
-                key, fingerprint = idempotency
-                inserted = run("""INSERT INTO aios_request_key VALUES (?, ?, ?, ?, ?)
-                                  ON CONFLICT (tenant, subject, request_key) DO NOTHING
-                                  RETURNING proposal_id""",
-                               (actor.tenant, actor.subject, key, fingerprint, proposal_id)).fetchone()
-                if not inserted:
-                    prior = self._find_request(run, actor, key, fingerprint)
-                    if prior is None:
-                        raise Conflict("The original request is unavailable")
-                    return prior
-            run("""INSERT INTO aios_proposal
-                   (tenant, id, warehouse, requester, digest, plan, state, due, expires)
-                   VALUES (?, ?, ?, ?, ?, ?, 'PROPOSED', ?, ?)""",
-                (actor.tenant, proposal_id, plan.warehouse, actor.subject, plan_digest(plan),
-                 plan.model_dump_json(), now, now + 900))
-            self._audit(run, actor.tenant, actor.subject, proposal_id, "PROPOSED")
+        if idempotency is not None:
+            key, fingerprint = idempotency
+            inserted = run("""INSERT INTO aios_request_key VALUES (?, ?, ?, ?, ?)
+                              ON CONFLICT (tenant, subject, request_key) DO NOTHING
+                              RETURNING proposal_id""",
+                           (actor.tenant, actor.subject, key, fingerprint, proposal_id)).fetchone()
+            if not inserted:
+                prior = self._find_request(run, actor, key, fingerprint)
+                if prior is None:
+                    raise Conflict("The original request is unavailable")
+                return prior
+        run("""INSERT INTO aios_proposal
+               (tenant, id, warehouse, requester, digest, plan, state, due, expires)
+               VALUES (?, ?, ?, ?, ?, ?, 'PROPOSED', ?, ?)""",
+            (actor.tenant, proposal_id, plan.warehouse, actor.subject, plan_digest(plan),
+             plan.model_dump_json(), now, now + 900))
+        self._audit(run, actor.tenant, actor.subject, proposal_id, "PROPOSED")
         return proposal_id
 
-    def get(self, tenant: str, proposal_id: str) -> dict:
+    def get(self, tenant: str, proposal_id: str, *, include_events: bool = True) -> dict:
         with self.tx(tenant, write=False) as run:
             row = run("SELECT * FROM aios_proposal WHERE tenant = ? AND id = ?",
                       (tenant, proposal_id)).fetchone()
             if not row:
                 raise KeyError(proposal_id)
-            events = run("""SELECT subject, event, at FROM aios_audit
-                            WHERE tenant = ? AND target = ? ORDER BY at, id""",
-                         (tenant, proposal_id)).fetchall()
+            events = []
+            if include_events:
+                events = run("""SELECT subject, event, at FROM aios_audit
+                                WHERE tenant = ? AND target = ? ORDER BY at, id""",
+                             (tenant, proposal_id)).fetchall()
         return {**dict(row), "plan": json.loads(row["plan"]),
                 "receipt": json.loads(row["receipt"]) if row["receipt"] else None,
                 "events": [dict(event) for event in events]}
@@ -181,6 +215,49 @@ class Workflow:
                 (actor.tenant, *warehouses),
             ).fetchall()
         return {row["state"]: row["count"] for row in rows}
+
+    def exceptions(self, actor: Actor, limit: int, after: tuple[float, str] | None) -> list[dict]:
+        if not actor.warehouses:
+            return []
+        warehouses = sorted(actor.warehouses)
+        marks = ",".join("?" for _ in warehouses)
+        cursor = " AND (p.due, p.id) > (?, ?)" if after else ""
+        with self.tx(actor.tenant, write=False) as run:
+            rows = run(
+                f"""SELECT p.id AS proposal_id, p.warehouse, p.state, p.due, p.checks,
+                           (SELECT a.event FROM aios_audit AS a WHERE a.tenant = p.tenant AND a.target = p.id
+                            AND a.event IN ('OUTCOME_UNKNOWN', 'READBACK_REOPENED', 'READBACK_LIMIT_REACHED',
+                                'LEASE_EXPIRED_VERIFY_ONLY', 'LEASE_LOST_BEFORE_SEND', 'INVALID_STORED_PLAN',
+                                'PLAN_DIGEST_OR_TENANT_MISMATCH', 'ERP_RECEIPT_MISMATCH', 'NEEDS_OPERATOR')
+                            ORDER BY a.at DESC, a.id DESC LIMIT 1) AS last_event
+                    FROM aios_proposal AS p WHERE p.tenant = ? AND p.warehouse IN ({marks})
+                    AND p.state IN ('NEEDS_OPERATOR', 'OUTCOME_UNKNOWN')
+                    {cursor} ORDER BY p.due, p.id LIMIT ?""",
+                (actor.tenant, *warehouses, *(after or ()), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def pending_approvals(self, actor: Actor, limit: int, after: tuple[float, str] | None) -> list[dict]:
+        warehouses = sorted(actor.warehouses)
+        actions = [action for action in ("shipment.reschedule", "sales_order.create_draft")
+                   if can_use_action(actor, action)]
+        if actor.role not in {"manager", "admin"} or not warehouses or not actions:
+            return []
+        warehouse_slots = ",".join("?" for _ in warehouses)
+        action_slots = ",".join("?" for _ in actions)
+        action_field = ("CASE WHEN plan IS JSON THEN CAST(plan AS JSONB) ->> 'action' END" if self.db.dsn
+                        else "CASE WHEN json_valid(plan) THEN json_extract(plan, '$.action') END")
+        cursor = "AND (due, id) > (?, ?)" if after else ""
+        with self.tx(actor.tenant, write=False) as run:
+            rows = run(
+                f"""SELECT id, warehouse, state, expires, due, {action_field} AS action
+                    FROM aios_proposal WHERE tenant = ? AND state = 'PROPOSED'
+                      AND requester != ? AND expires > ? AND warehouse IN ({warehouse_slots})
+                      AND {action_field} IN ({action_slots}) {cursor}
+                    ORDER BY due, id LIMIT ?""",
+                (actor.tenant, actor.subject, time.time(), *warehouses, *actions, *(after or ()), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def approve(self, actor: Actor, proposal_id: str, digest: str):
         with self.tx(actor.tenant) as run:
@@ -296,10 +373,10 @@ def tick(workflow: Workflow, erp: ERP, tenant: str) -> bool:
     try:
         plan = Plan.model_validate_json(job["plan"])
     except ValueError:
-        workflow.finish(job, "NEEDS_OPERATOR")
+        workflow.finish(job, "NEEDS_OPERATOR", event="INVALID_STORED_PLAN")
         return True
     if plan_digest(plan) != job["digest"] or plan.tenant != tenant:
-        workflow.finish(job, "NEEDS_OPERATOR")
+        workflow.finish(job, "NEEDS_OPERATOR", event="PLAN_DIGEST_OR_TENANT_MISMATCH")
         return True
     if job["state"] == "SENDING":
         stop = workflow.dispatch_gate(job)
@@ -309,7 +386,7 @@ def tick(workflow: Workflow, erp: ERP, tenant: str) -> bool:
         try:
             erp.apply(job["id"], plan)
         except ERPRejected:
-            workflow.finish(job, "REJECTED")
+            workflow.finish(job, "REJECTED", event="ERP_PRE_WRITE_REJECTION")
         except (*ERP_TRANSPORT_ERRORS, sqlite3.Error):
             workflow.finish(job, "OUTCOME_UNKNOWN")
         else:
@@ -325,9 +402,9 @@ def tick(workflow: Workflow, erp: ERP, tenant: str) -> bool:
         ):
             workflow.finish(job, "VERIFIED", receipt=receipt)
         else:
-            workflow.finish(job, "NEEDS_OPERATOR")
+            workflow.finish(job, "NEEDS_OPERATOR", event="ERP_RECEIPT_MISMATCH")
     elif job["checks"] >= 3:
-        workflow.finish(job, "NEEDS_OPERATOR")
+        workflow.finish(job, "NEEDS_OPERATOR", event="READBACK_LIMIT_REACHED")
     else:
         workflow.finish(job, "OUTCOME_UNKNOWN", delay=2 ** (job["checks"] - 1))
     return True
