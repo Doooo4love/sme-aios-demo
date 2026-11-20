@@ -1,6 +1,6 @@
 # 企业 AI 工作台后端与前端交接
 
-[English](workbench-handoff.md)
+[English](workbench-handoff.md) · [受控预审与部署交接](governed-assurance.zh-CN.md)
 
 AIOS 给每位员工一个统一入口，沿用该员工的业务权限连接各系统。录单、查运单、对账和固定统计先复用现成接口与确定性工具。自然语言负责找到合适的动作和补齐参数。ERP、WMS/TMS、财务和邮箱分别保留其业务记录的权威来源。
 

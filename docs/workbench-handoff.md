@@ -1,6 +1,6 @@
 # Enterprise AI workbench architecture and frontend handoff
 
-[简体中文](workbench-handoff.zh-CN.md)
+[简体中文](workbench-handoff.zh-CN.md) · [Governed assurance and deployment](governed-assurance.md)
 
 AIOS gives each employee one entry point that carries their business permissions into connected systems. Reuse deterministic tools for data entry, shipment lookup, reconciliation and fixed metrics. Language selects a registered action and clarifies its parameters. ERP, WMS/TMS, accounting and mail remain authoritative for their own records.
 
