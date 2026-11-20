@@ -12,6 +12,8 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
 from psycopg import Error as PostgresError
+from psycopg import OperationalError as PostgresUnavailable
+from psycopg.errors import DeadlockDetected, LockNotAvailable, QueryCanceled, SerializationFailure
 from pydantic import Field, JsonValue, ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -71,7 +73,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
               *, planner_limit: int = 60, metrics_token: str | None = None,
               chat_directory: DirectoryLookup | None = None,
               workbench_data: WorkData | None = None, workbench_planner: WorkbenchPlanner | None = None,
-              assurance: Assurance | None = None) -> FastAPI:
+              assurance: Assurance | None = None, assurance_concurrency: int = 8) -> FastAPI:
     if assurance is not None:
         if not isinstance(planner, DemoPlanner) or workbench_planner is not None:
             raise ValueError("Assurance requires disabling planners outside the governed provider gateway")
@@ -92,6 +94,19 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     async def invalid_request(_request: Request, error: RequestValidationError):
         issues = [{"loc": item["loc"], "type": item["type"]} for item in error.errors()[:20]]
         return JSONResponse(status_code=422, content={"detail": issues})
+
+    @app.exception_handler(PostgresUnavailable)
+    @app.exception_handler(DeadlockDetected)
+    @app.exception_handler(LockNotAvailable)
+    @app.exception_handler(QueryCanceled)
+    @app.exception_handler(SerializationFailure)
+    @app.exception_handler(sqlite3.OperationalError)
+    async def storage_unavailable(_request: Request, error: Exception):
+        if isinstance(error, sqlite3.OperationalError):
+            if (getattr(error, "sqlite_errorcode", 0) & 255) not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                raise error
+        return JSONResponse(status_code=503, headers={"Retry-After": "2"},
+                            content={"detail": {"code": "STORAGE_UNAVAILABLE"}})
 
     def authenticate(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Actor:
         try:
@@ -434,7 +449,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                                        data=workbench_data, chat_available=chat_directory is not None,
                                        planner=workbench_planner, planner_limit=planner_limit))
     app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
-    app.include_router(assurance_routes(authenticate, assurance))
+    app.include_router(assurance_routes(authenticate, assurance, concurrency=assurance_concurrency))
     return app
 
 
@@ -447,7 +462,9 @@ def create_app() -> FastAPI:
         if not runtime.demo:
             raise ValueError("Demo assurance keys require the demo profile")
         audit = SignedAudit(runtime.workflow, AuditKeys.from_file(Path(key_file)))
-        assurance = Assurance(DemoCaseSource(), ReviewGateway(audit, "hk-factory"))
+        assurance = Assurance(DemoCaseSource(), ReviewGateway(audit, "hk-factory"),
+                              review_ttl=int(setting("AIOS_ASSURANCE_REVIEW_TTL", "3600")))
     return build_app(runtime, identity_for(runtime.demo), planner_for(runtime.demo), optional_opa(),
                      planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")),
-                     metrics_token=metrics, assurance=assurance)
+                     metrics_token=metrics, assurance=assurance,
+                     assurance_concurrency=int(setting("AIOS_ASSURANCE_CONCURRENCY", "8")))

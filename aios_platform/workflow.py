@@ -23,15 +23,20 @@ class Workflow:
 
     def initialize(self):
         with self.db.transaction() as run:
-            for name in ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql"):
+            sources = ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql",
+                       "assurance_runtime.sql")
+            for name in sources:
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():
                         run(statement)
 
     @contextmanager
-    def tx(self, tenant: str, *, write: bool = True):
-        with self.db.transaction(write=write) as run:
+    def tx(self, tenant: str, *, write: bool = True, bounded: bool = False):
+        with self.db.transaction(write=write, sqlite_timeout=0.5 if bounded else 10) as run:
             if self.db.dsn:
+                if bounded:
+                    run("SET LOCAL lock_timeout = '1500ms'")
+                    run("SET LOCAL statement_timeout = '5s'")
                 run("SELECT set_config('aios.tenant', ?, true)", (tenant,))
             yield run
 
@@ -75,9 +80,9 @@ class Workflow:
             self._audit(run, actor.tenant, actor.subject, subject,
                         "ACCESS_SUSPENDED" if suspended else "ACCESS_RESTORED")
 
-    def take_planner_budget(self, tenant: str, limit: int) -> bool:
+    def take_planner_budget(self, tenant: str, limit: int, *, bounded: bool = False) -> bool:
         window = int(time.time()) // 60
-        with self.tx(tenant) as run:
+        with self.tx(tenant, bounded=bounded) as run:
             return run(
                 """INSERT INTO aios_planner_budget VALUES (?, ?, 1)
                    ON CONFLICT (tenant) DO UPDATE SET window_id = excluded.window_id,
