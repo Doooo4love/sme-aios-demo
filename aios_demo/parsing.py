@@ -8,7 +8,7 @@ import csv
 import re
 import subprocess
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 PATTERNS = {
     "po": r"PO-[0-9]{4,10}",
@@ -25,6 +25,8 @@ PATTERNS = {
 HEADERS = {"PO NO": "po", "BUYER": "buyer", "DELIVERY": "delivery",
            "CURRENCY": "currency", "TOTAL": "total"}
 ROW_FIELDS = ("sku", "quantity", "unit", "unit_price", "amount")
+MAX_UPLOAD_BYTES = 8_000_000
+MAX_IMAGE_PIXELS = 8_000_000
 TABLE_HEAD = ("ITEM", "CODE", "QTY", "UNIT", "PRICE", "AMOUNT")
 
 
@@ -86,14 +88,24 @@ def _evidence(value: str, words: list[dict]) -> Observation:
     )
 
 
-def parse_image(path: Path) -> Parsed:
-    if path.stat().st_size > 8_000_000:
+def read_image(data: bytes) -> Image.Image:
+    if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError("Image exceeds 8 MB")
-    with Image.open(path) as source:
-        if source.format not in {"PNG", "JPEG"} or source.width * source.height > 8_000_000:
-            raise ValueError("Use PNG/JPEG under eight megapixels")
-        page = source.convert("RGB")
+    try:
+        with Image.open(BytesIO(data), formats=("PNG", "JPEG")) as image:
+            if image.width * image.height > MAX_IMAGE_PIXELS:
+                raise ValueError("Use images under eight megapixels")
+            return ImageOps.exif_transpose(image).convert("RGB")
+    except (OSError, Image.DecompressionBombError) as error:
+        raise ValueError("Use a readable PNG or JPEG") from error
 
+
+def parse_image(path: Path) -> Parsed:
+    with path.open("rb") as file:
+        return parse_page(read_image(file.read(MAX_UPLOAD_BYTES + 1)))
+
+
+def parse_page(page: Image.Image) -> Parsed:
     lines = _tokens(page)
     fields = {}
     duplicates = set()
@@ -111,9 +123,8 @@ def parse_image(path: Path) -> Parsed:
         for label, field in HEADERS.items():
             for match in re.finditer(rf"(?<![A-Z]){label}:\s*(\S+)", text):
                 value = match[1]
-                if valid(field, value):
-                    hits = [word for a, b, word in spans if b > match.start(1) and a < match.end(1)]
-                    remember(field, _evidence(value, hits))
+                hits = [word for a, b, word in spans if b > match.start(1) and a < match.end(1)]
+                remember(field, _evidence(value, hits))
         if tuple(word["text"] for word in words) == TABLE_HEAD:
             if inside or row_count:
                 complete = False
@@ -128,8 +139,7 @@ def parse_image(path: Path) -> Parsed:
                 complete = False
                 continue
             for key, word in zip(ROW_FIELDS, words, strict=True):
-                if valid(key, word["text"]):
-                    remember(f"line.{row_count}.{key}", _evidence(word["text"], [word]))
+                remember(f"line.{row_count}.{key}", _evidence(word["text"], [word]))
     required = tuple(HEADERS.values()) + tuple(
         f"line.{number}.{key}" for number in range(1, row_count + 1) for key in ROW_FIELDS
     )

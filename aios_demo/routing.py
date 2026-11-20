@@ -95,8 +95,7 @@ class CompatibleVision:
 def readers(name: str) -> tuple[VisionReader, VisionReader | None]:
     if os.getenv("AIOS_ENABLE_LIVE_VISION") != "1":
         return FixtureVision(name), FixtureVision(name, second=True)
-    primary = CompatibleVision(os.environ["VISION_BASE_URL"], os.environ["VISION_MODEL"],
-                               os.environ["VISION_API_KEY"])
+    primary = configured_vision()
     if "VISION_B_BASE_URL" not in os.environ:
         return primary, None
     secondary = CompatibleVision(os.environ["VISION_B_BASE_URL"], os.environ["VISION_B_MODEL"],
@@ -104,6 +103,13 @@ def readers(name: str) -> tuple[VisionReader, VisionReader | None]:
     if primary.model.casefold() == secondary.model.casefold():
         raise ValueError("Use a distinct model for the second pass")
     return primary, secondary
+
+
+def configured_vision() -> CompatibleVision:
+    names = ("VISION_BASE_URL", "VISION_MODEL", "VISION_API_KEY")
+    if os.getenv("AIOS_ENABLE_LIVE_VISION") != "1" or any(not os.getenv(key) for key in names):
+        raise ValueError("Live vision is disabled or missing its server configuration")
+    return CompatibleVision(*(os.environ[key] for key in names))
 
 
 def _visual(parsed: Parsed, key: str, ocr: Observation, reader: VisionReader) -> tuple[str | None, str]:
@@ -131,7 +137,7 @@ def route(parsed: Parsed, primary: VisionReader, secondary: VisionReader | None)
             continue
         a, state = _visual(parsed, key, ocr, primary)
         outcome["vision"].append({"reader": primary.label, "value": a, "state": state})
-        if a == ocr.value and ocr.score is not None and ocr.score >= 80:
+        if a == ocr.value and valid(key, ocr.value) and ocr.score is not None and ocr.score >= 80:
             outcome["confirmed"] = a
             outcome["reason"] = "OCR and vision agree at the source"
             continue
@@ -140,6 +146,86 @@ def route(parsed: Parsed, primary: VisionReader, secondary: VisionReader | None)
             outcome["vision"].append({"reader": secondary.label, "value": b, "state": state})
         outcome["reason"] = "Evidence requires reviewer confirmation"
     return {"fields": fields, "rows": parsed.row_count, "complete": parsed.complete}
+
+
+def _business_issues(values: dict[str, str], rows: int) -> dict[str, str]:
+    """Mark fields participating in independently checkable contradictions."""
+    issues = {}
+    if "delivery" in values:
+        try:
+            date.fromisoformat(values["delivery"])
+        except ValueError:
+            issues["delivery"] = "INVALID_DELIVERY_DATE"
+    for key, expected in (("buyer", "HBR-47"), ("currency", "HKD")):
+        if key in values and values[key] != expected:
+            issues[key] = "UNSUPPORTED_BUYER" if key == "buyer" else "UNSUPPORTED_CURRENCY"
+    amounts = []
+    for row in range(1, rows + 1):
+        prefix = f"line.{row}."
+        sku, unit = prefix + "sku", prefix + "unit"
+        quantity, price, line_amount = (prefix + field for field in ("quantity", "unit_price", "amount"))
+        if all(key in values for key in ("buyer", sku, unit)) and (
+            values["buyer"], values[sku], values[unit]
+        ) not in CATALOG:
+            issues.update(dict.fromkeys((sku, unit), "UNKNOWN_PACKAGE"))
+        if all(key in values for key in (quantity, price, line_amount)) and (
+            amount(values[quantity]) * amount(values[price]) != amount(values[line_amount])
+        ):
+            issues.update(dict.fromkeys((quantity, price, line_amount), "ROW_AMOUNT_MISMATCH"))
+        if line_amount in values:
+            amounts.append(line_amount)
+    if "total" in values and len(amounts) == rows and (
+        sum(amount(values[key]) for key in amounts) != amount(values["total"])
+    ):
+        for key in ["total", *amounts]:
+            issues.setdefault(key, "ORDER_TOTAL_MISMATCH")
+    return issues
+
+
+def route_on_demand(parsed: Parsed, reader: VisionReader | None = None, *, call_limit: int = 4) -> dict:
+    """Share business rules across OCR-only and optional targeted visual review."""
+    fields = {}
+    valid_values = {
+        key: obs.value for key, obs in parsed.fields.items() if valid(key, obs.value)
+    }
+    issues = _business_issues(valid_values, parsed.row_count)
+    calls = 0
+    for key in parsed.required:
+        ocr = parsed.fields.get(key)
+        outcome = {"ocr": asdict(ocr) if ocr else None, "vision": [],
+                   "confirmed": None, "reason_code": None}
+        fields[key] = outcome
+        if not parsed.complete:
+            outcome["reason_code"] = "UNSUPPORTED_LAYOUT"
+            continue
+        if ocr is None:
+            outcome["reason_code"] = "NO_FIELD_ANCHOR"
+            continue
+        reason = issues.get(key)
+        if reason is None and key not in valid_values:
+            reason = "INVALID_OCR_FORMAT"
+        if reason is None and (ocr.score is None or ocr.score < 80):
+            reason = "LOW_OCR_CONFIDENCE"
+        if reason is None:
+            outcome["confirmed"] = ocr.value
+        elif reader is not None and reason not in {"UNSUPPORTED_BUYER", "UNSUPPORTED_CURRENCY",
+                                                    "UNKNOWN_PACKAGE", "INVALID_DELIVERY_DATE"}:
+            if calls >= call_limit:
+                reason = "VISION_BUDGET_EXHAUSTED"
+            else:
+                calls += 1
+                reading, state = _visual(parsed, key, ocr, reader)
+                outcome["vision"].append({"reader": reader.label, "value": reading, "state": state})
+                if reading is None:
+                    reason = "VISION_NO_EVIDENCE"
+                elif reading != ocr.value:
+                    reason = "OCR_VISION_DISAGREE" if key in valid_values else "VISION_ONLY"
+                elif reason == "LOW_OCR_CONFIDENCE":
+                    outcome["confirmed"] = reading
+                    reason = None
+        outcome["reason_code"] = reason
+    return {"fields": fields, "rows": parsed.row_count, "complete": parsed.complete,
+            "metrics": {"vision_calls": calls}}
 
 
 def order_payload(evidence: dict, overrides: dict[str, str] | None = None) -> dict:

@@ -98,14 +98,78 @@ class Ledger:
                VALUES (?, ?, ?, 'READY', ?) ON CONFLICT(command_id, kind) DO NOTHING""",
             (_id(), command_id, kind, time.time()))
 
+    def create_intake(self, filename: str, evidence: dict, source_png: bytes) -> str:
+        run_id = _id()
+        with self.db.transaction() as run:
+            run(
+                """INSERT INTO intake_document (id, filename, evidence, source_png, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (run_id, filename, canonical(evidence), source_png, time.time()),
+            )
+        return run_id
+
+    def intake(self, run_id: str) -> dict:
+        with self.db.transaction(write=False) as run:
+            row = run(
+                """SELECT filename, evidence, preview, command_id FROM intake_document WHERE id = ?""",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return {**json.loads(row["evidence"]), "filename": row["filename"],
+                "preview": json.loads(row["preview"]) if row["preview"] else None,
+                "command_id": row["command_id"]}
+
+    def intake_source(self, run_id: str) -> bytes:
+        with self.db.transaction(write=False) as run:
+            row = run("SELECT source_png FROM intake_document WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return bytes(row["source_png"])
+
+    def recent_intakes(self) -> list[dict]:
+        with self.db.transaction(write=False) as run:
+            rows = run(
+                """SELECT doc.id AS run_id, doc.filename, doc.evidence, doc.preview,
+                          doc.created_at, command.status AS command_status
+                   FROM intake_document AS doc LEFT JOIN command ON command.id = doc.command_id
+                   ORDER BY doc.created_at DESC, doc.id DESC LIMIT 30"""
+            ).fetchall()
+        result = []
+        for row in rows:
+            evidence = json.loads(row["evidence"])
+            status = row["command_status"] or ("preview_ready" if row["preview"] else evidence["status"])
+            result.append({"run_id": row["run_id"], "filename": row["filename"],
+                           "status": status, "created_at": row["created_at"]})
+        return result
+
+    def save_preview(self, run_id: str, preview: dict) -> None:
+        with self.db.transaction() as run:
+            changed = run(
+                """UPDATE intake_document SET preview = ? WHERE id = ? AND command_id IS NULL""",
+                (canonical(preview), run_id),
+            )
+            if changed.rowcount != 1:
+                raise Conflict("This intake has already been approved")
+
     def approve(self, payload: dict, expected_digest: str, actor: str, review: dict,
-                simulate_timeout: bool) -> str:
+                simulate_timeout: bool, *, intake_id: str | None = None) -> str:
         key = business_key(payload)
         digest = digest_of(payload)
         if digest != expected_digest:
             raise Conflict("The approved preview changed")
         new_id = _id()
         with self.db.transaction() as run:
+            if intake_id is not None:
+                lock = " FOR UPDATE" if self.db.dsn else ""
+                intake = run(
+                    "SELECT preview, command_id FROM intake_document WHERE id = ?" + lock, (intake_id,)
+                ).fetchone()
+                current = json.loads(intake["preview"]) if intake and intake["preview"] else {}
+                if current.get("digest") != digest or current.get("overrides") != review:
+                    raise Conflict("Generate and approve the current saved preview")
+                if intake["command_id"]:
+                    return intake["command_id"]
             inserted = run(
                 """INSERT INTO command
                    (id, business_key, payload, digest, status, approved_by, review,
@@ -119,10 +183,13 @@ class Ledger:
                 prior = run("SELECT id, digest FROM command WHERE business_key = ?", (key,)).fetchone()
                 if prior["digest"] != digest:
                     raise Conflict("This PO already has a different command. Reconcile the revision.")
-                return prior["id"]
-            self._job(run, new_id, "DISPATCH")
-            self._event(run, new_id, "APPROVED", f"{actor} approved the exact draft preview.")
-            self._event(run, new_id, "OUTBOX_QUEUED", "Command and outbox row committed together.")
+                new_id = prior["id"]
+            else:
+                self._job(run, new_id, "DISPATCH")
+                self._event(run, new_id, "APPROVED", f"{actor} approved the exact draft preview.")
+                self._event(run, new_id, "OUTBOX_QUEUED", "Command and outbox row committed together.")
+            if intake_id is not None:
+                run("UPDATE intake_document SET command_id = ? WHERE id = ?", (new_id, intake_id))
         return new_id
 
     def claim(self, owner: str, seconds: float = 30, *, now: float | None = None) -> dict | None:
