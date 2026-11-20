@@ -53,9 +53,14 @@ class Database:
     def __init__(self, sqlite_path: Path, postgres_dsn: str | None = None):
         self.sqlite_path = sqlite_path
         self.dsn = postgres_dsn
+        if self.dsn:
+            from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+            settings = {"connect_timeout": "5", **conninfo_to_dict(self.dsn)}
+            self.dsn = make_conninfo(**settings)
 
     @contextmanager
-    def transaction(self, *, write: bool = True):
+    def transaction(self, *, write: bool = True, sqlite_timeout: float = 10):
         if self.dsn:
             import psycopg
             from psycopg.rows import dict_row
@@ -64,7 +69,7 @@ class Database:
                 yield lambda query, args=(): conn.execute(query.replace("?", "%s"), args)
             return
         self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.sqlite_path, timeout=10)
+        connection = sqlite3.connect(self.sqlite_path, timeout=sqlite_timeout)
         connection.row_factory = sqlite3.Row
         try:
             connection.execute("PRAGMA foreign_keys=ON")
