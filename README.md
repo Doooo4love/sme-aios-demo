@@ -2,6 +2,20 @@
 
 A working prototype for wholesale purchase-order intake. Upload a purchase-order image, examine field-level evidence, review exceptions, approve a sales-order draft, and verify it in the mock ERP. The inbox preserves the document, reviewed preview, and command so the workflow can resume after refresh or restart.
 
+## Backend platform
+
+The reusable logistics and wholesale backend lives in `aios_platform/`. It shares typed actions,
+tenant policy, independent approval and ERP verification across two sample tenants. The PO workbench
+below remains available as a standalone demo.
+
+```bash
+python -m pip install -r requirements-platform.txt
+python scripts/platform_smoke.py
+```
+
+Read the [backend architecture and ERP bridge contract](docs/platform.md) for tenant configuration,
+Linux and PostgreSQL isolation, API usage, LLM options and the customer onboarding checklist.
+
 ![Current workbench showing a local upload, the intake inbox, OCR evidence and the draft preview](docs/browser/04-upload-and-inbox.png)
 
 ## A two-minute demo
