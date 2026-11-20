@@ -1,0 +1,35 @@
+[Unit]
+Description=AIOS authenticated action gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aios-api
+Group=aios-api
+WorkingDirectory=/opt/aios
+Environment=AIOS_PROFILE=oidc
+EnvironmentFile=/etc/aios/platform.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+LoadCredential=database-dsn:/etc/aios/secrets/api-dsn
+LoadCredential=erp-key:/etc/aios/secrets/erp-read
+LoadCredential=llm-key:/etc/aios/secrets/llm-key
+Environment=AIOS_PLATFORM_DSN_FILE=%d/database-dsn
+Environment=AIOS_ERP_READ_CREDENTIAL_FILE=%d/erp-key
+Environment=AIOS_LLM_API_KEY_FILE=%d/llm-key
+ExecStart=/opt/aios/.venv/bin/uvicorn aios_platform.api:create_app --factory --host 127.0.0.1 --port 8760
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
