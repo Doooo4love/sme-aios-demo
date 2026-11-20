@@ -33,3 +33,14 @@ CREATE TABLE IF NOT EXISTS journal (
     at DOUBLE PRECISION NOT NULL
 );
 CREATE INDEX IF NOT EXISTS journal_command ON journal(command_id, at);
+
+CREATE TABLE IF NOT EXISTS intake_document (
+    id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    source_png BYTEA NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL,
+    preview TEXT,
+    command_id TEXT REFERENCES command(id)
+);
+CREATE INDEX IF NOT EXISTS intake_document_recent ON intake_document(created_at DESC, id);
