@@ -28,6 +28,18 @@
       </div>
     </div>
 
+    <section class="intake-bar panel" aria-label="Intake inbox">
+      <form id="upload-form" class="upload-form">
+        <label class="upload-label" for="document">Upload a purchase order</label>
+        <input id="document" type="file" accept="image/png,image/jpeg" required>
+        <label class="vision-option"><input id="live-vision" type="checkbox"> Use configured vision for disputed crops</label>
+        <button id="upload-submit" type="submit" class="secondary">Extract fields</button>
+      </form>
+      <label class="inbox-label" for="recent-intakes">Recent intakes
+        <select id="recent-intakes"><option value="">Open a saved intake</option></select>
+      </label>
+    </section>
+
     <div id="message" role="status" aria-live="polite" hidden></div>
 
     <div class="workspace">
@@ -35,12 +47,12 @@
         <header class="panel-head">
           <div>
             <h2 id="source-title">Source document</h2>
-            <span class="muted">Synthetic purchase order · Page 1</span>
+            <span class="muted" id="source-filename">Page 1</span>
           </div>
           <span class="tag" id="source-status">Loading</span>
         </header>
         <div class="page-area">
-          <div class="page"><img id="source" alt="Synthetic purchase order" width="1200" height="940">
+          <div class="page"><img id="source" alt="Purchase order source" width="1200" height="940">
             <div id="bbox" hidden></div>
           </div>
         </div>

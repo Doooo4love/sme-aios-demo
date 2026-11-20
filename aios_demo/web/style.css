@@ -72,3 +72,12 @@ button:focus-visible,input:focus-visible{outline:2px solid #0f816f;outline-offse
 #message{padding:10px 13px;margin:0 0 12px;background:#fff3dd;border:1px solid #f0d8a8;color:#6d480d;border-radius:7px;font-size:12px}
 @media(max-width:900px){.wrap{width:calc(100% - 32px)}.workspace{grid-template-columns:1fr}.heading{align-items:flex-start}.page-area{padding:14px}.ledger-right{flex-wrap:wrap;justify-content:end}}
 @media(max-width:550px){.heading{flex-direction:column}.top-label{display:none}.panel-head{align-items:flex-start}.preview-layout{align-items:flex-start;flex-direction:column}.tag{white-space:normal}.field-table th,.field-table td{padding:7px 4px}}
+
+.intake-bar{display:flex;justify-content:space-between;align-items:end;gap:18px;padding:13px 17px;margin-bottom:15px}
+.upload-form{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px}
+.upload-label,.inbox-label{font-size:12px;color:var(--dark);font-weight:700}
+.upload-form input[type=file]{font-size:12px;color:var(--muted);max-width:100%}
+.vision-option{display:flex;gap:5px;align-items:center;font-size:12px;color:var(--muted)}
+.inbox-label{display:flex;flex-direction:column;gap:4px;min-width:min(230px,100%)}
+.inbox-label select{border:1px solid var(--border);border-radius:6px;padding:5px;color:var(--dark);font:inherit;background:#fff;max-width:360px}
+@media(max-width:900px){.intake-bar{align-items:start;flex-direction:column;gap:12px}.inbox-label select{max-width:100%}}
