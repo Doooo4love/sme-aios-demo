@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,7 +8,7 @@ import os
 import time
 
 from aios_demo.parsing import parse_image
-from aios_demo.routing import order_payload, readers, route
+from aios_demo.routing import FixtureVision, order_payload, readers, route, route_on_demand
 from aios_demo.storage import Conflict, Database, Ledger, LostLease, digest_of
 from aios_demo.worker import DemoERP, Worker
 
@@ -49,6 +50,39 @@ class ParseAndRouteTests(TestCase):
             order_payload(evidence, {"currency": "USD"})
 
 
+    def test_targeted_vision_reads_only_anchored_uncertainty(self):
+        name = "harbour-po.png"
+        parsed = parse_image(FIXTURES / name)
+        key = "line.1.quantity"
+        reader = FixtureVision(name)
+        clean = route_on_demand(parsed, reader)
+        self.assertEqual(clean["metrics"]["vision_calls"], 0)
+        self.assertEqual(order_payload(clean)["items"][0]["erp_quantity"], 48)
+
+        quantity = parsed.fields[key]
+        parsed.fields[key] = replace(quantity, score=60)
+        baseline = route_on_demand(parsed)
+        self.assertIsNone(baseline["fields"][key]["confirmed"])
+        evidence = route_on_demand(parsed, reader)
+        self.assertEqual(evidence["metrics"]["vision_calls"], 1)
+        self.assertEqual(evidence["fields"][key]["confirmed"], "2")
+
+        parsed.fields[key] = replace(quantity, value="2O")
+        reader.answers[key] = "20"
+        evidence = route_on_demand(parsed, reader)
+        self.assertEqual(evidence["metrics"]["vision_calls"], 1)
+        self.assertEqual(evidence["fields"][key]["ocr"]["bbox"], quantity.bbox)
+        self.assertEqual(evidence["fields"][key]["ocr"]["value"], "2O")
+        self.assertIsNone(evidence["fields"][key]["confirmed"])
+        with self.assertRaisesRegex(ValueError, "quantity × price"):
+            order_payload(evidence, {key: "20"})
+
+        del parsed.fields[key]
+        evidence = route_on_demand(parsed, reader)
+        self.assertEqual(evidence["metrics"]["vision_calls"], 0)
+        self.assertEqual(evidence["fields"][key]["reason_code"], "NO_FIELD_ANCHOR")
+
+
 class OutboxTests(TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
@@ -57,7 +91,7 @@ class OutboxTests(TestCase):
         self.ledger = Ledger(Database(root / "ledger.sqlite", os.getenv("AIOS_TEST_POSTGRES_DSN")))
         if self.ledger.db.dsn:
             with self.ledger.db.transaction() as run:
-                run("DROP TABLE IF EXISTS journal, job, command")
+                run("DROP TABLE IF EXISTS intake_document, journal, job, command")
         self.erp = DemoERP(Database(root / "erp.sqlite"))
         self.ledger.initialize()
         self.erp.initialize()
@@ -67,6 +101,29 @@ class OutboxTests(TestCase):
 
     def approve(self, *, timeout=False):
         return self.ledger.approve(self.payload, digest_of(self.payload), "tester", {}, timeout)
+
+    def test_intake_preview_and_approval_survive_process_restart(self):
+        run_id = self.ledger.create_intake("example.png", {"status": "needs_review"}, b"image")
+        payload = self.payload.copy()
+        digest = digest_of(payload)
+        overrides = {"line.1.quantity": "2"}
+        self.ledger.save_preview(run_id, {"payload": payload, "digest": digest, "overrides": overrides})
+        self.ledger.save_preview(run_id, {"payload": payload, "digest": digest, "overrides": {}})
+        with self.assertRaises(Conflict):
+            self.ledger.approve(payload, digest, "tester", overrides, True, intake_id=run_id)
+        self.assertIsNone(self.ledger.claim("nothing-queued"))
+
+        reopened = Ledger(self.ledger.db)
+        self.assertEqual(reopened.intake_source(run_id), b"image")
+        self.assertEqual(reopened.recent_intakes()[0]["status"], "preview_ready")
+        command = reopened.approve(payload, digest, "tester", {}, True, intake_id=run_id)
+        self.assertEqual(reopened.intake(run_id)["command_id"], command)
+        self.assertEqual(reopened.approve(payload, digest, "tester", {}, True, intake_id=run_id), command)
+        self.assertEqual(reopened.recent_intakes()[0]["status"], "QUEUED")
+        self.worker.tick()
+        self.worker.tick()
+        self.assertEqual(reopened.recent_intakes()[0]["status"], "COMMITTED")
+        self.assertEqual(self.erp.count(), 1)
 
     def test_wrong_digest_cannot_enqueue(self):
         with self.assertRaises(Conflict):

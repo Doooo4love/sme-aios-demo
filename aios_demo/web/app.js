@@ -16,7 +16,11 @@ const focusKeys = [
   "po", "buyer", "delivery", "line.1.sku", "line.1.quantity", "line.1.unit", "line.2.quantity", "total",
 ];
 const stateLabels = {
+  needs_review: "Needs review",
+  ready_for_preview: "Ready to preview",
+  preview_ready: "Preview saved",
   QUEUED: "Queued",
+  SENDING: "Sending",
   VERIFYING: "Verifying",
   OUTCOME_UNKNOWN: "Outcome unknown",
   COMMITTED: "Verified in ERP",
@@ -37,6 +41,7 @@ let preview;
 let overrides = {};
 let activeField = "line.1.quantity";
 let commandId;
+const sampleButtons = [...document.querySelectorAll("[data-sample]")];
 
 function el(tag, text, kind) {
   const node = document.createElement(tag);
@@ -61,7 +66,10 @@ async function api(path, body) {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(body),
   };
-  const response = await fetch(path, options);
+  return readResponse(await fetch(path, options));
+}
+
+async function readResponse(response) {
   const data = await response.json();
   if (!response.ok) {
     throw new Error(typeof data.detail === "string" ? data.detail : "The action could not be completed.");
@@ -93,7 +101,8 @@ function renderFields() {
       renderFields();
     };
     title.append(button);
-    const confirmation = field.confirmed ? "Agrees" : overrides[key] ? "Reviewed" : "Review";
+    const confirmation = field.confirmed ? (field.vision.length ? "Agrees" : "Accepted") :
+      overrides[key] ? "Reviewed" : "Review";
     row.append(title, el("td", field.ocr?.value || "—", "mono"),
                el("td", field.vision[0]?.value || "—", "mono"),
                el("td", confirmation, field.confirmed || overrides[key] ? "match" : "conflict"));
@@ -114,9 +123,12 @@ function renderFields() {
     $("active-field").textContent = "No verified region";
   }
   const escalation = current?.vision[1];
+  const fieldReason = current?.reason_code?.toLowerCase().replaceAll("_", " ");
   const meta = escalation ?
-    escalation.reader + " read " + (escalation.value || "no value") + ". Review still required." :
-    Object.keys(run.fields).length + " extracted fields · select a field to locate it in the source.";
+    escalation.reader + " read " + (escalation.value || "no value") +
+      (overrides[activeField] ? ". Reviewed." : ". Review still required.") :
+    fieldReason && !overrides[activeField] ? fieldReason :
+      Object.keys(run.fields).length + " extracted fields · select a field to locate it in the source.";
   $("fields").append(el("div", meta, "field-meta"));
 }
 
@@ -140,13 +152,20 @@ function renderReview(unresolved) {
     event.preventDefault();
     showError();
     const edited = Object.fromEntries(new FormData(form));
+    const submit = form.querySelector("button");
+    setIntakeControls(true);
+    submit.disabled = true;
     try {
       await buildPreview(edited);
       overrides = edited;
       $("review").hidden = true;
       renderFields();
+      await refreshInbox();
     } catch (error) {
       showError(error.message);
+    } finally {
+      setIntakeControls(false);
+      submit.disabled = false;
     }
   };
   $("review").replaceChildren(el("span", "Confirm the disputed value from the original", "box-head"), form);
@@ -155,6 +174,10 @@ function renderReview(unresolved) {
 
 async function buildPreview(edited = {}) {
   preview = await api("/api/preview", {run_id: run.run_id, overrides: edited});
+  renderPreview();
+}
+
+function renderPreview() {
   badge("decision", "Draft validated", "good");
   const payload = preview.payload;
   const container = el("div", undefined, "preview-layout");
@@ -168,14 +191,18 @@ async function buildPreview(edited = {}) {
   const controls = el("div");
   const approve = el("button", "Approve and queue", "action");
   approve.type = "button";
+  approve.disabled = Boolean(commandId);
+  if (commandId) approve.textContent = "Approved";
   const label = el("label", undefined, "checkbox");
   const simulate = el("input");
   simulate.type = "checkbox";
-  simulate.checked = true;
+  simulate.checked = run.mode === "demo";
+  simulate.disabled = Boolean(commandId);
   label.append(simulate, " Simulate a lost reply");
   approve.onclick = async () => {
     showError();
     approve.disabled = true;
+    setIntakeControls(true);
     try {
       const response = await api("/api/approve", {
         run_id: run.run_id,
@@ -187,9 +214,12 @@ async function buildPreview(edited = {}) {
       approve.textContent = "Approved";
       simulate.disabled = true;
       await refreshCommand();
+      await refreshInbox();
     } catch (error) {
       showError(error.message);
-      approve.disabled = false;
+      approve.disabled = Boolean(commandId);
+    } finally {
+      setIntakeControls(false);
     }
   };
   controls.append(approve, label);
@@ -218,8 +248,28 @@ async function refreshCommand() {
   $("events").replaceChildren(...nodes);
 }
 
-async function load(sample) {
+function setIntakeControls(disabled) {
+  for (const control of [...sampleButtons, $("document"), $("live-vision"),
+    $("upload-submit"), $("recent-intakes")]) {
+    control.disabled = disabled;
+  }
+}
+
+async function refreshInbox() {
+  const recent = await api("/api/intakes");
+  const inbox = $("recent-intakes");
+  inbox.replaceChildren(new Option("Open a saved intake", ""));
+  for (const intake of recent) {
+    const label = stateLabels[intake.status] || intake.status;
+    inbox.add(new Option(intake.filename + " · " + label, intake.run_id));
+  }
+  inbox.value = run?.run_id || "";
+}
+
+async function loadIntake(fetchIntake, sample) {
   showError();
+  run = undefined;
+  preview = undefined;
   commandId = undefined;
   overrides = {};
   activeField = "line.1.quantity";
@@ -229,50 +279,103 @@ async function load(sample) {
   $("review").hidden = true;
   $("preview").hidden = true;
   $("bbox").hidden = true;
+  $("source").hidden = true;
+  $("source-filename").textContent = "Page 1";
   $("ledger-context").textContent = "Approval creates a durable outbox job.";
   badge("command-state", "Waiting for approval");
   badge("source-status", "Reading");
   badge("decision", "Reading");
-  $("reader-mode").textContent = "Running local OCR…";
-  $("source").src = "/sample/" + sample;
-  const buttons = [...document.querySelectorAll("[data-sample]")];
-  for (const button of buttons) {
+  $("reader-mode").textContent = "Loading intake…";
+  for (const button of sampleButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.sample === sample));
-    button.disabled = true;
   }
+  setIntakeControls(true);
   try {
-    run = await api("/api/intake", {sample});
-    $("reader-mode").textContent = "Tesseract OCR + " + run.reader_mode;
+    run = await fetchIntake();
+    const location = new URL(window.location.href);
+    location.searchParams.set("intake", run.run_id);
+    window.history.replaceState(null, "", location);
+    $("source").src = run.source_url;
+    $("source").hidden = false;
+    $("source-filename").textContent = run.filename + " · Page 1";
+    const calls = run.metrics.vision_calls;
+    $("reader-mode").textContent = run.reader_mode + " · " + calls +
+      (calls === 1 ? " vision read" : " vision reads");
     badge("source-status", "SHA-256 " + run.artifact_sha256.slice(0, 8));
+    commandId = run.command_id;
+    preview = run.preview;
+    overrides = preview?.overrides || {};
+    activeField = run.review_fields[0] || activeField;
     renderFields();
-    const unresolved = Object.keys(run.fields).filter((key) => !run.fields[key].confirmed);
-    if (!run.complete) {
-      badge("decision", "Request a new source", "warn");
-    } else if (unresolved.length) {
-      renderReview(unresolved);
+    if (preview) {
+      renderPreview();
+    } else if (!run.complete) {
+      badge("decision", "Unsupported layout", "warn");
+    } else if (run.review_fields.length) {
+      renderReview(run.review_fields);
     } else {
       await buildPreview();
     }
+    if (commandId) await refreshCommand();
+    await refreshInbox();
   } catch (error) {
     badge("decision", "Blocked", "warn");
     showError(error.message);
+    try {
+      await refreshInbox();
+    } catch {
+      // Keep the original intake error visible.
+    }
   } finally {
-    for (const button of buttons) button.disabled = false;
+    setIntakeControls(false);
   }
 }
 
-for (const button of document.querySelectorAll("[data-sample]")) {
-  button.onclick = () => load(button.dataset.sample);
+function openSaved(id) {
+  return loadIntake(() => api("/api/intakes/" + encodeURIComponent(id)));
 }
+
+for (const button of sampleButtons) {
+  button.onclick = () => loadIntake(() => api("/api/intake", {sample: button.dataset.sample}),
+                                  button.dataset.sample);
+}
+$("recent-intakes").onchange = (event) => {
+  if (event.target.value) openSaved(event.target.value);
+};
+$("upload-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const file = $("document").files[0];
+  if (!file) return;
+  const query = new URLSearchParams({
+    filename: file.name,
+    mode: $("live-vision").checked ? "vision-on-demand" : "ocr",
+  });
+  await loadIntake(async () => readResponse(await fetch("/api/intakes/upload?" + query, {
+    method: "POST",
+    headers: {"Content-Type": "application/octet-stream"},
+    body: file,
+  })));
+  $("document").value = "";
+};
 $("tick").onclick = async () => {
   $("tick").disabled = true;
+  setIntakeControls(true);
   showError();
   try {
     await api("/api/worker/tick", {});
     await refreshCommand();
+    await refreshInbox();
   } catch (error) {
     showError(error.message);
     $("tick").disabled = false;
+  } finally {
+    setIntakeControls(false);
   }
 };
-load("standard");
+
+const selected = new URLSearchParams(window.location.search).get("intake");
+if (selected) {
+  openSaved(selected);
+} else {
+  loadIntake(() => api("/api/intake", {sample: "standard"}), "standard");
+}

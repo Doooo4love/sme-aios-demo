@@ -38,5 +38,14 @@ with sync_playwright() as playwright:
     expect(page.get_by_text("Verified in ERP", exact=True)).to_be_visible()
     expect(page.get_by_text("1 matching ERP draft", exact=False)).to_be_visible()
     page.screenshot(path=OUT / "03-erp-reconciliation.png", full_page=True)
+    page.reload()
+    expect(page.get_by_text("Verified in ERP", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Approved", exact=True)).to_be_disabled()
+    source = Path(__file__).resolve().parents[1] / "fixtures" / "harbour-po.png"
+    page.get_by_label("Upload a purchase order").set_input_files(source)
+    page.get_by_role("button", name="Extract fields").click()
+    expect(page.get_by_text("Local OCR only · 0 vision reads", exact=True)).to_be_visible()
+    expect(page.get_by_text("Draft validated", exact=True)).to_be_visible()
+    page.screenshot(path=OUT / "04-upload-and-inbox.png", full_page=True)
     assert not errors, errors
     browser.close()
