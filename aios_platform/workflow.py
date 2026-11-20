@@ -23,7 +23,7 @@ class Workflow:
 
     def initialize(self):
         with self.db.transaction() as run:
-            for name in ("schema.sql", "hardening.sql", "operations.sql", "chat.sql"):
+            for name in ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql"):
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():
                         run(statement)

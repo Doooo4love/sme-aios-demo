@@ -13,7 +13,7 @@ LOG = logging.getLogger("aios.platform")
 JSON_LIMIT = 65_536
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 BOUNDED_JSON_PATHS = (
-    "/v1/actions", "/v1/intakes/", "/v1/proposals/", "/v1/operations/", "/v1/workbench/", "/v1/chat/",
+    "/v1/actions", "/v1/intakes/", "/v1/proposals/", "/v1/operations/", "/v1/workbench/", "/v1/chat/", "/v1/assurance/",
 )
 
 

@@ -21,6 +21,8 @@ class DemoIdentity:
         "other-manager": ("harbour", "manager", ["HK02"]),
         "island-manager": ("island", "manager", ["HK01"]),
         "finance": ("harbour", "viewer", ["HK01"]),
+        "quality": ("harbour", "viewer", ["HK01"]),
+        "legal": ("harbour", "viewer", ["HK01"]),
         "executive": ("harbour", "manager", ["HK01", "HK02"]),
     }
 
@@ -41,7 +43,11 @@ class DemoIdentity:
         tenant, role, warehouses = self.PEOPLE[name]
         grants = {"chat.use", "mail.read"}
         if name == "finance":
-            grants.add("finance.read")
+            grants.update(("finance.read", "assurance.finance", "assurance.purchase"))
+        elif name == "quality":
+            grants.update(("assurance.quality", "assurance.incoming"))
+        elif name == "legal":
+            grants.update(("assurance.legal", "assurance.contract"))
         elif name == "executive":
             grants.add("decision.read")
         else:
@@ -50,6 +56,12 @@ class DemoIdentity:
                 grants.update(("shipment.reschedule", "order.work"))
             if role in {"manager", "admin"}:
                 grants.update(("operations.manage", "decision.read"))
+        if name in {"operator", "manager", "admin", "other-manager", "island-manager"}:
+            grants.update(("assurance.purchase", "assurance.incoming", "assurance.contract"))
+        if name in {"manager", "admin", "other-manager", "island-manager"}:
+            grants.add("assurance.procurement")
+        if name == "admin":
+            grants.add("assurance.audit")
         return Actor(subject=name, tenant=tenant, role=role, warehouses=warehouses, grants=grants)
 
 
