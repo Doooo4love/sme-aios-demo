@@ -82,6 +82,153 @@ class PlatformTests(unittest.TestCase):
                 "lines": [{"sku": "TEA-24", "unit": "CASE", "quantity": 2,
                            "unit_price": "25.0", "amount": "50.00"}]}
 
+    def work_call(self, body, actor="operator", key=None):
+        headers = self.auth(actor)
+        if key:
+            headers["Idempotency-Key"] = key
+        return self.client.post("/v1/workbench/calls", headers=headers, json=body)
+
+    def test_workbench_permissions_apply_to_tools_and_legacy_routes(self):
+        reads = {
+            "finance.invoice.read": {"warehouse": "HK01", "invoice_id": "INV-100"},
+            "decision.warehouse.summary": {"warehouse": "HK02"},
+            "shipment.read": {"warehouse": "HK01", "shipment_id": "SHP-1001"},
+        }
+        for tool, args in reads.items():
+            request = {"tool": tool, **args}
+            desired = {"finance.invoice.read": "finance", "decision.warehouse.summary": "executive",
+                       "shipment.read": "operator"}[tool]
+            response = self.work_call(request, desired)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(response.json()["source"], "synthetic")
+            self.assertEqual(self.work_call(request, "operator" if desired != "operator" else "finance").status_code, 403)
+        self.assertEqual(self.action("Show shipment SHP-1001", "finance").status_code, 403)
+        self.assertEqual(self.client.get("/v1/operations/summary", headers=self.auth("executive")).status_code, 403)
+        self.assertEqual(self.work_call({"tool": "shipment.read", "shipment_id": "SHP-2001",
+                                         "warehouse": "HK01"}).status_code, 404)
+        mail = self.work_call({"tool": "mail.inbox.read"}, "finance").json()["data"]["messages"]
+        self.assertEqual([row["id"] for row in mail], ["MAIL-102"])
+        mismatched = self.work_call({"tool": "mail.inbox.read", "subject": "SENSITIVE_EXTERNAL_INPUT"}, "finance")
+        self.assertEqual(mismatched.status_code, 422)
+        self.assertNotIn("SENSITIVE_EXTERNAL_INPUT", mismatched.text)
+        with patch.object(self.runtime.erp, "shipment", side_effect=AssertionError("ERP must not be called")):
+            denied = self.work_call({"tool": "shipment.read", "warehouse": "HK02", "shipment_id": "SHP-2001"})
+            self.assertEqual(denied.status_code, 403)
+        unrestricted = self.client.get("/v1/workbench/capabilities", headers=self.auth("viewer")).json()
+        self.assertNotIn("order.draft.prepare", [tool["id"] for tool in unrestricted["tools"]])
+
+    def test_workbench_turn_and_typed_call_share_proposal_approval(self):
+        payload = {"tool": "shipment.reschedule", "warehouse": "HK01", "shipment_id": "SHP-1001",
+                   "delivery_date": self.day}
+        first = self.work_call(payload, key="draft-1")
+        self.assertEqual(first.status_code, 200, first.text)
+        proposal = first.json()["proposal"]
+        self.assertEqual(proposal["state"], "PROPOSED")
+        via_text = self.client.post("/v1/workbench/turns",
+                                    headers={**self.auth("operator"), "Idempotency-Key": "draft-1"},
+                                    json={"text": f"Move shipment SHP-1001 in HK01 to {self.day}"})
+        self.assertEqual(via_text.json()["proposal"]["id"], proposal["id"])
+        self.assertEqual(self.work_call({**payload, "delivery_date": "2030-01-01"},
+                                        key="draft-1").status_code, 409)
+        queue = "/v1/workbench/approvals"
+        self.assertEqual(self.client.get(queue, headers=self.auth("manager")).json()["items"][0]["id"],
+                         proposal["id"])
+        self.assertEqual(self.client.get(queue, headers=self.auth("executive")).json()["items"], [])
+        self.assertEqual(self.client.get(queue, headers=self.auth("other-manager")).json()["items"], [])
+        self.assertEqual(self.client.get(queue, headers=self.auth("operator")).status_code, 403)
+        self.assertEqual(self.approve(proposal, actor="executive").status_code, 404)
+        self.assertEqual(self.approve(proposal).status_code, 202)
+        tick(self.runtime.workflow, self.runtime.erp, "harbour")
+        tick(self.runtime.workflow, self.runtime.erp, "harbour")
+        self.assertEqual(self.stored(proposal)["state"], "VERIFIED")
+
+        intake = self.client.post("/v1/intakes/HK01/structured", headers=self.auth("operator"),
+                                  json=self.wholesale_order()).json()
+        self.assertEqual(self.client.get(f"/v1/intakes/{intake['intake_id']}",
+                                         headers=self.auth("viewer")).status_code, 404)
+        order = self.work_call({"tool": "order.draft.prepare", "warehouse": "HK01",
+                                "intake_id": intake["intake_id"]}, key="order-1")
+        self.assertEqual(order.status_code, 200, order.text)
+        self.assertEqual(order.json()["proposal"]["plan"]["action"], "sales_order.create_draft")
+
+    def test_provider_boundaries_and_no_synthetic_results_in_live_mode(self):
+        from aios_platform.workbench_tools import InboxRecord, MailItem, SyntheticWorkData
+
+        live = Services(self.runtime.workflow, self.runtime.erp, False, self.runtime.profiles)
+        with TestClient(build_app(live, self.identity, DemoPlanner())) as client:
+            response = client.post("/v1/workbench/calls", headers=self.auth("finance"),
+                                   json={"tool": "finance.invoice.read", "warehouse": "HK01", "invoice_id": "INV-100"})
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(client.get("/v1/chat/rooms", headers=self.auth("finance")).status_code, 503)
+        with self.assertRaisesRegex(ValueError, "Synthetic workbench data"):
+            build_app(live, self.identity, DemoPlanner(), workbench_data=SyntheticWorkData())
+        inbox = InboxRecord(tenant="harbour", owner="operator",
+                            messages=[MailItem(id="X", sender="private@example.test", subject="Private")])
+        incorrect = SimpleNamespace(inbox=lambda actor, call: inbox)
+        with TestClient(build_app(live, self.identity, DemoPlanner(), workbench_data=incorrect)) as client:
+            response = client.post("/v1/workbench/calls", headers=self.auth("finance"),
+                                   json={"tool": "mail.inbox.read"})
+            self.assertEqual(response.status_code, 404)
+            self.assertNotIn("Private", response.text)
+
+    def test_configured_planner_cannot_expand_the_employee_capabilities(self):
+        from unittest.mock import Mock
+
+        planner = Mock()
+        planner.plan.return_value = {"tool": "finance.invoice.read", "warehouse": "HK01", "invoice_id": "INV-100"}
+        with TestClient(build_app(self.runtime, self.identity, DemoPlanner(),
+                                  workbench_planner=planner, planner_limit=1)) as client:
+            path = "/v1/workbench/turns"
+            body = {"text": "Show a restricted record"}
+            response = client.post(path, headers=self.auth("operator"), json=body)
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertNotIn("finance.invoice.read", planner.plan.call_args.args[1])
+            self.assertEqual(client.post(path, headers=self.auth("operator"), json=body).status_code, 429)
+            self.assertEqual(planner.plan.call_count, 1)
+
+    def test_chat_history_membership_and_concurrent_retry(self):
+        rooms = "/v1/chat/rooms"
+        room = self.client.post(rooms, headers=self.auth("operator"),
+                                json={"client_id": "room1", "title": "Dispatch"}).json()
+        endpoint = f"{rooms}/{room['id']}"
+        message = endpoint + "/messages"
+        owner = self.auth("operator")
+        finance = self.auth("finance")
+        self.assertEqual(self.client.post(rooms, headers=owner,
+                                         json={"client_id": "room1", "title": "Dispatch"}).json(), room)
+        self.assertEqual(self.client.post(message, headers=owner,
+                                         json={"client_id": "old", "text": "Private first message"}).status_code, 201)
+        self.assertEqual(self.client.get(message, headers=finance).status_code, 404)
+        self.assertEqual(self.client.get(message, headers=self.auth("island-manager")).status_code, 404)
+        self.assertEqual(self.client.put(endpoint + "/members/island-manager", headers=owner,
+                                         json={"active": True}).status_code, 403)
+        target = endpoint + "/members/finance"
+        self.assertTrue(self.client.put(target, headers=owner, json={"active": True}).json()["active"])
+        self.assertEqual(self.client.get(message, headers=finance).json()["items"], [])
+        self.assertEqual(self.client.put(endpoint + "/members/manager", headers=finance,
+                                         json={"active": True}).status_code, 403)
+        body = {"client_id": "retry", "text": "A new purchase order arrived."}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            retries = list(pool.map(lambda _: self.client.post(message, headers=finance, json=body), range(4)))
+        self.assertTrue(all(item.status_code == 201 and item.json()["seq"] == 2 for item in retries))
+        self.assertEqual(self.client.post(message, headers=finance,
+                                         json={**body, "text": "A conflicting retry"}).status_code, 409)
+        self.assertEqual(self.client.get(message, headers=finance).json()["items"][0]["author"], "finance")
+        self.assertFalse(self.client.put(target, headers=owner, json={"active": False}).json()["active"])
+        self.assertEqual(self.client.get(message, headers=finance).status_code, 404)
+        self.assertEqual(self.client.post(message, headers=finance, json=body).status_code, 404)
+        self.assertEqual(self.client.get(rooms, headers=finance).json()["items"], [])
+        self.assertTrue(self.client.put(target, headers=owner, json={"active": True}).json()["active"])
+        self.assertEqual(self.client.get(message, headers=finance).json()["items"], [])
+        self.assertEqual(self.client.post(message, headers=finance, json=body).status_code, 409)
+        self.assertEqual(self.client.post(message, headers=finance,
+                                         json={"client_id": "new", "text": "New membership"}).json()["seq"], 3)
+        page = self.client.get(message, headers=owner, params={"limit": 1}).json()
+        self.assertEqual(page["next"], 1)
+        self.assertEqual(self.client.get(message, headers=owner, params={"after": page["next"]})
+                         .json()["items"][0]["seq"], 2)
+
     def test_structured_batch_isolates_errors_and_deduplicates_concurrent_imports(self):
         order = self.wholesale_order()
         changed = self.wholesale_order("B-102")
@@ -425,6 +572,20 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual(status["state"], "VERIFIED")
             self.assertEqual(status["receipt"]["operation_id"], identifier)
 
+            room = client.post("/v1/chat/rooms", headers=self.auth("operator"),
+                               json={"title": "Restricted database", "client_id": "db-test"}).json()
+            message = f"/v1/chat/rooms/{room['id']}/messages"
+            posted = client.post(message, headers=self.auth("operator"),
+                                 json={"client_id": "test", "text": "Private"})
+            self.assertEqual(posted.status_code, 201, posted.text)
+            self.assertEqual(client.get(message, headers=self.auth("finance")).status_code, 404)
+            with api.tx("harbour", write=False) as run:
+                run("SELECT set_config('aios.subject', ?, true)", ("finance",))
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_chat_message").fetchone()["n"], 0)
+            with worker.tx("harbour", write=False) as run:
+                self.assertFalse(run("SELECT has_table_privilege('aios_chat_message','SELECT') AS access")
+                                 .fetchone()["access"])
+
 
 class IdentityTests(unittest.TestCase):
     def test_keycloak_claims_require_signed_matching_access_token(self):
@@ -436,13 +597,15 @@ class IdentityTests(unittest.TestCase):
         identity = OIDCIdentity(issuer, "aios-service")
         claims = {"iss": issuer, "aud": "aios-service", "sub": "user-27", "typ": "Bearer",
                   "exp": int(time.time()) + 30, "aios_tenant": "harbour",
-                  "aios_role": "manager", "aios_warehouses": ["HK01"]}
+                  "aios_role": "manager", "aios_warehouses": ["HK01"], "aios_grants": ["chat.use"]}
         with patch.object(identity.keys, "get_signing_key_from_jwt",
                           return_value=SimpleNamespace(key=signer.public_key())):
             actor = identity.authenticate(jwt.encode(claims, signer, algorithm="RS256"))
             self.assertEqual((actor.tenant, actor.role, actor.warehouses),
                              ("harbour", "manager", {"HK01"}))
-            for invalid in ({"aud": "other"}, {"typ": "ID"}, {"exp": int(time.time()) - 1}):
+            self.assertEqual(actor.grants, {"chat.use"})
+            for invalid in ({"aud": "other"}, {"typ": "ID"}, {"exp": int(time.time()) - 1},
+                            {"aios_grants": ["*"]}, {"aios_grants": "chat.use"}):
                 with self.assertRaises(ValueError):
                     identity.authenticate(jwt.encode({**claims, **invalid}, signer, algorithm="RS256"))
 
@@ -461,6 +624,16 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(headers["X-Odoo-Database"], "company")
             with self.assertRaisesRegex(ValueError, "no configured connector"):
                 adapter.shipment("other", "SHP-1001")
+
+    def test_remote_shipment_read_requires_matching_tenant(self):
+        adapter = OdooERP("https://erp.example", "test-only", "company", "harbour")
+        record = {"tenant": "island", "shipment_id": "SHP-1001", "warehouse": "HK01",
+                  "delivery_date": "2030-01-02", "version": 1, "status": "OPEN"}
+        with patch("aios_platform.erp.post_json", return_value={"status": "ok", "result": record}):
+            with self.assertRaisesRegex(ValueError, "tenant"):
+                adapter.shipment("harbour", "SHP-1001")
+            record["tenant"] = "harbour"
+            self.assertEqual(adapter.shipment("harbour", "SHP-1001").warehouse, "HK01")
 
     def test_erpnext_transport_unwraps_frappe_receipt(self):
         adapter = ERPNext("https://erp.example", "key:secret", "harbour", write=True)

@@ -30,6 +30,6 @@ class MigrationTests(unittest.TestCase):
                     self.assertEqual(connection.execute(text("SELECT id FROM aios_intake")).scalar_one(), "id1")
                     self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM aios_write_control")).scalar_one(), 0)
                     self.assertEqual(connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
-                                     "0003_operations")
+                                     "0004_workbench_chat")
             finally:
                 legacy.dispose()
