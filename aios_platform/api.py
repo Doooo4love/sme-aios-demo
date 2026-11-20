@@ -5,11 +5,11 @@ import os
 import sqlite3
 import subprocess
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
 from psycopg import Error as PostgresError
-from pydantic import Field
+from pydantic import Field, JsonValue, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from aios_demo.extract_po import analyze_upload
@@ -21,7 +21,7 @@ from .erp import ERPRejected
 from .identity import Identity
 from .observability import instrument
 from .providers import OPA, Planner, allowed, can_approve
-from .purchase import PurchaseOrder, draft_order, from_ocr
+from .purchase import OrderIssue, PurchaseOrder, draft_order, from_ocr
 from .service import Services, identity_for, optional_opa, planner_for, services, setting
 from .workflow import Conflict, tick
 
@@ -35,6 +35,18 @@ class ActionRequest(Strict):
 
 class ApprovalRequest(Strict):
     digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+class PurchaseBatch(Strict):
+    orders: Annotated[list[JsonValue], Field(min_length=1, max_length=50)]
+
+
+class BatchApprovalItem(ApprovalRequest):
+    proposal_id: Identifier
+
+
+class BatchApproval(Strict):
+    proposals: Annotated[list[BatchApprovalItem], Field(min_length=1, max_length=50)]
 
 
 class PauseRequest(Strict):
@@ -61,8 +73,10 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             if credentials is None:
                 raise ValueError("Missing access token")
             actor = identity.authenticate(credentials.credentials)
-            if actor.tenant not in runtime.profiles:
+            profile = runtime.profiles.get(actor.tenant)
+            if profile is None:
                 raise ValueError("Tenant is unavailable")
+            actor = actor.model_copy(update={"warehouses": actor.warehouses.intersection(profile.warehouses)})
         except (ValueError, OSError) as error:
             raise HTTPException(401, "A valid access token is required",
                                 headers={"WWW-Authenticate": "Bearer"}) from error
@@ -80,9 +94,9 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             workflow.audit(actor, plan.warehouse, "EXTERNAL_POLICY_DENIED")
             raise HTTPException(403, "Policy denied this action")
 
-    def visible_proposal(actor: Actor, proposal_id: str) -> dict:
+    def visible_proposal(actor: Actor, proposal_id: str, *, include_events: bool = True) -> dict:
         try:
-            result = workflow.get(actor.tenant, proposal_id)
+            result = workflow.get(actor.tenant, proposal_id, include_events=include_events)
             if result["warehouse"] not in actor.warehouses or (
                 result["requester"] != actor.subject and actor.role not in {"manager", "admin"}
             ):
@@ -99,6 +113,16 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             return record
         except KeyError as error:
             raise HTTPException(404, "Intake not found") from error
+
+    def structured_evidence(order: PurchaseOrder) -> dict:
+        document = order.model_dump(mode="json")
+        return {"kind": "structured", "order": document, "artifact_sha256": digest_of(document)}
+
+    def order_plan(actor: Actor, warehouse: str, intake_id: str, evidence: dict, order: PurchaseOrder) -> Plan:
+        payload = draft_order(order, warehouse, runtime.profiles[actor.tenant])
+        return Plan(tenant=actor.tenant, warehouse=warehouse, action="sales_order.create_draft",
+                    target=business_key(payload), expected_version=None,
+                    before={"intake_id": intake_id, "source_sha256": evidence["artifact_sha256"]}, after=payload)
 
     @app.get("/healthz")
     def health():
@@ -128,6 +152,22 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         if actor.role not in {"manager", "admin"}:
             raise HTTPException(403, "Manager access required")
         return {"proposals_by_state": workflow.summary(actor), "writes_paused": workflow.write_paused(actor.tenant)}
+
+    @app.get("/v1/operations/exceptions")
+    def exceptions(
+        actor: Actor = Depends(authenticate),
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        after_due: Annotated[float | None, Query(ge=0, le=1e12)] = None,
+        after_id: Identifier | None = None,
+    ):
+        if actor.role not in {"manager", "admin"}:
+            raise HTTPException(403, "Manager access required")
+        if (after_due is None) != (after_id is None):
+            raise HTTPException(422, "Both cursor values are required")
+        rows = workflow.exceptions(actor, limit + 1, None if after_due is None else (after_due, after_id))
+        page = rows[:limit]
+        next_page = {"after_due": page[-1]["due"], "after_id": page[-1]["proposal_id"]} if len(rows) > limit else None
+        return {"items": page, "next": next_page}
 
     @app.put("/v1/operations/write-control")
     def control(body: PauseRequest, actor: Actor = Depends(authenticate)):
@@ -174,11 +214,56 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     @app.post("/v1/intakes/{warehouse}/structured", status_code=201)
     def structured_intake(warehouse: Identifier, order: PurchaseOrder, actor: Actor = Depends(authenticate)):
         require_scope(actor, "sales_order.create_draft", warehouse)
-        document = order.model_dump(mode="json")
-        intake_id = workflow.add_intake(actor, warehouse, {
-            "kind": "structured", "order": document, "artifact_sha256": digest_of(document),
-        })
+        intake_id = workflow.add_intake(actor, warehouse, structured_evidence(order))
         return {"intake_id": intake_id, "warehouse": warehouse}
+
+    @app.post("/v1/intakes/{warehouse}/structured/batch")
+    def structured_batch(warehouse: Identifier, body: PurchaseBatch, actor: Actor = Depends(authenticate)):
+        require_scope(actor, "sales_order.create_draft", warehouse)
+        unique = {}
+        versions = {}
+        results = []
+        entity = runtime.profiles[actor.tenant].warehouses[warehouse].legal_entity
+        for position, raw in enumerate(body.orders):
+            try:
+                order = PurchaseOrder.model_validate(raw)
+            except ValidationError as error:
+                fields = [{"field": ".".join(map(str, issue["loc"])), "code": issue["type"]}
+                          for issue in error.errors(include_input=False, include_url=False, include_context=False)[:10]]
+                results.append({"position": position, "status": "review", "code": "INVALID_ORDER", "fields": fields})
+                continue
+            evidence = structured_evidence(order)
+            intake_id = workflow.structured_intake_id(warehouse, evidence)
+            unique[intake_id] = (evidence, order)
+            versions.setdefault((entity, order.buyer, order.po), set()).add(intake_id)
+            results.append({"position": position, "intake_id": intake_id})
+
+        issues = {intake_id: "CONFLICTING_ORDER_REVISIONS"
+                  for ids in versions.values() if len(ids) > 1 for intake_id in ids}
+        entries = []
+        for intake_id, (evidence, order) in unique.items():
+            plan = None
+            if intake_id not in issues:
+                try:
+                    candidate = order_plan(actor, warehouse, intake_id, evidence, order)
+                    require_policy(actor, candidate, actor.subject, "propose")
+                except OrderIssue as error:
+                    issues[intake_id] = error.code
+                except HTTPException as error:
+                    if error.status_code != 403:
+                        raise
+                    issues[intake_id] = "POLICY_DENIED"
+                else:
+                    plan = candidate
+            entries.append((evidence, plan))
+        prepared = workflow.prepare_orders(actor, warehouse, entries) if entries else {}
+        for result in results:
+            intake_id = result.get("intake_id")
+            if intake_id in issues:
+                result.update(status="review", code=issues[intake_id])
+            elif intake_id in prepared:
+                result.update(prepared[intake_id], status="prepared")
+        return {"items": results}
 
     @app.get("/v1/intakes/{intake_id}")
     def get_intake(intake_id: Identifier, actor: Actor = Depends(authenticate)):
@@ -220,13 +305,9 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                     order = PurchaseOrder.model_validate(evidence["order"])
                 else:
                     order = from_ocr(evidence, body.overrides)
-                payload = draft_order(order, warehouse, runtime.profiles[actor.tenant])
+                plan = order_plan(actor, warehouse, intent.intake_id, evidence, order)
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
-            plan = Plan(tenant=actor.tenant, warehouse=warehouse, action=intent.action,
-                        target=business_key(payload), expected_version=None,
-                        before={"intake_id": intent.intake_id,
-                                "source_sha256": record["evidence"]["artifact_sha256"]}, after=payload)
         else:
             try:
                 shipment = erp.shipment(actor.tenant, intent.shipment_id)
@@ -260,20 +341,39 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def get_proposal(proposal_id: Identifier, actor: Actor = Depends(authenticate)):
         return visible_proposal(actor, proposal_id)
 
-    @app.post("/v1/proposals/{proposal_id}/approve", status_code=202)
-    def approve(proposal_id: Identifier, body: ApprovalRequest, actor: Actor = Depends(authenticate)):
-        current = visible_proposal(actor, proposal_id)
+    def approve_proposal(proposal_id: str, digest: str, actor: Actor):
+        current = visible_proposal(actor, proposal_id, include_events=False)
         plan = Plan.model_validate(current["plan"])
         if not can_approve(actor, current["requester"], plan):
             workflow.audit(actor, proposal_id, "APPROVAL_DENIED")
             raise HTTPException(403, "An independent warehouse manager must approve")
         require_policy(actor, plan, current["requester"], "approve")
         try:
-            workflow.approve(actor, proposal_id, body.digest)
+            workflow.approve(actor, proposal_id, digest)
         except Conflict as error:
             raise HTTPException(409, str(error)) from error
         except PermissionError as error:
             raise HTTPException(403, str(error)) from error
+
+    @app.post("/v1/proposals/approve-batch")
+    def approve_batch(body: BatchApproval, actor: Actor = Depends(authenticate)):
+        if actor.role not in {"manager", "admin"}:
+            raise HTTPException(403, "Manager access required")
+        items = []
+        for entry in body.proposals:
+            try:
+                approve_proposal(entry.proposal_id, entry.digest, actor)
+            except HTTPException as error:
+                if error.status_code not in {403, 404, 409}:
+                    raise
+                items.append({"proposal_id": entry.proposal_id, "status": error.status_code, "detail": error.detail})
+            else:
+                items.append({"proposal_id": entry.proposal_id, "status": 202})
+        return {"items": items}
+
+    @app.post("/v1/proposals/{proposal_id}/approve", status_code=202)
+    def approve(proposal_id: Identifier, body: ApprovalRequest, actor: Actor = Depends(authenticate)):
+        approve_proposal(proposal_id, body.digest, actor)
         return visible_proposal(actor, proposal_id)
 
     @app.post("/v1/proposals/{proposal_id}/reconcile", status_code=202)

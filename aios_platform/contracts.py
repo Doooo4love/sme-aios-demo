@@ -59,7 +59,7 @@ class Plan(Strict):
     tenant: Identifier
     warehouse: Identifier
     action: Literal["shipment.reschedule", "sales_order.create_draft"]
-    target: Annotated[str, Field(min_length=1, max_length=150)]
+    target: Annotated[str, Field(min_length=1, max_length=194)]
     expected_version: int | None
     before: dict
     after: dict

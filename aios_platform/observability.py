@@ -42,7 +42,7 @@ class RequestEnvelope:
             headers = dict(scope["headers"])
             content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
             image = content_type == b"application/octet-stream" and raw_path.startswith("/v1/intakes/") \
-                and not raw_path.endswith("/structured")
+                and raw_path.count("/") == 3
             if method in {"POST", "PUT", "PATCH"} and not image and raw_path.startswith(BOUNDED_JSON_PATHS):
                 body = bytearray()
                 while True:
