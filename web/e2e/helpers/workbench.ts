@@ -295,8 +295,14 @@ export async function loginWithPassword(
 
   await expect(page).toHaveURL(/\/inbox(?:\/|$)/, { timeout: 15_000 });
   const authenticatedAnchor = page
-    .getByRole("button", { name: "账号与资料菜单" })
-    .or(page.getByRole("button", { name: "切换本地演示身份" }));
+    .getByRole("button", {
+      name: /^(?:账号与资料菜单|帳號與資料選單|Account menu)$/,
+    })
+    .or(
+      page.getByRole("button", {
+        name: /^(?:切换本地演示身份|切換本地示範身份|Switch demo persona)$/,
+      }),
+    );
   await expect(authenticatedAnchor.first()).toBeVisible({ timeout: 15_000 });
   if (expectedSubject) {
     await expect
@@ -312,9 +318,15 @@ export async function loginAsPersona(
   await page.goto("/login", { waitUntil: "domcontentloaded" });
 
   // Wait until either the login heading or an authenticated shell anchor appears
-  const switcher = page.getByRole("button", { name: "切换本地演示身份" });
-  const accountMenuBtn = page.getByRole("button", { name: "账号与资料菜单" });
-  const loginHeading = page.getByRole("heading", { name: "登录企业工作台" });
+  const switcher = page.getByRole("button", {
+    name: /^(?:切换本地演示身份|切換本地示範身份|Switch demo persona)$/,
+  });
+  const accountMenuBtn = page.getByRole("button", {
+    name: /^(?:账号与资料菜单|帳號與資料選單|Account menu)$/,
+  });
+  const loginHeading = page.getByRole("heading", {
+    name: /^(?:登录企业工作台|登入企業工作台|Sign in to Workspace)$/,
+  });
 
   await expect(loginHeading.or(switcher).or(accountMenuBtn).first()).toBeVisible({
     timeout: 15_000,
@@ -368,8 +380,12 @@ export async function switchPersona(
   page: Page,
   persona: DemoPersona,
 ): Promise<void> {
-  const switcher = page.getByRole("button", { name: "切换本地演示身份" });
-  const accountMenuBtn = page.getByRole("button", { name: "账号与资料菜单" });
+  const switcher = page.getByRole("button", {
+    name: /^(?:切换本地演示身份|切換本地示範身份|Switch demo persona)$/,
+  });
+  const accountMenuBtn = page.getByRole("button", {
+    name: /^(?:账号与资料菜单|帳號與資料選單|Account menu)$/,
+  });
 
   // Wait for AppShell hydration before inspecting which shell variant is active
   await expect(switcher.or(accountMenuBtn).first()).toBeVisible({
@@ -391,8 +407,12 @@ export async function switchPersona(
     await expect(switcher).toBeVisible({ timeout: 15_000 });
   }
 
+  const currentTitle = (await switcher.getAttribute("title")) ?? "";
   const currentLabel = (await switcher.innerText()).trim();
-  if (new RegExp(`^${persona}\\b`).test(currentLabel)) {
+  if (
+    currentTitle.includes(`(${persona})`) ||
+    new RegExp(`^${persona}\\b`).test(currentLabel)
+  ) {
     if (openedAccountPopover) {
       await page.keyboard.press("Escape");
     }
@@ -430,15 +450,26 @@ export async function switchPersona(
   const capsResp = await capsPromise;
   expect(capsResp.status()).toBe(200);
 
-  // If switcher remains directly visible (non-inbox top bar), wait for it to reflect persona & re-enable
+  // If switcher remains directly visible (non-inbox top bar), wait for it to reflect persona (via humanized title) & re-enable
   if (!openedAccountPopover) {
-    await expect(switcher).toContainText(persona, { timeout: 15_000 });
+    await expect(switcher).toHaveAttribute(
+      "title",
+      new RegExp(`\\(${persona}\\)`),
+      { timeout: 15_000 },
+    );
     await expect(switcher).toBeEnabled({ timeout: 10_000 });
   } else if (await switcher.isVisible().catch(() => false)) {
-    await expect(switcher).toContainText(persona, { timeout: 15_000 });
+    await expect(switcher).toHaveAttribute(
+      "title",
+      new RegExp(`\\(${persona}\\)`),
+      { timeout: 15_000 },
+    );
     await expect(switcher).toBeEnabled({ timeout: 10_000 });
     await page.keyboard.press("Escape");
   }
+  await expect
+    .poll(() => getLiveActorSubject(page), { timeout: 10_000 })
+    .toBe(persona);
 }
 
 export interface BffResponse<T = unknown> {

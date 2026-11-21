@@ -18,6 +18,9 @@ test.describe("Phase 6: v2 Account+Password Login, Tenant Contacts Directory, Mu
     try {
       // 1. Unauthenticated root `/` renders Account + Password LoginView directly
       await page.goto("/", { waitUntil: "domcontentloaded" });
+      await expect(page.locator('div[hidden][id^="S:"]')).toHaveCount(0, {
+        timeout: 15_000,
+      });
       await expect(
         page.getByRole("heading", { name: "登录企业工作台" }),
       ).toBeVisible({ timeout: 15_000 });

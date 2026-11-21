@@ -2,14 +2,17 @@
 
 Next.js 16 (App Router) + TypeScript strict + Tailwind CSS v4 + unified `radix-ui` enterprise workbench frontend and same-origin BFF for `aios_platform`.
 
-> 完整中文交付文档、API 核对清单、MCP 环境变量接入指南、真假数据对照、Opus 5.5 视觉审计与 Polish Round 2 总结、19/19 自动化验收报告与低成本部署指南请参见 [docs/workbench-frontend.zh-CN.md](../docs/workbench-frontend.zh-CN.md)。
+> 完整中文交付文档、API 核对清单、三语（简体中文 / 繁體中文 / English）与 Apple Sequoia 深色模式架构、MCP 环境变量接入指南、真假数据对照、Claude Opus 5.5 High 超严苛全量视觉审计与 Polish Round 3 精修总结、IntegrAI 云端部署指引及 **26 / 26** 自动化验收报告请参见 [docs/workbench-frontend.zh-CN.md](../docs/workbench-frontend.zh-CN.md)。
 
 ## Stack & v2 Architecture Highlights
 
 - **Runtime & UI**: Next.js `16.4.6` (`output: "standalone"`), React `19.3.x`, TypeScript `5.9.x` (`strict: true`, `noUncheckedIndexedAccess: true`), Tailwind CSS `v4`, unified `radix-ui`, `lucide-react`, `zod`.
-- **Unified Frosted Alabaster & Porcelain Design System (`src/styles/tokens.css`, `src/components/kinetic/*`)**:
-  - Single cohesive cool-neutral light system across every route (`/` → `/inbox` → `/work` → `/proposals/[id]` → `/calendar` → `/admin` → `/admin/people` → mobile `390×844`): alabaster canvas (`#F5F6F8`), macOS Sequoia frosted vibrancy sidebar (`blur(20px) saturate(180%)`), luminous white sheets (`#FFFFFF`), deep obsidian ink (`#111318`), single AA Oceanic Cobalt accent (`#1668E3`), tokenized radii (`rounded-xs`/`sm`/`tile`/`card`/`xl`/`full`), ambient layered shadows, `.tabular-nums`, and strict `prefers-reduced-motion` freeze.
-  - **Calibrated 3D & Truthful Motion**: Porcelain 3D `ArchitecturalRelayCanvas` on `/` & `/login`; size-damped `Interactive3DCard` (`maxTilt <= 3°`, `interactive={false}` sheen-only for static cards); `BriefProgressChain` (truthful single-line `正在处理请求…` while pending, collapsible real-state business checklist on done/error, zero fake CoT); flush 5-stage `ExecutionTopologyRibbon`.
+- **Full Trilingual (`zh-CN` / `zh-HK` / `en`) & Native Apple macOS Sequoia Light/Dark Theme (`src/lib/i18n/*`, `src/lib/theme-context.tsx`, `src/styles/tokens.css`, `src/app/layout.tsx`)**:
+  - **Zero-FOUC SSR Cookie Persistence**: Reads `aios_locale` (`zh-CN` | `zh-HK` | `en`) and `aios_theme` (`light` | `dark`) on the server in `RootLayout` (`<html lang={...} data-theme={...}>`, dynamic `generateMetadata()` + `themeColor` viewport) with **zero `localStorage` / `sessionStorage`** usage.
+  - **Linguistic Craft & `Intl.PluralRules`**: Modular compile-time-verified trilingual dictionaries (`common`, `messenger`, `workbench`, `admin`), `:lang(zh-HK)` PingFang HK/TC glyph typography, HKT-consistent time formatting (`formatTimeOnly` / `formatUnixTime`), `tp()` pluralization, localized UOMs (`箱`/`件`/`Case`/`Each`), trilingual NL Zoom meeting parser (`zh-CN` / `zh-HK` / `en`), and locale-neutral structured chat room titles (`DM · ...` / `Meeting · ...`) & meeting-booked system tokens (`[[aios:meeting-booked|...]]`) rendered dynamically in the viewer's language.
+  - **Frosted Alabaster (Light) & Obsidian Porcelain (Dark)**: Unified surface hierarchy (`#F5F6F8` → `#FFFFFF` in Light; `#0C0E13` → `#141822` → `#1E2332` in Dark), WCAG AA+ split Cobalt accent tokens (`--accent-solid` `#1F6FEB` / `--accent-ink` `#6AA6FF` in Dark; `#1668E3` in Light), opaque `ExecutionTopologyRibbon` stepper nodes (`color-mix`), seamless `IMessageBubbleTail` geometry, and strict `prefers-reduced-motion` freeze.
+  - **1-Click Preferences Switchers (`PreferencesControls.tsx`)**: Mounted cleanly on `/` & `/login` (floating frosted capsule), `/inbox*` sidebar bottom dock & account popover, and `AppShell` centered CSS Grid top bar (with mobile `< 640px` account menu fallback).
+  - **Calibrated 3D & Truthful Motion**: Theme- and locale-reactive 3D `ArchitecturalRelayCanvas` (`Frosted Porcelain` vs `Matte Obsidian`) on `/` & `/login`; size-damped `Interactive3DCard` (`maxTilt <= 3°`, `interactive={false}` sheen-only for static cards); `BriefProgressChain` (single-line pending status + collapsible real-state business checklist, zero fake CoT).
 - **Root `/` Account + Password Login (`src/app/page.tsx`, `src/features/auth/LoginView.tsx`, `POST /api/auth/login`)**:
   - Unauthenticated `/` renders the Account + Password login form + Porcelain 3D showcase directly (with collapsed-by-default 11-persona local demo quick-fill helper and optional enterprise OIDC `/v1/session/login`); authenticated `/` redirects directly to `/inbox`.
   - Constant-time password verification, anti-enumeration `401`, sliding-window `429` brute-force guard, and same-origin HttpOnly session cookie exchange.
@@ -65,7 +68,11 @@ export AIOS_LLM_API_KEY="sk-..."
 - `:8761` serves `/v1/assurance/*` with `local` + `AIOS_ASSURANCE_DEMO_KEY_FILE`.
 - Next.js BFF automatically sets `AIOS_ASSURANCE_API_BASE_URL=http://127.0.0.1:8761`.
 
-### Option D · Manual Two-Terminal Dev Startup
+### Option D · IntegrAI Production Demo Host (`deploy/integrai/`)
+
+For hardened 24/7 Ubuntu VPS deployment behind Cloudflare Named Tunnel (loopback-only FastAPI `:8760` + Assurance `:8761` + Next.js standalone `:3000`, locked UFW, automated SQLite backup & restore drill), follow [`deploy/integrai/RUNBOOK.zh-CN.md`](../deploy/integrai/RUNBOOK.zh-CN.md) and scripts `01-preflight.sh` → `06-verify-live.sh`.
+
+### Option E · Manual Two-Terminal Dev Startup
 
 ```bash
 # Terminal 1: FastAPI backend (repo root)
@@ -123,12 +130,12 @@ pnpm --dir web install       # Install dependencies (pnpm 11 + Node 26)
 pnpm --dir web dev           # Local dev server on 127.0.0.1:3000
 pnpm --dir web typecheck     # Strict TypeScript check (`tsc --noEmit`)
 pnpm --dir web build         # Production Turbopack standalone build (`.next/standalone/server.js`)
-pnpm --dir web test:e2e      # Run full Playwright E2E + security regression suite (19 tests, desktop + mobile)
+pnpm --dir web test:e2e      # Run full Playwright E2E + i18n/Dark + security regression suite (26 tests, desktop + mobile)
 ```
 
-> **Production Standalone Runtime**: Because `next.config.ts` enables `output: "standalone"`, run production servers with `cp -R web/.next/static web/.next/standalone/.next/ && HOSTNAME=127.0.0.1 PORT=3000 node web/.next/standalone/server.js` (handled automatically by `./deploy/demo/start-local-demo.sh --prod` and `deploy/demo/aios-demo-web.service`).
+> **Production Standalone Runtime**: Because `next.config.ts` enables `output: "standalone"`, run production servers with `cp -R web/.next/static web/.next/standalone/.next/ && HOSTNAME=127.0.0.1 PORT=3000 node web/.next/standalone/server.js` (handled automatically by `./deploy/demo/start-local-demo.sh --prod`, `deploy/demo/aios-demo-web.service`, and `deploy/integrai/03-deploy-release.sh`).
 >
-> **First-time Playwright setup**: Install Chromium once via `pnpm --dir web exec playwright install chromium`. Run E2E tests against a live FastAPI + Next.js stack (`PLAYWRIGHT_BASE_URL=http://localhost:3000 pnpm --dir web test:e2e`). Latest full live verification after Polish Round 2: **19 / 19 PASS** (desktop `1440×900` + mobile `390×844` + live Assurance `PO-100` + Contacts tenant isolation + MCP/Zoom `.ics` + zero-leak audit), with 12 fresh screenshots saved in `web/e2e/screenshots/`.
+> **First-time Playwright setup**: Install Chromium once via `pnpm --dir web exec playwright install chromium`. Run E2E tests against a live FastAPI + Next.js stack (`PLAYWRIGHT_BASE_URL=http://localhost:3000 pnpm --dir web test:e2e`). Latest full live verification after **Claude Opus 5.5 High Ultra Audit & Polish Round 3**: **26 / 26 PASS** (desktop `1440×900` + mobile `390×844` + trilingual `zh-CN`/`zh-HK`/`en` + Apple Sequoia Dark Mode + zero-FOUC SSR reload + live Assurance `PO-100` + Contacts tenant isolation + MCP/Zoom `.ics` + zero-leak audit), with **23 fresh verification screenshots** saved in `web/e2e/screenshots/`.
 
 ---
 
@@ -138,33 +145,37 @@ pnpm --dir web test:e2e      # Run full Playwright E2E + security regression sui
 web/
 ├── playwright.config.ts        # Desktop (1440x900) + Mobile (390x844) sequential E2E config
 ├── e2e/
-│   ├── helpers/workbench.ts    # Account+Password/demo login, persona switch, BFF fetcher, zero-leak auditor
+│   ├── helpers/workbench.ts    # Trilingual Account+Password/demo login, persona switch, BFF fetcher, zero-leak auditor
 │   ├── 01-auth-shell-profile.spec.ts
 │   ├── 02-order-approval-receipt.spec.ts
 │   ├── 03-module-access-and-isolation.spec.ts
 │   ├── 04-collaboration-roles-calendar.spec.ts
 │   ├── 05-security-errors-resilience.spec.ts
 │   ├── 06-v2-login-contacts-mcp-zoom.spec.ts
-│   └── screenshots/            # 12 curated v2 verification screenshots
+│   ├── 07-i18n-and-dark-mode.spec.ts
+│   └── screenshots/            # 23 curated v2/v3 verification screenshots (Light + Dark + zh-CN/zh-HK/en + Mobile)
 └── src/
     ├── app/
+    │   ├── layout.tsx          # SSR cookie reader (aios_locale / aios_theme), zero-FOUC <html>, viewport themeColor
     │   ├── page.tsx            # Root `/` SSR session check -> <LoginView /> or redirect /inbox
     │   ├── login/              # Direct login route -> <LoginView />
     │   ├── v1/[...path]/       # Same-origin sanitized BFF proxy
     │   ├── healthz/ & readyz/  # Public health/readiness passthrough
     │   ├── api/auth/           # Account+Password login, controlled demo-login & persona metadata
-    │   ├── api/directory/      # Tenant-scoped Company Contacts Directory & 1:1 direct-room BFF
-    │   ├── api/integrations/   # MCP connector status, NL Zoom booking & external calendar sync BFF
+    │   ├── api/directory/      # Tenant-scoped Company Contacts Directory & locale-neutral 1:1 direct-room BFF
+    │   ├── api/integrations/   # MCP connector status, trilingual NL Zoom booking & external calendar sync BFF
     │   ├── api/calendar/ics/   # RFC 5545 / RFC 7986 .ics generator
     │   └── (app)/              # Authenticated AppShell routes (/inbox, /work, /orders/new, /proposals/[id], /calendar, /admin, /admin/people, /settings/*)
     ├── components/
-    │   ├── kinetic/            # ArchitecturalRelayCanvas, Interactive3DCard, BriefProgressChain, StatePulseBeacon, ExecutionTopologyRibbon
-    │   ├── shell/              # AppShell (2-col Messenger + 5-control Workbench top bar), WorkbenchDrawerSlot, DemoPersonaSwitcher, NoticesPopover
-    │   └── ui/                 # Button (w/ quiet variant), Avatar, StatusBadge, ConfirmDialog, Modal, AccessNoticeCard, SourceTag
+    │   ├── kinetic/            # ArchitecturalRelayCanvas (Light/Dark + Trilingual), Interactive3DCard, BriefProgressChain, StatePulseBeacon, ExecutionTopologyRibbon
+    │   ├── shell/              # AppShell (2-col Messenger + centered CSS Grid Workbench top bar), WorkbenchDrawerSlot, DemoPersonaSwitcher, NoticesPopover
+    │   └── ui/                 # PreferencesControls (LanguageSwitcher/ThemeToggle/PreferencesBar), Button, Avatar, StatusBadge, ConfirmDialog, Modal, AccessNoticeCard, SourceTag
     ├── features/               # Feature modules (auth, inbox, chat, calendar, settings, workbench, orders, proposals, admin, people)
     ├── lib/
+    │   ├── i18n/               # Trilingual engine (zh-CN/zh-HK/en), tp() plurals, dictionaries/*, structured chat-format.ts
+    │   ├── theme-context.tsx   # Cookie-only Light/Dark theme provider + smooth crossfade
     │   ├── bff/                # config, proxy, sanitize, demo-auth, directory
-    │   ├── mcp/                # client (Streamable HTTP JSON-RPC), connectors, nl-meeting, ics
-    │   └── ...                 # api-client (authGeneration/CSRF), session-context, workbench-context, types
-    └── styles/tokens.css       # Unified Frosted Alabaster & Porcelain v2 design tokens & spring physics
+    │   ├── mcp/                # client (Streamable HTTP JSON-RPC), connectors, trilingual nl-meeting, ics
+    │   └── ...                 # api-client (authGeneration/CSRF), format (HKT helpers), session-context, workbench-context, types
+    └── styles/tokens.css       # Frosted Alabaster (Light) & Obsidian Porcelain (Dark) AA+ design tokens & spring physics
 ```

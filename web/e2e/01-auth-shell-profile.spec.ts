@@ -17,6 +17,10 @@ test.describe("Phase 1: v2 Porcelain Login, 2-Column macOS Messenger Shell, Prof
     try {
       // Unauthenticated root `/` renders Account + Password LoginView directly
       await page.goto("/", { waitUntil: "domcontentloaded" });
+      // Wait for React 19 streaming Suspense template (`#S:0`) to settle after async cookie layout
+      await expect(page.locator('div[hidden][id^="S:"]')).toHaveCount(0, {
+        timeout: 15_000,
+      });
       await expect(
         page.getByRole("heading", { name: "登录企业工作台" }),
       ).toBeVisible({ timeout: 15_000 });
@@ -113,11 +117,19 @@ test.describe("Phase 1: v2 Porcelain Login, 2-Column macOS Messenger Shell, Prof
     const customUserName = `林明哲-${suffix}`;
     const customAgentName = `港湾协理-${suffix}`;
 
-    // 1. Update self profile display_name
+    // 1. Update self profile display_name (wait for initial GET /v1/profile so mount hydration never clobbers fill)
+    const initialProfileGet = page.waitForResponse(
+      (res) =>
+        new URL(res.url()).pathname === "/v1/profile" &&
+        res.request().method() === "GET" &&
+        res.status() === 200,
+    );
     await page.goto("/settings/profile", { waitUntil: "domcontentloaded" });
+    await initialProfileGet;
     const profileInput = page.getByTestId("profile-display-name-input");
     await expect(profileInput).toBeVisible({ timeout: 15_000 });
     await profileInput.fill(customUserName);
+    await expect(profileInput).toHaveValue(customUserName);
 
     const profileSaveBtn = page.getByTestId("profile-save-btn");
     const profilePatchPromise = page.waitForResponse(
@@ -129,11 +141,19 @@ test.describe("Phase 1: v2 Porcelain Login, 2-Column macOS Messenger Shell, Prof
     const profilePatchRes = await profilePatchPromise;
     expect(profilePatchRes.status()).toBe(200);
 
-    // 2. Update personal Agent display_name
+    // 2. Update personal Agent display_name (wait for initial GET /v1/agent-profile before fill)
+    const initialAgentGet = page.waitForResponse(
+      (res) =>
+        new URL(res.url()).pathname === "/v1/agent-profile" &&
+        res.request().method() === "GET" &&
+        res.status() === 200,
+    );
     await page.goto("/settings/agent", { waitUntil: "domcontentloaded" });
+    await initialAgentGet;
     const agentInput = page.getByTestId("agent-display-name-input");
     await expect(agentInput).toBeVisible({ timeout: 15_000 });
     await agentInput.fill(customAgentName);
+    await expect(agentInput).toHaveValue(customAgentName);
 
     const agentSaveBtn = page.getByTestId("agent-save-btn");
     const agentPatchPromise = page.waitForResponse(
@@ -168,11 +188,34 @@ test.describe("Phase 1: v2 Porcelain Login, 2-Column macOS Messenger Shell, Prof
 
     // Verify backend persisted values directly
     const [profRes, agentProfRes] = await Promise.all([
-      bffRequest<{ display_name: string | null }>(page, "/v1/profile"),
-      bffRequest<{ display_name: string | null }>(page, "/v1/agent-profile"),
+      bffRequest<{ version: number; display_name: string | null }>(
+        page,
+        "/v1/profile",
+      ),
+      bffRequest<{ version: number; display_name: string | null }>(
+        page,
+        "/v1/agent-profile",
+      ),
     ]);
     expect(profRes.body.display_name).toBe(customUserName);
     expect(agentProfRes.body.display_name).toBe(customAgentName);
+
+    // Restore default localized display names so subsequent E2E specs & trilingual screenshots stay isolated
+    if (profRes.status === 200 && typeof profRes.body?.version === "number") {
+      await bffRequest(page, "/v1/profile", {
+        method: "PATCH",
+        body: { version: profRes.body.version, display_name: null },
+      });
+    }
+    if (
+      agentProfRes.status === 200 &&
+      typeof agentProfRes.body?.version === "number"
+    ) {
+      await bffRequest(page, "/v1/agent-profile", {
+        method: "PATCH",
+        body: { version: agentProfRes.body.version, display_name: null },
+      });
+    }
   });
 
   test("1.3 Right business drawer keyboard toggle (Meta/Ctrl+.), Escape focus restoration & draft preservation", async ({
