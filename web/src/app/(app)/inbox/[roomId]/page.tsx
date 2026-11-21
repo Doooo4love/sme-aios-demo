@@ -1,22 +1,17 @@
-export default async function ChatRoomPage({
-  params,
-}: {
+import { ChatRoomWorkspace } from "@/features/chat/ChatRoomWorkspace";
+import { InboxShell } from "@/features/inbox/InboxShell";
+
+type RoomPageProps = {
   params: Promise<{ roomId: string }>;
-}) {
+};
+
+export default async function InboxRoomPage({ params }: RoomPageProps) {
   const { roomId } = await params;
+  const decodedRoomId = decodeURIComponent(roomId);
+
   return (
-    <div className="p-6">
-      <div className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-5">
-        <p className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
-          ROUTE · /inbox/{roomId}
-        </p>
-        <h2 className="mt-1 text-[16px] font-semibold text-[var(--ink-primary)]">
-          员工协作房间
-        </h2>
-        <p className="mt-1 font-mono-code text-[12.5px] text-[var(--ink-muted)]">
-          房间标识：{roomId}
-        </p>
-      </div>
-    </div>
+    <InboxShell mode="thread" activeThread={decodedRoomId}>
+      <ChatRoomWorkspace roomId={decodedRoomId} />
+    </InboxShell>
   );
 }

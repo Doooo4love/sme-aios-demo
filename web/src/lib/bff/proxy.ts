@@ -1,6 +1,6 @@
 import {
-  getApiBaseUrl,
   getBrowserOrigin,
+  getUpstreamBaseUrlForPath,
   isValidBrowserOrigin,
   makeOriginRejectedResponse,
 } from "@/lib/bff/config";
@@ -159,7 +159,7 @@ export async function proxyToAios(
   }
 
   const incomingUrl = new URL(req.url);
-  const upstreamUrl = `${getApiBaseUrl()}${normalizedPath}${incomingUrl.search}`;
+  const upstreamUrl = `${getUpstreamBaseUrlForPath(normalizedPath)}${normalizedPath}${incomingUrl.search}`;
 
   const upstreamHeaders = new Headers();
   const browserOrigin = getBrowserOrigin();

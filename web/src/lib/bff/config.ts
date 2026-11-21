@@ -118,6 +118,22 @@ export function getApiBaseUrl(): string {
   return trimTrailingSlash(raw.trim());
 }
 
+export function getAssuranceApiBaseUrl(): string {
+  const raw = process.env.AIOS_ASSURANCE_API_BASE_URL?.trim();
+  if (!raw) return getApiBaseUrl();
+  return trimTrailingSlash(raw);
+}
+
+export function getUpstreamBaseUrlForPath(normalizedPath: string): string {
+  if (
+    normalizedPath === "/v1/assurance" ||
+    normalizedPath.startsWith("/v1/assurance/")
+  ) {
+    return getAssuranceApiBaseUrl();
+  }
+  return getApiBaseUrl();
+}
+
 export function getBrowserOrigin(): string {
   const raw = process.env.AIOS_BROWSER_ORIGIN || "http://localhost:3000";
   return trimTrailingSlash(raw.trim());

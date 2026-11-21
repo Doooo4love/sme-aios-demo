@@ -29,6 +29,7 @@ function LoginContent() {
   const [submittingPersona, setSubmittingPersona] =
     useState<DemoPersonaId | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorRequestId, setErrorRequestId] = useState<string | null>(null);
 
   const safeNext = isSafeRelativeRedirect(searchParams.get("next")) || "/inbox";
 
@@ -42,6 +43,7 @@ function LoginContent() {
     if (submittingPersona) return;
     setSubmittingPersona(persona);
     setErrorMessage(null);
+    setErrorRequestId(null);
     try {
       const me = await loginAsDemo(persona);
       if (me) {
@@ -52,6 +54,7 @@ function LoginContent() {
     } catch (error) {
       if (isApiError(error)) {
         setErrorMessage(error.message);
+        setErrorRequestId(error.requestId);
       } else {
         setErrorMessage("登录失败，请稍后重试。");
       }
@@ -61,7 +64,10 @@ function LoginContent() {
   };
 
   return (
-    <div className="min-h-dvh w-full bg-[var(--bg-canvas)] text-[var(--ink-primary)] grid grid-cols-1 lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]">
+    <div
+      data-testid="login-page"
+      className="min-h-dvh w-full bg-[var(--bg-canvas)] text-[var(--ink-primary)] grid grid-cols-1 lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]"
+    >
       {/* Mobile Compact 3D Obsidian Stage Preview */}
       <div className="h-[190px] w-full lg:hidden">
         <ArchitecturalRelayCanvas compact />
@@ -91,9 +97,15 @@ function LoginContent() {
           {errorMessage && (
             <div
               role="alert"
+              data-testid="login-error"
               className="mt-5 rounded-[4px] border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-3.5 py-2.5 text-[12.5px] text-[var(--status-crimson)]"
             >
-              {errorMessage}
+              <div>{errorMessage}</div>
+              {errorRequestId && (
+                <div className="mt-1 font-mono-code text-[11px] opacity-80">
+                  跟踪编号: {errorRequestId}
+                </div>
+              )}
             </div>
           )}
 
@@ -102,6 +114,7 @@ function LoginContent() {
             <div className="mt-6">
               <a
                 href="/v1/session/login"
+                data-testid="login-oidc-button"
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[4px] bg-[var(--accent)] px-4 text-[14px] font-medium text-white hover:bg-[var(--accent-hover)] transition-colors duration-[120ms]"
               >
                 <KeyRound className="h-4 w-4" strokeWidth={1.75} />
@@ -113,7 +126,7 @@ function LoginContent() {
 
           {/* Controlled Local Demo Mode Persona Directory */}
           {demoConfig?.enabled && (
-            <div className="mt-6">
+            <div className="mt-6" data-testid="login-persona-list">
               <div className="mb-2.5 flex items-center justify-between">
                 <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
                   LOCAL DEMO IDENTITIES · 本地受控演示身份
@@ -141,6 +154,7 @@ function LoginContent() {
                             <button
                               key={persona.subject}
                               type="button"
+                              data-testid={`login-persona-${persona.subject}`}
                               disabled={submittingPersona !== null}
                               onClick={() => void handleDemoLogin(persona.subject)}
                               className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-[var(--bg-subtle)] transition-colors duration-[120ms] cursor-pointer disabled:opacity-55"

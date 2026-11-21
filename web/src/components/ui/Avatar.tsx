@@ -16,8 +16,16 @@ const SIZE_MAP: Record<
   NonNullable<AvatarProps["size"]>,
   { box: string; text: string; radius: string }
 > = {
-  xs: { box: "h-6 w-6", text: "text-[10px]", radius: "rounded-[4px]" },
-  sm: { box: "h-7 w-7", text: "text-[11px]", radius: "rounded-[4px]" },
+  xs: {
+    box: "h-6 w-6",
+    text: "text-[9px] tracking-tighter",
+    radius: "rounded-[4px]",
+  },
+  sm: {
+    box: "h-7 w-7",
+    text: "text-[10.5px] tracking-tight",
+    radius: "rounded-[4px]",
+  },
   md: { box: "h-8 w-8", text: "text-[12px]", radius: "rounded-[4px]" },
   lg: { box: "h-[72px] w-[72px]", text: "text-[20px]", radius: "rounded-[6px]" },
 };
@@ -38,7 +46,11 @@ export function Avatar({
 
   const dims = SIZE_MAP[size];
   const label = name || fallbackText;
-  const monogram = getMonogram(name, fallbackText);
+  const rawMonogram = getMonogram(name, fallbackText);
+  const monogram =
+    size === "xs" && /[\u4e00-\u9fff]/.test(rawMonogram)
+      ? rawMonogram.slice(0, 1)
+      : rawMonogram;
 
   if (src && !failed) {
     return (
@@ -66,7 +78,7 @@ export function Avatar({
       role="img"
       aria-label={label}
       className={[
-        "inline-flex shrink-0 items-center justify-center border font-mono-code font-semibold select-none",
+        "inline-flex shrink-0 items-center justify-center overflow-hidden whitespace-nowrap leading-none border font-mono-code font-semibold select-none",
         kind === "agent"
           ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent)]"
           : "border-[var(--hairline-strong)] bg-[var(--bg-sheet)] text-[var(--ink-secondary)]",
