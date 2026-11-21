@@ -52,7 +52,9 @@ jobs:
       - name: Exercise the platform action gateway and worker on PostgreSQL
         env:
           AIOS_PLATFORM_TEST_DSN: postgresql://aios:local-ci@localhost:5432/aios_ci
-        run: python -m unittest discover -s tests -p test_platform.py -v
+        run: |
+          python -m unittest discover -s tests -p test_platform.py -v
+          python -m unittest discover -s tests -p test_collaboration.py -v
       - name: Run the two backend reference workflows without external credentials
         run: python scripts/platform_smoke.py
       - name: Capture the live browser journey
