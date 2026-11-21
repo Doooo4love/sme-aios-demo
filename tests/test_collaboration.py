@@ -275,6 +275,26 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"{inbox}/{notices[0]['id']}", headers=attendee).json()["kind"],
                          "meeting_cancelled")
 
+    def test_room_scheduling_requires_current_chat_grant(self):
+        room = self.room()
+        route = "/v1/calendar/events"
+        meeting = self.future_meeting(attendees=["manager"], room_id=room)
+        authenticate = self.identity.authenticate
+
+        def without_chat(token):
+            actor = authenticate(token)
+            if actor.subject == "operator":
+                return actor.model_copy(update={"grants": actor.grants - {"chat.use"}})
+            return actor
+
+        with patch.object(self.identity, "authenticate", side_effect=without_chat):
+            denied = self.client.post(route, headers=self.auth("operator"), json=meeting)
+            self.assertEqual(denied.status_code, 403, denied.text)
+            private_meeting = self.future_meeting()
+            self.assertEqual(self.client.post(route, headers=self.auth("operator"),
+                                              json=private_meeting).status_code, 201)
+        self.assertEqual(self.client.get("/v1/workbench/notices", headers=self.auth("manager")).json()["items"], [])
+
     def test_review_assignment_return_and_approval_conflict(self):
         proposal = self.proposal()
         path = f"/v1/proposals/{proposal['id']}"
