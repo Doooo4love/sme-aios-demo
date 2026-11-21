@@ -1,6 +1,5 @@
 """Consume the outbox. Keep the network boundary outside ledger transactions."""
 from dataclasses import dataclass
-from hashlib import sha256
 from pathlib import Path
 import argparse
 import json
@@ -26,8 +25,10 @@ class DemoERP:
                    payload TEXT NOT NULL, status TEXT NOT NULL)""")
 
     def create_draft(self, key: str, payload: dict, *, lose_response: bool) -> None:
-        number = "SO-" + sha256(key.encode()).hexdigest()[:8].upper()
         with self.database.transaction() as run:
+            # The local ERP serializes writers. Keep a short, human-readable receipt.
+            serial = run("SELECT COUNT(*) + 1 AS serial FROM draft").fetchone()["serial"]
+            number = f"SO-{serial:06d}"
             run("""INSERT INTO draft VALUES (?, ?, ?, 'DRAFT')
                    ON CONFLICT(business_key) DO NOTHING""", (number, key, canonical(payload)))
         if lose_response:

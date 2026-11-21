@@ -44,3 +44,12 @@ CREATE TABLE IF NOT EXISTS intake_document (
     command_id TEXT REFERENCES command(id)
 );
 CREATE INDEX IF NOT EXISTS intake_document_recent ON intake_document(created_at DESC, id);
+
+CREATE TABLE IF NOT EXISTS sku_memory (
+    buyer TEXT NOT NULL,
+    source_sku TEXT NOT NULL,
+    erp_sku TEXT NOT NULL,
+    units_per_case INTEGER NOT NULL CHECK (units_per_case > 0),
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (buyer, source_sku)
+);

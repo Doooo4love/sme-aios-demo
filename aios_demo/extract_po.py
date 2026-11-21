@@ -21,15 +21,20 @@ def extraction_result(data: bytes, parsed: Parsed, evidence: dict, mode: str) ->
         "image_height": parsed.page.height,
         "review_fields": review_fields,
         "status": "needs_review" if review_fields or not evidence["complete"] else "ready_for_preview",
-        "metrics": evidence.get("metrics", {
+        "metrics": {
             "vision_calls": sum(len(field["vision"]) for field in evidence["fields"].values()),
-        }),
+            **evidence.get("metrics", {}),
+            "auto_passed_fields": len(evidence["fields"]) - len(review_fields),
+            "disputed_fields": len(review_fields),
+            "rules_blocked_count": sum(bool(f.get("initial_reading")) for f in evidence["fields"].values()),
+            "memories_saved": 0,
+        },
     }
 
 
-def analyze_upload(data: bytes, reader: VisionReader | None = None) -> tuple[dict, Parsed]:
+def analyze_upload(data: bytes, reader: VisionReader | None = None, *, memory=None) -> tuple[dict, Parsed]:
     parsed = parse_page(read_image(data))
-    evidence = route_on_demand(parsed, reader)
+    evidence = route_on_demand(parsed, reader, memory=memory)
     mode = "vision-on-demand" if reader else "ocr"
     result = extraction_result(data, parsed, evidence, mode)
     result["reader_mode"] = "Live vision on demand" if reader else "Local OCR only"

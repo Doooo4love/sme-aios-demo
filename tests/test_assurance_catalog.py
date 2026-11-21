@@ -1,3 +1,4 @@
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -10,7 +11,7 @@ class CatalogTests(unittest.TestCase):
     def test_read_only_metadata_draft_ignores_business_rows(self):
         with TemporaryDirectory() as folder:
             database = Path(folder) / "source.sqlite"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("CREATE TABLE source_po (id INTEGER, account TEXT)")
                 connection.execute("INSERT INTO source_po VALUES (1, 'business-record-hidden')")
             resources = reflect_resources(f"sqlite:///{database}", ["source_po"], None)

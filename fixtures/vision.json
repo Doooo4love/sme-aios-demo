@@ -16,8 +16,24 @@
     "line.2.amount": "324.00"
   },
   "orders": {
-    "harbour-po.png": {"po": "PO-1042"},
-    "harbour-review.png": {"po": "PO-1043", "line.1.quantity": "8"}
+    "harbour-po.png": {
+      "po": "PO-1042"
+    },
+    "harbour-review.png": {
+      "po": "PO-1043",
+      "line.1.quantity": "8"
+    },
+    "harbour-shorthand.png": {
+      "po": "PO-1044",
+      "total": "684.00",
+      "line.1.sku": "LEMON-CTN",
+      "line.1.quantity": "2",
+      "line.1.unit": "CASE",
+      "line.1.unit_price": "180.00",
+      "line.1.amount": "360.00"
+    }
   },
-  "second": {"line.1.quantity": "2"}
+  "second": {
+    "line.1.quantity": "2"
+  }
 }

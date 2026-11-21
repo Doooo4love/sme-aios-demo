@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
 import json
+import math
 import sqlite3
 import time
 import uuid
@@ -95,7 +96,11 @@ class Ledger:
 
     @staticmethod
     def _event(run, command_id: str, event: str, note: str) -> None:
-        run("INSERT INTO journal VALUES (?, ?, ?, ?, ?)", (_id(), command_id, event, note, time.time()))
+        latest = run("SELECT MAX(at) AS at FROM journal WHERE command_id = ?", (command_id,)).fetchone()["at"]
+        stamp = time.time()
+        if latest is not None and stamp <= latest:
+            stamp = math.nextafter(latest, math.inf)
+        run("INSERT INTO journal VALUES (?, ?, ?, ?, ?)", (_id(), command_id, event, note, stamp))
 
     @staticmethod
     def _job(run, command_id: str, kind: str) -> None:
@@ -148,7 +153,44 @@ class Ledger:
                            "status": status, "created_at": row["created_at"]})
         return result
 
-    def save_preview(self, run_id: str, preview: dict) -> None:
+    def sku_memory(self) -> dict:
+        with self.db.transaction(write=False) as run:
+            rows = run("SELECT buyer, source_sku, erp_sku, units_per_case FROM sku_memory").fetchall()
+        return {(row["buyer"], row["source_sku"]): {
+            "erp_sku": row["erp_sku"], "units_per_case": row["units_per_case"]
+        } for row in rows}
+
+    def reset_memory(self) -> int:
+        with self.db.transaction() as run:
+            return run("DELETE FROM sku_memory").rowcount
+
+    def _increment_metric(self, run, run_id: str, name: str, count: int) -> None:
+        lock = " FOR UPDATE" if self.db.dsn else ""
+        row = run("SELECT evidence FROM intake_document WHERE id = ?" + lock, (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        evidence = json.loads(row["evidence"])
+        metrics = evidence.setdefault("metrics", {})
+        metrics[name] = metrics.get(name, 0) + count
+        run("UPDATE intake_document SET evidence = ? WHERE id = ?", (canonical(evidence), run_id))
+
+    def record_rule_block(self, run_id: str) -> None:
+        with self.db.transaction() as run:
+            self._increment_metric(run, run_id, "rules_blocked_count", 1)
+
+    def command_metrics(self, command_id: str, run_id: str | None) -> dict:
+        query = "SELECT evidence FROM intake_document WHERE command_id = ?"
+        args = [command_id]
+        if run_id:
+            query += " AND id = ?"
+            args.append(run_id)
+        with self.db.transaction(write=False) as run:
+            row = run(query + " ORDER BY created_at, id LIMIT 1", args).fetchone()
+        if run_id and row is None:
+            raise KeyError(run_id)
+        return json.loads(row["evidence"]).get("metrics", {}) if row else {}
+
+    def save_preview(self, run_id: str, preview: dict, *, memories=()) -> None:
         with self.db.transaction() as run:
             changed = run(
                 """UPDATE intake_document SET preview = ? WHERE id = ? AND command_id IS NULL""",
@@ -156,6 +198,25 @@ class Ledger:
             )
             if changed.rowcount != 1:
                 raise Conflict("This intake has already been approved")
+            saved = []
+            for (buyer, source), (erp_sku, units) in dict(memories).items():
+                change = run("""
+                    INSERT INTO sku_memory (buyer, source_sku, erp_sku, units_per_case, updated_at)
+                    VALUES (?, ?, ?, ?, ?) ON CONFLICT (buyer, source_sku) DO UPDATE SET
+                        erp_sku = excluded.erp_sku, units_per_case = excluded.units_per_case,
+                        updated_at = excluded.updated_at
+                    WHERE sku_memory.erp_sku <> excluded.erp_sku OR
+                          sku_memory.units_per_case <> excluded.units_per_case
+                """, (buyer, source, erp_sku, units, time.time()))
+                if change.rowcount:
+                    saved.append(source)
+            if saved:
+                row = run("SELECT evidence FROM intake_document WHERE id = ?", (run_id,)).fetchone()
+                evidence = json.loads(row["evidence"])
+                aliases = sorted(set(evidence.get("saved_aliases", ())).union(saved))
+                evidence["saved_aliases"] = aliases
+                evidence["metrics"]["memories_saved"] = len(aliases)
+                run("UPDATE intake_document SET evidence = ? WHERE id = ?", (canonical(evidence), run_id))
 
     def approve(self, payload: dict, expected_digest: str, actor: str, review: dict,
                 simulate_timeout: bool, *, intake_id: str | None = None) -> str:
