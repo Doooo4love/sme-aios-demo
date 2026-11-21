@@ -23,6 +23,13 @@ import type {
   ZoomBookingConfirmResponse,
   ZoomBookingPreviewResponse,
 } from "@/lib/types";
+import {
+  LOCALE_COOKIE_NAME,
+  normalizeLocale,
+  readCookieValue,
+  type Locale,
+} from "@/lib/i18n/types";
+import { localizeErrorMessageForLocale } from "@/lib/i18n/dictionaries";
 
 export type AuthResetReason =
   | "unauthorized"
@@ -221,82 +228,41 @@ export function generateIdempotencyKey(prefix = "idem"): string {
   return `${safePrefix}:${rand}`.slice(0, 128);
 }
 
-function defaultMessageForError(status: number, code: string, rawStr?: string): string {
-  if (status === 404 || code === "RECORD_UNAVAILABLE") {
-    return "当前账号无法访问这条记录。";
-  }
-  switch (code) {
-    case "UNAUTHORIZED":
-      return "登录状态已失效，请重新登录。";
-    case "ORIGIN_REJECTED":
-      return "请求来源未获授权。";
-    case "CSRF_REJECTED":
-      return "安全校验令牌已失效，请重试。";
-    case "ACCESS_RESTRICTED":
-      return "当前账号无权执行此操作或访问该站点范围。";
-    case "ACTION_NOT_ALLOWED":
-      return "当前账号无权批准该提案，可切换为只读查看详情。";
-    case "ACCESS_CHANGED":
-      return "访问权限已变更，界面能力已同步刷新。";
-    case "SUSPENDED":
-      return "当前账号访问已被停用。";
-    case "TURN_IN_PROGRESS":
-      return "该指令仍在处理中，请稍候自动同步结果。";
-    case "REVIEW_IN_PROGRESS":
-      return "受控预审正在执行中，请稍候重试。";
-    case "REVIEW_SNAPSHOT_CONFLICT":
-    case "REVIEW_SOURCE_CHANGED":
-      return "源数据快照已变更，请刷新最新记录后重新确认。";
-    case "REVIEW_EXPIRED":
-      return "该预审记录已过期，请重新发起预审。";
-    case "MODEL_BUDGET_EXHAUSTED":
-    case "RATE_LIMITED":
-      return "当前租户请求额度已达上限，请稍后再试。";
-    case "STORAGE_UNAVAILABLE":
-    case "DIRECTORY_UNAVAILABLE":
-    case "ASSURANCE_OVERLOADED":
-    case "AVATAR_BUSY":
-    case "UPSTREAM_UNAVAILABLE":
-      return "服务繁忙或上游连接暂不可用，请稍后重试。";
-    default:
-      break;
-  }
+function getActiveClientLocale(): Locale {
+  return normalizeLocale(readCookieValue(LOCALE_COOKIE_NAME));
+}
 
-  if (rawStr) {
-    if (rawStr === "AIOS access is suspended") {
-      return "当前账号访问已被停用。";
-    }
-    if (rawStr === "Tenant planner budget exhausted") {
-      return "当前租户规划请求额度已达上限，请稍后重试。";
-    }
-    if (rawStr === "Assignment changed. Reload and review before saving.") {
-      return "该模块授权已在其他会话中变更，已刷新最新快照，请核对后重新保存。";
-    }
-    if (rawStr === "Profile version changed") {
-      return "资料版本已更新，请刷新最新内容后再保存。";
-    }
-    if (rawStr === "At least one attendee is busy") {
-      return "所选时间段内至少有一位参会人时间冲突，请调整时间。";
-    }
-    if (rawStr === "Meeting has changed") {
-      return "会议信息已被更新，请刷新后重试。";
-    }
-    if (rawStr === "An administrator must manage another employee") {
-      return "管理员不可修改本人模块授权。";
-    }
-    if (rawStr === "Preview digest changed") {
-      return "提案摘要已变更，请核对最新差异后再确认。";
-    }
-    return rawStr;
-  }
+export function localizeApiErrorMessage(
+  error: Pick<ApiError, "status" | "code" | "message" | "rawDetail">,
+  locale?: Locale,
+): string {
+  return localizeErrorMessageForLocale(
+    {
+      status: error.status,
+      code: error.code,
+      message: error.message,
+      rawDetail: error.rawDetail,
+    },
+    locale ?? getActiveClientLocale(),
+  );
+}
 
-  if (status === 401) return "登录状态已失效，请重新登录。";
-  if (status === 403) return "当前账号无权执行此操作。";
-  if (status === 409) return "数据状态已发生变更，请刷新后核对再试。";
-  if (status === 422) return "请检查表单输入格式后重试。";
-  if (status === 429) return "请求过于频繁，请稍后重试。";
-  if (status >= 500) return "服务暂不可用，请稍后重试。";
-  return "请求未能完成，请稍后重试。";
+function defaultMessageForError(
+  status: number,
+  code: string,
+  rawStr?: string,
+  locale?: Locale,
+): string {
+  const activeLocale = locale ?? getActiveClientLocale();
+  return localizeErrorMessageForLocale(
+    {
+      status,
+      code,
+      rawDetail: rawStr,
+      message: rawStr,
+    },
+    activeLocale,
+  );
 }
 
 function parseRetryAfter(header: string | null): number | null {
@@ -330,7 +296,7 @@ export function parseApiError(
 
   if (status === 404) {
     code = "RECORD_UNAVAILABLE";
-    message = "当前账号无法访问这条记录。";
+    message = defaultMessageForError(404, "RECORD_UNAVAILABLE");
   } else if (Array.isArray(detail)) {
     code = "VALIDATION_ERROR";
     fieldErrors = detail
@@ -342,7 +308,10 @@ export function parseApiError(
                 typeof p === "string" || typeof p === "number",
             )
           : [],
-        msg: typeof item.msg === "string" ? item.msg : "输入格式不符合要求",
+        msg:
+          typeof item.msg === "string"
+            ? item.msg
+            : defaultMessageForError(422, "VALIDATION_ERROR"),
         type: typeof item.type === "string" ? item.type : undefined,
       }));
     message =
@@ -457,8 +426,8 @@ export async function ensureCsrfToken(signal?: AbortSignal): Promise<string> {
       if (!token) {
         throw new ApiError({
           status: 401,
-          code: "UNAUTHORIZED",
-          message: "无法获取会话校验令牌，请重新登录。",
+          code: "SESSION_CSRF_MISSING",
+          message: defaultMessageForError(401, "SESSION_CSRF_MISSING"),
           requestId: res.headers.get("x-request-id"),
           retryAfter: null,
           fieldErrors: [],
@@ -789,7 +758,7 @@ export async function openOrCreateDirectRoom(
     return {
       room: {
         id: existingDirectRoomId,
-        title: `私聊 · ${contactDisplayName || contactSubject}`,
+        title: `DM · ${contactDisplayName || contactSubject} (${contactSubject})`,
         owner: "",
       },
       created: false,

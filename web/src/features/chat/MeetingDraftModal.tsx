@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   Calendar,
+  Check,
   CheckCircle2,
   Download,
   ExternalLink,
@@ -20,7 +21,15 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import { formatClockRange, formatUnixTime } from "@/lib/format";
+import { formatClockRange } from "@/lib/format";
+import {
+  CALENDAR_CONNECTOR_LABELS_I18N,
+  LOCALE_META,
+  PERSONA_LOCALIZATIONS,
+  localizeMcpSyncMessage,
+  localizeZoomStatusLabel,
+  useLocale,
+} from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
 import { Avatar } from "@/components/ui/Avatar";
@@ -43,10 +52,10 @@ import type {
   ZoomMeetingResult,
 } from "@/lib/types";
 
-const CALENDAR_TARGETS: Array<{ id: ExternalCalendarTarget; label: string }> = [
-  { id: "google", label: "Google Calendar" },
-  { id: "icloud", label: "Apple iCloud" },
-  { id: "outlook", label: "Outlook / M365" },
+const CALENDAR_TARGET_IDS: readonly ExternalCalendarTarget[] = [
+  "google",
+  "icloud",
+  "outlook",
 ];
 
 export interface MeetingDraftModalProps {
@@ -67,6 +76,7 @@ export function MeetingDraftModal({
   memberProfiles,
 }: MeetingDraftModalProps) {
   const { actor, handleAccessChanged } = useSession();
+  const { locale, t, tp, tx, formatDateTime, localizePersona } = useLocale();
 
   const [title, setTitle] = useState("");
   const [startsLocal, setStartsLocal] = useState("");
@@ -95,13 +105,54 @@ export function MeetingDraftModal({
   const submittingRef = useRef(false);
   const needsFreshClientIdAfterEditRef = useRef(false);
 
+  const targetLabel = (id: ExternalCalendarTarget | string) => {
+    if (id === "google" || id === "icloud" || id === "outlook") {
+      return CALENDAR_CONNECTOR_LABELS_I18N[id][locale];
+    }
+    return id;
+  };
+
+  const resolveMemberName = (subject: string, prof?: Profile) => {
+    const raw = prof?.display_name?.trim();
+    const known =
+      PERSONA_LOCALIZATIONS[subject as keyof typeof PERSONA_LOCALIZATIONS];
+    if (
+      raw &&
+      (!known ||
+        (raw !== known["zh-CN"].displayName &&
+          raw !== known["zh-HK"].displayName &&
+          raw !== known.en.displayName))
+    ) {
+      return raw;
+    }
+    if (known) {
+      return localizePersona(subject).displayName;
+    }
+    return raw || subject;
+  };
+
   useEffect(() => {
     if (!open) return;
     const { start, end } = getNextRoundedSlot(60);
     clientIdRef.current = generateClientId("mtg");
     submittingRef.current = false;
     needsFreshClientIdAfterEditRef.current = false;
-    setTitle(roomTitle ? `${roomTitle} 协作会议` : "协作房间会议");
+    setTitle(
+      roomTitle
+        ? tx(
+            {
+              "zh-CN": "{room} 协作会议",
+              "zh-HK": "{room} 協作會議",
+              en: "{room} Sync",
+            },
+            { room: roomTitle },
+          )
+        : tx({
+            "zh-CN": "协作房间会议",
+            "zh-HK": "協作對話會議",
+            en: "Team Room Meeting",
+          }),
+    );
     setStartsLocal(toDateTimeLocalInputValue(start));
     setEndsLocal(toDateTimeLocalInputValue(end));
     setSelectedAttendees(
@@ -120,6 +171,7 @@ export function MeetingDraftModal({
     fetchMcpStatus()
       .then((res) => setMcpConnectors(res.connectors))
       .catch(() => setMcpConnectors([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, roomId, roomTitle, members, actor]);
 
   const markDraftEdited = () => {
@@ -144,7 +196,7 @@ export function MeetingDraftModal({
     markDraftEdited();
     setSelectedTargets((prev) =>
       prev.includes(target)
-        ? prev.filter((t) => t !== target)
+        ? prev.filter((item) => item !== target)
         : [...prev, target],
     );
   };
@@ -155,33 +207,69 @@ export function MeetingDraftModal({
 
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
-      setValidationError("请输入会议主题（1–120 字符）。");
+      setValidationError(
+        tx({
+          "zh-CN": "请输入会议主题（1–120 字符）。",
+          "zh-HK": "請輸入會議主題（1–120 個字元）。",
+          en: "Please enter a meeting title (1–120 characters).",
+        }),
+      );
       return;
     }
     if (trimmedTitle.length > 120) {
-      setValidationError("会议主题不能超过 120 个字符。");
+      setValidationError(
+        tx({
+          "zh-CN": "会议主题不能超过 120 个字符。",
+          "zh-HK": "會議主題不能超過 120 個字元。",
+          en: "Meeting title cannot exceed 120 characters.",
+        }),
+      );
       return;
     }
 
     const startsIso = dateTimeLocalToOffsetIso(startsLocal);
     const endsIso = dateTimeLocalToOffsetIso(endsLocal);
     if (!startsIso || !endsIso) {
-      setValidationError("请选择有效的开始和结束时间。");
+      setValidationError(
+        tx({
+          "zh-CN": "请选择有效的开始和结束时间。",
+          "zh-HK": "請選擇有效的開始和結束時間。",
+          en: "Please choose valid start and end times.",
+        }),
+      );
       return;
     }
 
     const startMs = new Date(startsLocal).getTime();
     const endMs = new Date(endsLocal).getTime();
     if (startMs <= Date.now()) {
-      setValidationError("会议开始时间必须晚于当前时间。");
+      setValidationError(
+        tx({
+          "zh-CN": "会议开始时间必须晚于当前时间。",
+          "zh-HK": "會議開始時間必須晚於目前時間。",
+          en: "Start time must be in the future.",
+        }),
+      );
       return;
     }
     if (endMs <= startMs) {
-      setValidationError("结束时间必须晚于开始时间。");
+      setValidationError(
+        tx({
+          "zh-CN": "结束时间必须晚于开始时间。",
+          "zh-HK": "結束時間必須晚於開始時間。",
+          en: "End time must be after start time.",
+        }),
+      );
       return;
     }
     if (endMs - startMs > 86_400_000) {
-      setValidationError("单次会议时长不能超过 24 小时。");
+      setValidationError(
+        tx({
+          "zh-CN": "单次会议时长不能超过 24 小时。",
+          "zh-HK": "單次會議時長不能超過 24 小時。",
+          en: "Meeting duration cannot exceed 24 hours.",
+        }),
+      );
       return;
     }
 
@@ -244,7 +332,13 @@ export function MeetingDraftModal({
         }
         setApiError(err);
       } else {
-        setValidationError("创建会议失败，请保留表单内容后点击重试。");
+        setValidationError(
+          tx({
+            "zh-CN": "创建会议失败，请保留表单内容后点击重试。",
+            "zh-HK": "建立會議失敗，請保留表單內容後點擊重試。",
+            en: "Failed to create meeting. Keep your details and retry.",
+          }),
+        );
       }
     } finally {
       submittingRef.current = false;
@@ -254,6 +348,8 @@ export function MeetingDraftModal({
 
   const connectorById = new Map(mcpConnectors.map((c) => [c.connector, c]));
   const zoomConnector = connectorById.get("zoom");
+  const isZoomLive =
+    zoomResult?.mode === "live_mcp" || zoomResult?.mode === "live_api";
 
   return (
     <Modal
@@ -261,11 +357,34 @@ export function MeetingDraftModal({
       onOpenChange={(next) => {
         if (!submitting) onOpenChange(next);
       }}
-      title={createdEvent ? "会议已写入站内日历" : "预约房间会议 · 核对后确认"}
+      title={
+        createdEvent
+          ? tx({
+              "zh-CN": "会议已写入站内日历",
+              "zh-HK": "會議已寫入站內日曆",
+              en: "Meeting Saved to Calendar",
+            })
+          : tx({
+              "zh-CN": "预约房间会议 · 核对后确认",
+              "zh-HK": "預約對話會議 · 核對後確認",
+              en: "Schedule Room Meeting · Review & Confirm",
+            })
+      }
       subtitle={
         createdEvent
-          ? "已写入 AIOS 站内日历并向参会同事发送站内通知。"
-          : `关联会话「${roomTitle}」（仅预览草稿，点击确认后方正式写入）`
+          ? tx({
+              "zh-CN": "已写入 AIOS 站内日历并向参会同事发送站内通知。",
+              "zh-HK": "已寫入 AIOS 站內日曆並向與會同事傳送站內通知。",
+              en: "Saved to the AIOS calendar and notified invited colleagues.",
+            })
+          : tx(
+              {
+                "zh-CN": "关联会话「{room}」（仅预览草稿，点击确认后方正式写入）",
+                "zh-HK": "關聯對話「{room}」（僅預覽草稿，點擊確認後方正式寫入）",
+                en: "Linked to “{room}” (preview draft — nothing is written until confirmed)",
+              },
+              { room: roomTitle },
+            )
       }
       size="md"
       footer={
@@ -276,7 +395,11 @@ export function MeetingDraftModal({
               pill
               onClick={() => onOpenChange(false)}
             >
-              返回会话
+              {tx({
+                "zh-CN": "返回会话",
+                "zh-HK": "返回對話",
+                en: "Back to Chat",
+              })}
             </Button>
             {icsUrl && (
               <a
@@ -285,15 +408,27 @@ export function MeetingDraftModal({
                 className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-all"
               >
                 <Download className="h-3.5 w-3.5 text-[var(--accent)]" />
-                <span>下载 .ics</span>
+                <span>
+                  {tx({
+                    "zh-CN": "下载 .ics",
+                    "zh-HK": "下載 .ics",
+                    en: "Download .ics",
+                  })}
+                </span>
               </a>
             )}
             <Link
               href="/calendar"
               data-testid="meeting-view-calendar-link"
-              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.24)] hover:bg-[var(--accent-hover)] transition-colors"
+              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-4 text-[13px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] transition-colors"
             >
-              <span>在日历中查看</span>
+              <span>
+                {tx({
+                  "zh-CN": "在日历中查看",
+                  "zh-HK": "於日曆中檢視",
+                  en: "View in Calendar",
+                })}
+              </span>
               <ArrowUpRight className="h-4 w-4" strokeWidth={1.85} />
             </Link>
           </>
@@ -305,7 +440,7 @@ export function MeetingDraftModal({
               disabled={submitting}
               onClick={() => onOpenChange(false)}
             >
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               variant="primary"
@@ -313,9 +448,20 @@ export function MeetingDraftModal({
               loading={submitting}
               disabled={submitting}
               data-testid="room-meeting-confirm-btn"
+              title={clientIdRef.current}
               onClick={() => void handleConfirm()}
             >
-              {submitting ? "正在创建会议…" : "确认创建日历事件"}
+              {submitting
+                ? tx({
+                    "zh-CN": "正在创建会议…",
+                    "zh-HK": "正在建立會議…",
+                    en: "Creating meeting…",
+                  })
+                : tx({
+                    "zh-CN": "确认创建日历事件",
+                    "zh-HK": "確認建立日曆事件",
+                    en: "Confirm & Create Event",
+                  })}
             </Button>
           </>
         )
@@ -330,7 +476,13 @@ export function MeetingDraftModal({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 font-semibold text-[var(--status-emerald)]">
                 <CheckCircle2 className="h-4 w-4" strokeWidth={2} />
-                <span>已创建站内日历事件</span>
+                <span>
+                  {tx({
+                    "zh-CN": "已创建站内日历事件",
+                    "zh-HK": "已建立站內日曆事件",
+                    en: "Calendar Event Created",
+                  })}
+                </span>
               </div>
               <SourceTag source={createdEvent.source} />
             </div>
@@ -339,13 +491,17 @@ export function MeetingDraftModal({
             </h3>
             <dl className="divide-y divide-[var(--hairline-subtle)] rounded-sm bg-[var(--bg-surface)] text-[12px]">
               <div className="flex justify-between px-3.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">日期</dt>
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({ "zh-CN": "日期", "zh-HK": "日期", en: "Date" })}
+                </dt>
                 <dd className="font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
-                  {formatUnixTime(createdEvent.starts_at, { dateOnly: true })}
+                  {formatDateTime(createdEvent.starts_at, { dateOnly: true })}
                 </dd>
               </div>
               <div className="flex justify-between px-3.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">时间段</dt>
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({ "zh-CN": "时间段", "zh-HK": "時段", en: "Time" })}
+                </dt>
                 <dd className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                   {formatClockRange(
                     createdEvent.starts_at,
@@ -354,13 +510,31 @@ export function MeetingDraftModal({
                 </dd>
               </div>
               <div className="flex justify-between px-3.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">组织人</dt>
-                <dd className="font-mono-code text-[var(--ink-primary)]">
-                  {createdEvent.organizer}
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "组织者",
+                    "zh-HK": "組織者",
+                    en: "Organizer",
+                  })}
+                </dt>
+                <dd
+                  title={createdEvent.organizer}
+                  className="font-medium text-[var(--ink-primary)]"
+                >
+                  {resolveMemberName(
+                    createdEvent.organizer,
+                    memberProfiles[createdEvent.organizer],
+                  )}
                 </dd>
               </div>
               <div className="flex justify-between px-3.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">事件编号 / 版本</dt>
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "事件编号 / 版本",
+                    "zh-HK": "事件編號 / 版本",
+                    en: "Event ID / Rev",
+                  })}
+                </dt>
                 <dd className="font-mono-code text-[var(--ink-muted)]">
                   {createdEvent.id.slice(0, 12)} · r{createdEvent.revision}
                 </dd>
@@ -373,20 +547,27 @@ export function MeetingDraftModal({
               <div className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5 font-semibold text-[var(--ink-primary)]">
                   <Video className="h-3.5 w-3.5 text-[var(--accent)]" />
-                  <span>Zoom 视频会议</span>
+                  <span>{CALENDAR_CONNECTOR_LABELS_I18N.zoom[locale]}</span>
                 </span>
                 <StatusBadge
-                  status={
-                    zoomResult.mode === "live_mcp" ||
-                    zoomResult.mode === "live_api"
-                      ? "connected"
-                      : "sandbox_ready"
+                  status={isZoomLive ? "connected" : "sandbox_ready"}
+                  label={
+                    isZoomLive
+                      ? tx({
+                          "zh-CN": "Zoom 已连接",
+                          "zh-HK": "Zoom 已連線",
+                          en: "Zoom Connected",
+                        })
+                      : tx({
+                          "zh-CN": "Zoom 未连接",
+                          "zh-HK": "Zoom 未連線",
+                          en: "Zoom Not Connected",
+                        })
                   }
-                  label={zoomResult.status_label}
                   compact
                 />
               </div>
-              {zoomResult.join_url && (
+              {zoomResult.join_url ? (
                 <a
                   href={zoomResult.join_url}
                   target="_blank"
@@ -396,6 +577,10 @@ export function MeetingDraftModal({
                   <span>{zoomResult.join_url}</span>
                   <ExternalLink className="h-3 w-3 shrink-0" />
                 </a>
+              ) : (
+                <p className="text-[12px] text-[var(--ink-muted)]">
+                  {localizeZoomStatusLabel(zoomResult, locale)}
+                </p>
               )}
             </div>
           )}
@@ -405,7 +590,7 @@ export function MeetingDraftModal({
               {externalSyncResults.map((res) => (
                 <span
                   key={res.connector}
-                  title={res.message}
+                  title={localizeMcpSyncMessage(res, locale)}
                   className={[
                     "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium",
                     res.status === "synced"
@@ -413,9 +598,19 @@ export function MeetingDraftModal({
                       : "bg-[var(--bg-surface-subtle)] text-[var(--ink-muted)]",
                   ].join(" ")}
                 >
-                  <span>{res.label}</span>
+                  <span>{targetLabel(res.connector)}</span>
                   <span className="opacity-80">
-                    {res.status === "synced" ? "已同步" : ".ics 可用"}
+                    {res.status === "synced"
+                      ? tx({
+                          "zh-CN": "已同步",
+                          "zh-HK": "已同步",
+                          en: "Synced",
+                        })
+                      : tx({
+                          "zh-CN": ".ics 可用",
+                          "zh-HK": ".ics 可用",
+                          en: ".ics ready",
+                        })}
                   </span>
                 </span>
               ))}
@@ -429,18 +624,24 @@ export function MeetingDraftModal({
           className="space-y-4"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2 text-[11.5px]">
-            <span className="flex items-center gap-1.5 text-[var(--ink-secondary)]">
+            <span
+              title={roomId}
+              className="flex min-w-0 items-center gap-1.5 text-[var(--ink-secondary)]"
+            >
               <Calendar
-                className="h-3.5 w-3.5 text-[var(--accent)]"
+                className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]"
                 strokeWidth={1.85}
               />
-              <span>绑定会话：</span>
-              <span className="font-mono-code text-[var(--ink-primary)]">
-                {roomId.slice(0, 14)}…
+              <span className="shrink-0">
+                {tx({
+                  "zh-CN": "关联会话：",
+                  "zh-HK": "關聯對話：",
+                  en: "Room: ",
+                })}
               </span>
-            </span>
-            <span className="font-mono-code text-[10.5px] text-[var(--ink-muted)]">
-              幂等键 {clientIdRef.current}
+              <span className="truncate font-medium text-[var(--ink-primary)]">
+                {roomTitle || roomId.slice(0, 14)}
+              </span>
             </span>
           </div>
 
@@ -449,7 +650,7 @@ export function MeetingDraftModal({
               htmlFor="meeting-draft-title"
               className="block text-[12px] font-medium text-[var(--ink-secondary)]"
             >
-              会议主题
+              {t("zoom.meetingTitleLabel")}
             </label>
             <input
               id="meeting-draft-title"
@@ -462,7 +663,11 @@ export function MeetingDraftModal({
                 setTitle(e.target.value);
                 markDraftEdited();
               }}
-              placeholder="输入会议主题"
+              placeholder={tx({
+                "zh-CN": "输入会议主题",
+                "zh-HK": "輸入會議主題",
+                en: "Enter meeting title",
+              })}
               className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3.5 text-[13.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none transition-all"
             />
           </div>
@@ -473,12 +678,17 @@ export function MeetingDraftModal({
                 htmlFor="meeting-draft-start"
                 className="block text-[12px] font-medium text-[var(--ink-secondary)]"
               >
-                开始时间（本地时区）
+                {tx({
+                  "zh-CN": "开始时间（本地时区）",
+                  "zh-HK": "開始時間（本地時區）",
+                  en: "Start Time (Local)",
+                })}
               </label>
               <input
                 id="meeting-draft-start"
                 data-testid="room-meeting-start-input"
                 type="datetime-local"
+                lang={LOCALE_META[locale].htmlLang}
                 required
                 value={startsLocal}
                 onChange={(e) => {
@@ -494,12 +704,17 @@ export function MeetingDraftModal({
                 htmlFor="meeting-draft-end"
                 className="block text-[12px] font-medium text-[var(--ink-secondary)]"
               >
-                结束时间（本地时区）
+                {tx({
+                  "zh-CN": "结束时间（本地时区）",
+                  "zh-HK": "結束時間（本地時區）",
+                  en: "End Time (Local)",
+                })}
               </label>
               <input
                 id="meeting-draft-end"
                 data-testid="room-meeting-end-input"
                 type="datetime-local"
+                lang={LOCALE_META[locale].htmlLang}
                 required
                 value={endsLocal}
                 onChange={(e) => {
@@ -516,10 +731,26 @@ export function MeetingDraftModal({
             <div className="flex items-center justify-between text-[12px] font-medium text-[var(--ink-secondary)]">
               <span className="flex items-center gap-1.5">
                 <Users className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
-                <span>参会房间成员</span>
+                <span>
+                  {tx({
+                    "zh-CN": "参会房间成员",
+                    "zh-HK": "與會對話成員",
+                    en: "Room Attendees",
+                  })}
+                </span>
               </span>
-              <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                已选 {selectedAttendees.length} 人
+              <span className="text-[11px] text-[var(--ink-muted)] tabular-nums">
+                {tp(
+                  {
+                    "zh-CN": "已选 {count} 人",
+                    "zh-HK": "已選 {count} 人",
+                    en: {
+                      one: "{count} selected",
+                      other: "{count} selected",
+                    },
+                  },
+                  selectedAttendees.length,
+                )}
               </span>
             </div>
             <div className="mt-1.5 max-h-[144px] overflow-y-auto divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)]">
@@ -527,6 +758,7 @@ export function MeetingDraftModal({
                 const isSelf = actor?.subject === subject;
                 const checked = isSelf || selectedAttendees.includes(subject);
                 const prof = memberProfiles[subject];
+                const memberName = resolveMemberName(subject, prof);
                 return (
                   <label
                     key={subject}
@@ -538,23 +770,27 @@ export function MeetingDraftModal({
                         checked={checked}
                         disabled={isSelf}
                         onChange={() => toggleAttendee(subject)}
-                        className="h-4 w-4 rounded accent-[var(--accent)]"
+                        className="h-4 w-4 rounded accent-[var(--accent-solid)]"
                       />
                       <Avatar
-                        name={prof?.display_name || subject}
+                        name={memberName}
                         fallbackText={subject}
                         size="xs"
                       />
                       <span className="truncate font-medium text-[var(--ink-primary)]">
-                        {prof?.display_name || subject}
+                        {memberName}
                       </span>
                       <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
                         {subject}
                       </span>
                     </span>
                     {isSelf && (
-                      <span className="rounded-full bg-[var(--accent-wash)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--accent)]">
-                        组织人
+                      <span className="rounded-full bg-[var(--accent-wash)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--accent-ink)]">
+                        {tx({
+                          "zh-CN": "组织者",
+                          "zh-HK": "組織者",
+                          en: "Organizer",
+                        })}
                       </span>
                     )}
                   </label>
@@ -574,45 +810,73 @@ export function MeetingDraftModal({
                     setEnableZoom(e.target.checked);
                     markDraftEdited();
                   }}
-                  className="h-4 w-4 rounded accent-[var(--accent)]"
+                  className="h-4 w-4 rounded accent-[var(--accent-solid)]"
                 />
                 <Video className="h-3.5 w-3.5 text-[var(--accent)]" />
-                <span>同步生成 Zoom 视频会议链接</span>
+                <span>
+                  {tx({
+                    "zh-CN": "同步生成 Zoom 视频会议链接",
+                    "zh-HK": "同步產生 Zoom 視像會議連結",
+                    en: "Generate Zoom video meeting link",
+                  })}
+                </span>
               </span>
               <span className="text-[11px] text-[var(--ink-muted)]">
-                {zoomConnector?.configured ? "实时连接" : "沙盒预览"}
+                {zoomConnector?.configured
+                  ? tx({
+                      "zh-CN": "实时连接",
+                      "zh-HK": "即時連線",
+                      en: "Live",
+                    })
+                  : tx({
+                      "zh-CN": "待配置 MCP",
+                      "zh-HK": "待設定 MCP",
+                      en: "Pending MCP",
+                    })}
               </span>
             </label>
 
             <div className="border-t border-[var(--hairline-subtle)] pt-2.5">
               <div className="text-[11.5px] font-medium text-[var(--ink-muted)] mb-2">
-                可选：同步至外部日历 MCP（确认后同时支持 .ics 导出）
+                {tx({
+                  "zh-CN": "可选：同步至外部日历 MCP（确认后同时支持 .ics 导出）",
+                  "zh-HK": "可選：同步至外部日曆 MCP（確認後同時支援 .ics 匯出）",
+                  en: "Optional: Sync to external calendars via MCP (.ics export included)",
+                })}
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {CALENDAR_TARGETS.map((target) => {
-                  const active = selectedTargets.includes(target.id);
-                  const conn = connectorById.get(target.id);
+                {CALENDAR_TARGET_IDS.map((id) => {
+                  const active = selectedTargets.includes(id);
+                  const conn = connectorById.get(id);
                   return (
                     <button
-                      key={target.id}
+                      key={id}
                       type="button"
-                      onClick={() => toggleExternalTarget(target.id)}
+                      aria-pressed={active}
+                      onClick={() => toggleExternalTarget(id)}
                       className={[
                         "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition-all duration-[140ms] cursor-pointer",
                         active
-                          ? "bg-[var(--accent-wash-strong)] text-[var(--accent)] ring-1 ring-[var(--accent-border)]"
-                          : "bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] hover:text-[var(--ink-primary)]",
+                          ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[var(--shadow-subtle)]"
+                          : "bg-[var(--bg-surface)] text-[var(--ink-secondary)] ring-1 ring-[var(--hairline-strong)] hover:text-[var(--ink-primary)]",
                       ].join(" ")}
                     >
-                      <span
-                        className={[
-                          "h-1.5 w-1.5 rounded-full",
-                          conn?.configured
-                            ? "bg-[var(--status-emerald)]"
-                            : "bg-[var(--ink-faint)]",
-                        ].join(" ")}
-                      />
-                      <span>{target.label}</span>
+                      {active ? (
+                        <Check
+                          className="h-3.5 w-3.5 shrink-0"
+                          strokeWidth={2.4}
+                        />
+                      ) : (
+                        <span
+                          className={[
+                            "h-1.5 w-1.5 rounded-full",
+                            conn?.configured
+                              ? "bg-[var(--status-emerald)]"
+                              : "bg-[var(--ink-muted)]",
+                          ].join(" ")}
+                        />
+                      )}
+                      <span>{targetLabel(id)}</span>
                     </button>
                   );
                 })}

@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api-client";
+import { DEFAULT_LOCALE, translateInline, type Locale } from "@/lib/i18n";
 import type { Profile } from "@/lib/types";
 
 export type ProfileKind = "user" | "agent";
@@ -49,12 +50,23 @@ export function deleteProfileAvatar(kind: ProfileKind, version: number) {
   });
 }
 
-export function validateAvatarFile(file: File): string | null {
+export function validateAvatarFile(
+  file: File,
+  locale: Locale = DEFAULT_LOCALE,
+): string | null {
   if (file.size <= 0) {
-    return "所选图片文件为空，请重新选择。";
+    return translateInline(locale, {
+      "zh-CN": "所选图片文件为空，请重新选择。",
+      "zh-HK": "所選圖片檔案為空，請重新選擇。",
+      en: "The selected image file is empty. Please choose another file.",
+    });
   }
   if (file.size > MAX_AVATAR_BYTES) {
-    return "头像文件不能超过 2 MiB，请压缩后再上传。";
+    return translateInline(locale, {
+      "zh-CN": "头像文件不能超过 2 MiB，请压缩后再上传。",
+      "zh-HK": "頭像檔案不能超過 2 MiB，請壓縮後再上傳。",
+      en: "Avatar file cannot exceed 2 MiB. Please compress and try again.",
+    });
   }
   const type = (file.type || "").toLowerCase();
   const name = file.name.toLowerCase();
@@ -64,7 +76,11 @@ export function validateAvatarFile(file: File): string | null {
     name.endsWith(".jpeg") ||
     name.endsWith(".webp");
   if (!ALLOWED_AVATAR_MIME_TYPES.has(type) && !extOk) {
-    return "仅支持 PNG、JPEG 或 WEBP 格式的静态图片。";
+    return translateInline(locale, {
+      "zh-CN": "仅支持 PNG、JPEG 或 WEBP 格式的静态图片。",
+      "zh-HK": "僅支援 PNG、JPEG 或 WEBP 格式的靜態圖片。",
+      en: "Only static PNG, JPEG, or WEBP images are supported.",
+    });
   }
   return null;
 }

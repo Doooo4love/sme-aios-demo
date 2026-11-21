@@ -1,5 +1,14 @@
 import { getApiBaseUrl, isDemoAuthEnabled } from "@/lib/bff/config";
 import { sanitizeErrorPayload } from "@/lib/bff/sanitize";
+import { sortWarehouses } from "@/lib/format";
+import {
+  DEFAULT_LOCALE,
+  PERSONA_LOCALIZATIONS,
+  isDirectRoomTitle,
+  localizeContactDepartment,
+  localizeContactJobTitle,
+  type Locale,
+} from "@/lib/i18n";
 import type {
   Actor,
   ChatRoom,
@@ -419,6 +428,7 @@ export interface ResolveTenantContactsOptions {
   includeSelf?: boolean;
   warehouse?: string;
   limit?: number;
+  locale?: Locale;
 }
 
 export async function resolveTenantContacts(
@@ -433,6 +443,7 @@ export async function resolveTenantContacts(
 }> {
   const apiBase = getApiBaseUrl();
   const canChat = actor.grants.includes("chat.use");
+  const locale: Locale = options?.locale ?? DEFAULT_LOCALE;
   const accMap = new Map<string, ContactAccumulator>();
 
   const ensureEntry = (subject: string): ContactAccumulator => {
@@ -441,23 +452,48 @@ export async function resolveTenantContacts(
     const seed = isDemoAuthEnabled()
       ? getDemoDirectoryEntryForTenant(actor.tenant, subject)
       : null;
+    const trilingualPersona = PERSONA_LOCALIZATIONS[subject as DemoPersonaId];
+    const extraSearchTerms = trilingualPersona
+      ? [
+          trilingualPersona["zh-CN"].displayName,
+          trilingualPersona["zh-HK"].displayName,
+          trilingualPersona.en.displayName,
+          trilingualPersona["zh-HK"].label,
+          trilingualPersona.en.label,
+          trilingualPersona["zh-HK"].department,
+          trilingualPersona.en.department,
+        ]
+      : [];
+    const defaultDisplayName = trilingualPersona
+      ? trilingualPersona[locale].displayName
+      : (seed?.default_display_name ?? subject);
     const created: ContactAccumulator = {
       subject,
       tenant: actor.tenant,
-      display_name: seed?.default_display_name ?? subject,
-      default_display_name: seed?.default_display_name ?? subject,
+      display_name: defaultDisplayName,
+      default_display_name: defaultDisplayName,
       email: seed?.email ?? `${subject}@${actor.tenant}.local`,
-      department: seed?.department ?? "企业协作成员",
-      job_title: seed?.job_title ?? "团队成员",
+      department: localizeContactDepartment(
+        seed?.department ?? "",
+        subject,
+        locale,
+      ),
+      job_title: localizeContactJobTitle(
+        seed?.job_title ?? "",
+        subject,
+        locale,
+      ),
       role: seed?.role ?? "member",
-      warehouses: seed ? [...seed.warehouses] : [],
+      warehouses: seed ? sortWarehouses(seed.warehouses) : [],
       has_avatar: false,
       avatar_url: null,
       profile_version: 0,
       direct_room_id: null,
       direct_room_preferred: false,
       shared_room_ids: [],
-      search_keywords: seed ? [...seed.search_keywords] : [],
+      search_keywords: seed
+        ? [...seed.search_keywords, ...extraSearchTerms]
+        : extraSearchTerms,
     };
     accMap.set(subject, created);
     return created;
@@ -505,9 +541,7 @@ export async function resolveTenantContacts(
 
             const isTwoMemberDm =
               members.length === 2 && members.includes(actor.subject);
-            const isPreferredDmTitle =
-              room.title.startsWith("私聊") ||
-              room.title.toLowerCase().startsWith("dm");
+            const isPreferredDmTitle = isDirectRoomTitle(room.title);
 
             for (const memberSub of members) {
               const entry = ensureEntry(memberSub);

@@ -12,3 +12,11 @@ export {
 } from "./AccessNoticeCard";
 export { Avatar, type AvatarProps, type AvatarStatus } from "./Avatar";
 export { SourceTag, type SourceTagProps } from "./SourceTag";
+export {
+  LanguageSwitcher,
+  ThemeToggle,
+  PreferencesBar,
+  type LanguageSwitcherProps,
+  type ThemeToggleProps,
+  type PreferencesBarProps,
+} from "./PreferencesControls";

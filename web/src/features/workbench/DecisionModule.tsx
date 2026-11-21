@@ -16,6 +16,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
+import { sortWarehouses } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { Interactive3DCard } from "@/components/kinetic/Interactive3DCard";
@@ -34,15 +36,19 @@ interface SummaryEntry {
 }
 
 export function DecisionModule() {
+  const { tx, localizeError } = useLocale();
   const { capabilities, authGeneration, handleAccessChanged } = useSession();
   const { openDrawer } = useWorkbench();
 
   const summaryTool = useMemo(
-    () => capabilities?.tools.find((t) => t.id === "decision.warehouse.summary"),
+    () =>
+      capabilities?.tools.find(
+        (tItem) => tItem.id === "decision.warehouse.summary",
+      ),
     [capabilities],
   );
   const authorizedWarehouses = useMemo(
-    () => summaryTool?.warehouses ?? [],
+    () => sortWarehouses(summaryTool?.warehouses ?? []),
     [summaryTool],
   );
 
@@ -126,8 +132,16 @@ export function DecisionModule() {
         <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5">
           <AccessNoticeCard
             variant="ACCESS_RESTRICTED"
-            title="暂无经营汇总可见站点"
-            message="当前账号未获授权访问任何仓库的经营汇总数据。"
+            title={tx({
+              "zh-CN": "暂无经营汇总可见仓库",
+              "zh-HK": "暫無營運摘要可見倉庫",
+              en: "No Authorized Summary Warehouses",
+            })}
+            message={tx({
+              "zh-CN": "当前账号未获授权访问任何仓库的经营汇总数据。",
+              "zh-HK": "目前帳號未獲授權存取任何倉庫的營運摘要資料。",
+              en: "Your account is not authorized to view operational summaries for any warehouse.",
+            })}
           />
         </div>
       ) : (
@@ -141,13 +155,17 @@ export function DecisionModule() {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
-                  已授权统计仓库
+                  {tx({
+                    "zh-CN": "已授权统计仓库",
+                    "zh-HK": "已授權統計倉庫",
+                    en: "Authorized Warehouses",
+                  })}
                 </span>
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                   <Building2 className="h-4 w-4" strokeWidth={1.85} />
                 </span>
               </div>
-              <div className="mt-2.5 font-mono-code tabular-nums text-[28px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+              <div className="mt-2.5 tabular-nums text-[28px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
                 {authorizedWarehouses.length}
               </div>
               <div className="mt-1 font-mono-code text-[11.5px] text-[var(--ink-muted)]">
@@ -162,13 +180,17 @@ export function DecisionModule() {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
-                  实时在途 / 未结运单合计
+                  {tx({
+                    "zh-CN": "实时在途 / 未结运单合计",
+                    "zh-HK": "即時在途 / 未結運單合計",
+                    en: "Total Open Shipments",
+                  })}
                 </span>
                 <span
                   className={[
                     "flex h-8 w-8 items-center justify-center rounded-full shadow-[var(--shadow-subtle)]",
                     totalOpenShipments > 0
-                      ? "bg-[var(--accent-wash)] text-[var(--accent)]"
+                      ? "bg-[var(--accent-wash)] text-[var(--accent-ink)]"
                       : "bg-[var(--bg-surface)] text-[var(--ink-secondary)]",
                   ].join(" ")}
                 >
@@ -176,13 +198,17 @@ export function DecisionModule() {
                 </span>
               </div>
               <div
-                className="mt-2.5 font-mono-code tabular-nums text-[28px] font-semibold tracking-[-0.02em] text-[var(--accent)]"
+                className="mt-2.5 tabular-nums text-[28px] font-semibold tracking-[-0.02em] text-[var(--accent)]"
                 data-testid="decision-total-open-shipments"
               >
                 {totalOpenShipments}
               </div>
               <div className="mt-1 text-[11.5px] text-[var(--ink-muted)]">
-                全部授权站点实时聚合计数
+                {tx({
+                  "zh-CN": "全部授权仓库实时聚合计数",
+                  "zh-HK": "全部授權倉庫即時彙總計數",
+                  en: "Live aggregate across all authorized warehouses",
+                })}
               </div>
             </Interactive3DCard>
 
@@ -193,17 +219,29 @@ export function DecisionModule() {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
-                  权限边界模式
+                  {tx({
+                    "zh-CN": "权限边界模式",
+                    "zh-HK": "權限邊界模式",
+                    en: "Access Boundary",
+                  })}
                 </span>
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                   <ShieldCheck className="h-4 w-4" strokeWidth={1.85} />
                 </span>
               </div>
               <div className="mt-3 text-[15px] font-semibold text-[var(--status-emerald)]">
-                只读视图 · 实时鉴权
+                {tx({
+                  "zh-CN": "只读视图 · 实时鉴权",
+                  "zh-HK": "唯讀檢視 · 即時鑑權",
+                  en: "Read-Only · Live Auth",
+                })}
               </div>
               <div className="mt-1 text-[11.5px] text-[var(--ink-muted)]">
-                每次刷新与下钻均由服务端重新校验
+                {tx({
+                  "zh-CN": "每次刷新与下钻均由服务端重新校验",
+                  "zh-HK": "每次重新整理與下鑽均由伺服器端重新校驗",
+                  en: "Every refresh and drill-down re-verifies server permissions",
+                })}
               </div>
             </Interactive3DCard>
           </div>
@@ -213,10 +251,20 @@ export function DecisionModule() {
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
               <div>
                 <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                  跨仓经营只读汇总
+                  {tx({
+                    "zh-CN": "跨仓经营只读汇总",
+                    "zh-HK": "跨倉營運唯讀摘要",
+                    en: "Cross-Warehouse Read-Only Summary",
+                  })}
                 </h2>
                 <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
-                  严格呈现服务端实时运营指标；点击单仓下钻将即时触发服务端鉴权核验。
+                  {tx({
+                    "zh-CN":
+                      "严格呈现服务端实时运营指标；点击单仓下钻将即时触发服务端鉴权核验。",
+                    "zh-HK":
+                      "嚴格呈現伺服器端即時營運指標；點擊單倉下鑽將即時觸發伺服器端鑑權核驗。",
+                    en: "Live server operational metrics; drilling into any warehouse triggers fresh authorization.",
+                  })}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -233,7 +281,13 @@ export function DecisionModule() {
                   data-testid="decision-refresh-all-btn"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  <span>实时刷新全部站点</span>
+                  <span>
+                    {tx({
+                      "zh-CN": "实时刷新全部仓库",
+                      "zh-HK": "即時重新整理全部倉庫",
+                      en: "Refresh All Warehouses",
+                    })}
+                  </span>
                 </Button>
               </div>
             </div>
@@ -242,14 +296,40 @@ export function DecisionModule() {
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
-                    <th className="px-5 py-2.5 font-medium">仓库站点</th>
-                    <th className="px-4 py-2.5 font-medium text-right">
-                      在途未结运单
+                    <th className="px-5 py-2.5 font-medium">
+                      {tx({
+                        "zh-CN": "仓库",
+                        "zh-HK": "倉庫",
+                        en: "Warehouse",
+                      })}
                     </th>
-                    <th className="px-4 py-2.5 font-medium">统计基准日</th>
-                    <th className="px-4 py-2.5 font-medium">数据来源</th>
+                    <th className="px-4 py-2.5 font-medium text-right">
+                      {tx({
+                        "zh-CN": "在途未结运单",
+                        "zh-HK": "在途未結運單",
+                        en: "Open Shipments",
+                      })}
+                    </th>
+                    <th className="px-4 py-2.5 font-medium">
+                      {tx({
+                        "zh-CN": "统计基准日",
+                        "zh-HK": "統計基準日",
+                        en: "As-Of Date",
+                      })}
+                    </th>
+                    <th className="px-4 py-2.5 font-medium">
+                      {tx({
+                        "zh-CN": "数据来源",
+                        "zh-HK": "資料來源",
+                        en: "Source",
+                      })}
+                    </th>
                     <th className="px-5 py-2.5 font-medium text-right">
-                      实时鉴权下钻
+                      {tx({
+                        "zh-CN": "实时鉴权下钻",
+                        "zh-HK": "即時鑑權下鑽",
+                        en: "Authorized Drill-Down",
+                      })}
                     </th>
                   </tr>
                 </thead>
@@ -264,13 +344,13 @@ export function DecisionModule() {
                       >
                         <td className="px-5 py-3.5 font-mono-code font-semibold text-[var(--ink-primary)]">
                           <div className="flex items-center gap-2.5">
-                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                               <BarChart3 className="h-3.5 w-3.5" />
                             </span>
                             <span>{wh}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 font-mono-code tabular-nums text-right text-[16px] font-semibold text-[var(--ink-primary)]">
+                        <td className="px-4 py-3.5 tabular-nums text-right text-[16px] font-semibold text-[var(--ink-primary)]">
                           {entry?.loading
                             ? "…"
                             : entry?.data
@@ -285,7 +365,7 @@ export function DecisionModule() {
                             <SourceTag source={entry.source} />
                           ) : entry?.error ? (
                             <span className="text-[12px] text-[var(--status-crimson)]">
-                              {entry.error.message}
+                              {localizeError(entry.error)}
                             </span>
                           ) : (
                             <span className="text-[var(--ink-muted)]">—</span>
@@ -302,7 +382,13 @@ export function DecisionModule() {
                               data-testid={`decision-reverify-${wh}`}
                             >
                               <RefreshCw className="h-3 w-3" />
-                              <span>重新鉴权拉取</span>
+                              <span>
+                                {tx({
+                                  "zh-CN": "重新鉴权拉取",
+                                  "zh-HK": "重新鑑權拉取",
+                                  en: "Re-Verify",
+                                })}
+                              </span>
                             </Button>
                             <Button
                               size="sm"
@@ -315,7 +401,14 @@ export function DecisionModule() {
                                     kind: "summary",
                                     id: wh,
                                     warehouse: wh,
-                                    title: `经营汇总下钻 · ${wh}`,
+                                    title: tx(
+                                      {
+                                        "zh-CN": "经营汇总下钻 · {wh}",
+                                        "zh-HK": "營運摘要下鑽 · {wh}",
+                                        en: "Warehouse Summary · {wh}",
+                                      },
+                                      { wh },
+                                    ),
                                   },
                                   { tab: "current", trigger: e.currentTarget },
                                 );
@@ -323,7 +416,13 @@ export function DecisionModule() {
                               data-testid={`decision-drilldown-${wh}`}
                             >
                               <PanelRight className="h-3.5 w-3.5" />
-                              <span>下钻面板</span>
+                              <span>
+                                {tx({
+                                  "zh-CN": "下钻面板",
+                                  "zh-HK": "下鑽面板",
+                                  en: "Inspect",
+                                })}
+                              </span>
                             </Button>
                           </div>
                         </td>

@@ -1,24 +1,67 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
+import { LocaleProvider } from "@/lib/i18n/context";
+import { translateKey } from "@/lib/i18n/dictionaries";
+import {
+  LOCALE_COOKIE_NAME,
+  LOCALE_META,
+  normalizeLocale,
+} from "@/lib/i18n/types";
 import { SessionProvider } from "@/lib/session-context";
+import { ThemeProvider, type Theme } from "@/lib/theme-context";
 import { WorkbenchProvider } from "@/lib/workbench-context";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "SME AIOS · 企业运营工作台",
-  description: "基于同源企业身份、最小权限边界与可核验回执的企业 AI 运营工作台",
+const THEME_COOKIE_KEY = "aios_theme";
+
+function normalizeServerTheme(raw: string | null | undefined): Theme {
+  return raw?.trim().toLowerCase() === "dark" ? "dark" : "light";
+}
+
+export const viewport: Viewport = {
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F5F6F8" },
+    { media: "(prefers-color-scheme: dark)", color: "#0C0E13" },
+  ],
 };
 
-export default function RootLayout({
+export async function generateMetadata(): Promise<Metadata> {
+  const cookieStore = await cookies();
+  const locale = normalizeLocale(cookieStore.get(LOCALE_COOKIE_NAME)?.value);
+  return {
+    title: translateKey(locale, "brand.title"),
+    description: translateKey(locale, "brand.description"),
+  };
+}
+
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const initialLocale = normalizeLocale(
+    cookieStore.get(LOCALE_COOKIE_NAME)?.value,
+  );
+  const initialTheme = normalizeServerTheme(
+    cookieStore.get(THEME_COOKIE_KEY)?.value,
+  );
+
   return (
-    <html lang="zh-CN">
+    <html
+      lang={LOCALE_META[initialLocale].htmlLang}
+      data-theme={initialTheme}
+      suppressHydrationWarning
+    >
       <body className="antialiased">
-        <SessionProvider>
-          <WorkbenchProvider>{children}</WorkbenchProvider>
-        </SessionProvider>
+        <ThemeProvider initialTheme={initialTheme}>
+          <LocaleProvider initialLocale={initialLocale}>
+            <SessionProvider>
+              <WorkbenchProvider>{children}</WorkbenchProvider>
+            </SessionProvider>
+          </LocaleProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

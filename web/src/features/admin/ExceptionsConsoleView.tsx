@@ -12,7 +12,12 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { isApiError, isStaleAuthError, type ApiError } from "@/lib/api-client";
-import { formatUnixTime } from "@/lib/format";
+import { sortWarehouses } from "@/lib/format";
+import {
+  useLocale,
+  type LocaleVars,
+  type TrilingualText,
+} from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import {
@@ -31,21 +36,58 @@ import type { DueCursor, ExceptionItem } from "@/lib/types";
 
 const PAGE_LIMIT = 50;
 
-const LAST_EVENT_LABELS: Record<string, string> = {
-  OUTCOME_UNKNOWN: "ERP 通信中断或超时，结果待确认",
-  READBACK_REOPENED: "管理员已发起回执重新核查",
-  READBACK_LIMIT_REACHED: "自动回执核查达到上限（3次），转人工核查",
-  LEASE_EXPIRED_VERIFY_ONLY: "执行租约过期，转为只读回执核查",
-  LEASE_LOST_BEFORE_SEND: "发送前租约失效",
-  INVALID_STORED_PLAN: "已存提案结构校验失败",
-  PLAN_DIGEST_OR_TENANT_MISMATCH: "提案摘要或租户边界不一致",
-  ERP_RECEIPT_MISMATCH: "ERP 回执字段与已批准提案不一致",
-  NEEDS_OPERATOR: "已转交运维人工核查",
+const LAST_EVENT_LABELS: Readonly<Record<string, TrilingualText>> = {
+  OUTCOME_UNKNOWN: {
+    "zh-CN": "ERP 通信中断或超时，结果待确认",
+    "zh-HK": "ERP 通訊中斷或逾時，結果待確認",
+    en: "ERP connection interrupted or timed out; outcome pending",
+  },
+  READBACK_REOPENED: {
+    "zh-CN": "管理员已发起回执重新核查",
+    "zh-HK": "管理員已發起回執重新核查",
+    en: "Operator reopened read-only receipt verification",
+  },
+  READBACK_LIMIT_REACHED: {
+    "zh-CN": "自动回执核查达到上限（3次），转人工核查",
+    "zh-HK": "自動回執核查達到上限（3次），轉人工核查",
+    en: "Automatic receipt readback limit reached (3/3); escalated to operator",
+  },
+  LEASE_EXPIRED_VERIFY_ONLY: {
+    "zh-CN": "执行租约过期，转为只读回执核查",
+    "zh-HK": "執行租約過期，轉為唯讀回執核查",
+    en: "Execution lease expired; switched to read-only receipt verification",
+  },
+  LEASE_LOST_BEFORE_SEND: {
+    "zh-CN": "发送前租约失效",
+    "zh-HK": "發送前租約失效",
+    en: "Execution lease lost before outbound dispatch",
+  },
+  INVALID_STORED_PLAN: {
+    "zh-CN": "已存提案结构校验失败",
+    "zh-HK": "已存提案結構校驗失敗",
+    en: "Stored proposal plan validation failed",
+  },
+  PLAN_DIGEST_OR_TENANT_MISMATCH: {
+    "zh-CN": "提案摘要或租户边界不一致",
+    "zh-HK": "提案摘要或租戶邊界不一致",
+    en: "Proposal digest or tenant boundary mismatch",
+  },
+  ERP_RECEIPT_MISMATCH: {
+    "zh-CN": "ERP 回执字段与已批准提案不一致",
+    "zh-HK": "ERP 回執欄位與已批准提案不一致",
+    en: "ERP receipt fields do not match the approved proposal",
+  },
+  NEEDS_OPERATOR: {
+    "zh-CN": "已转交运维人工核查",
+    "zh-HK": "已轉交維運人工核查",
+    en: "Escalated for manual operator review",
+  },
 };
 
 interface BannerNotice {
   kind: "success" | "conflict";
-  message: string;
+  text: TrilingualText;
+  vars?: LocaleVars;
 }
 
 export function ExceptionsConsoleView() {
@@ -57,6 +99,7 @@ export function ExceptionsConsoleView() {
     handleAccessChanged,
   } = useSession();
   const { openDrawer } = useWorkbench();
+  const { t, tx, tp, formatDateTime, localizeStatus } = useLocale();
 
   const [items, setItems] = useState<ExceptionItem[]>([]);
   const [nextCursor, setNextCursor] = useState<DueCursor | null>(null);
@@ -74,7 +117,7 @@ export function ExceptionsConsoleView() {
 
   // Optional demo worker tick shortcut
   const [tickBusy, setTickBusy] = useState(false);
-  const [tickNotice, setTickNotice] = useState<string | null>(null);
+  const [tickNotice, setTickNotice] = useState<TrilingualText | null>(null);
 
   const canRunDemoTick = Boolean(
     demoConfig?.enabled &&
@@ -178,7 +221,18 @@ export function ExceptionsConsoleView() {
       setReconcileTarget(null);
       setActionNotice({
         kind: "success",
-        message: `已为提案 ${targetId} 发起只读回执核查，最新状态为 ${updated.state}（核验计数已重置为 ${updated.checks}）。`,
+        text: {
+          "zh-CN":
+            "已为提案 {id} 发起只读回执核查，最新状态为 {state}（核验计数已重置为 {checks}）。",
+          "zh-HK":
+            "已為提案 {id} 發起唯讀回執核查，最新狀態為 {state}（核驗計數已重設為 {checks}）。",
+          en: "Reopened read-only receipt verification for {id}. State is now {state} (checks reset to {checks}).",
+        },
+        vars: {
+          id: targetId,
+          state: updated.state,
+          checks: updated.checks,
+        },
       });
       await loadExceptions();
     } catch (err) {
@@ -191,7 +245,14 @@ export function ExceptionsConsoleView() {
         if (err.status === 409) {
           setActionNotice({
             kind: "conflict",
-            message: `提案 ${targetId} 状态已变更，当前不可发起回执核查，已刷新最新队列。`,
+            text: {
+              "zh-CN":
+                "提案 {id} 状态已变更，当前不可发起回执核查，已刷新最新队列。",
+              "zh-HK":
+                "提案 {id} 狀態已變更，目前不可發起回執核查，已重新整理最新佇列。",
+              en: "Proposal {id} changed state and can no longer be reconciled. Queue refreshed.",
+            },
+            vars: { id: targetId },
           });
           await loadExceptions();
         } else {
@@ -213,8 +274,16 @@ export function ExceptionsConsoleView() {
       const res = await runDemoWorkerTick();
       setTickNotice(
         res.worked
-          ? "已推进 1 条队列任务并刷新异常队列。"
-          : "当前无待执行的队列任务（或写入已暂停）。",
+          ? {
+              "zh-CN": "已推进 1 条队列任务并刷新异常队列。",
+              "zh-HK": "已推進 1 筆佇列任務並重新整理異常佇列。",
+              en: "Advanced 1 queued job and refreshed the exceptions queue.",
+            }
+          : {
+              "zh-CN": "当前无待执行的队列任务（或写入已暂停）。",
+              "zh-HK": "目前無待執行的佇列任務（或寫入已暫停）。",
+              en: "No pending worker jobs right now (or writes are paused).",
+            },
       );
       await loadExceptions();
     } catch (err) {
@@ -236,14 +305,28 @@ export function ExceptionsConsoleView() {
       >
         <AccessNoticeCard
           variant="ACCESS_RESTRICTED"
-          title="需要运维管理权限 (operations.manage)"
-          message="异常单据队列仅限具备 operations.manage 权限的主管或管理员查看与发起回执核查。"
+          title={tx({
+            "zh-CN": "需要运维管理权限 (operations.manage)",
+            "zh-HK": "需要維運管理權限 (operations.manage)",
+            en: "Operations Permission Required (operations.manage)",
+          })}
+          message={tx({
+            "zh-CN":
+              "异常单据队列仅限具备 operations.manage 权限的主管或管理员查看与发起回执核查。",
+            "zh-HK":
+              "異常單據佇列僅限具備 operations.manage 權限的主管或管理員檢視與發起回執核查。",
+            en: "The exceptions queue is restricted to managers or administrators with operations.manage.",
+          })}
           backHref="/inbox"
-          backLabel="返回工作台"
+          backLabel={t("common.backToWorkbench")}
         />
       </div>
     );
   }
+
+  const sortedActorWarehouses = actor?.warehouses.length
+    ? sortWarehouses(actor.warehouses)
+    : [];
 
   return (
     <div
@@ -257,32 +340,59 @@ export function ExceptionsConsoleView() {
           className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] hover:text-[var(--accent)] hover:shadow-[var(--shadow-card)] transition-all duration-[150ms]"
         >
           <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.85} />
-          <span>返回运维监控中心</span>
+          <span>
+            {tx({
+              "zh-CN": "返回运维监控中心",
+              "zh-HK": "返回維運監控中心",
+              en: "Back to Operations",
+            })}
+          </span>
         </Link>
       </div>
 
-      {/* Unified Porcelain Page-Header Card */}
+      {/* Unified Porcelain / Obsidian Page-Header Card */}
       <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
-                异常单据队列
+                {tx({
+                  "zh-CN": "异常单据队列",
+                  "zh-HK": "異常單據佇列",
+                  en: "Exceptions Queue",
+                })}
               </h1>
               {canRunDemoTick && <SourceTag source="synthetic" />}
             </div>
             <p className="mt-1 text-[13px] text-[var(--ink-secondary)]">
-              集中查看待确认与需人工核查的单据；发起回执核查仅做只读回查，不会重复写入 ERP。
+              {tx({
+                "zh-CN":
+                  "集中查看待确认与需人工核查的单据；发起回执核查仅做只读回查，不会重复写入 ERP。",
+                "zh-HK":
+                  "集中檢視待確認與須人工核查的單據；發起回執核查僅做唯讀回查，不會重複寫入 ERP。",
+                en: "Inspect unknown-outcome and operator-escalated proposals. Reconciling performs read-only receipt verification and never replays ERP writes.",
+              })}
             </p>
             <p className="mt-1.5 text-[12px] text-[var(--ink-muted)] tabular-nums">
               <span className="font-mono-code">{actor?.tenant ?? "—"}</span>
               <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
-              <span className="font-mono-code">
-                {actor?.warehouses.join(" / ") || "无站点"}
-              </span>
+              {sortedActorWarehouses.length > 0 ? (
+                <span className="font-mono-code">
+                  {sortedActorWarehouses.join(" / ")}
+                </span>
+              ) : (
+                <span>{t("shell.noWarehouse")}</span>
+              )}
               <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
               <span>
-                已加载 {items.length} 条{nextCursor ? "+" : ""}
+                {tx(
+                  {
+                    "zh-CN": "已加载 {count} 条{more}",
+                    "zh-HK": "已載入 {count} 筆{more}",
+                    en: "Loaded {count}{more}",
+                  },
+                  { count: items.length, more: nextCursor ? "+" : "" },
+                )}
               </span>
             </p>
           </div>
@@ -298,7 +408,13 @@ export function ExceptionsConsoleView() {
                 onClick={() => void handleDemoTick()}
               >
                 <Play className="h-3.5 w-3.5" strokeWidth={1.85} />
-                <span>演示 Worker Tick</span>
+                <span>
+                  {tx({
+                    "zh-CN": "演示 Worker Tick",
+                    "zh-HK": "示範 Worker Tick",
+                    en: "Demo Worker Tick",
+                  })}
+                </span>
               </Button>
             )}
             <Button
@@ -310,7 +426,13 @@ export function ExceptionsConsoleView() {
               onClick={() => void loadExceptions()}
             >
               <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>刷新队列</span>
+              <span>
+                {tx({
+                  "zh-CN": "刷新队列",
+                  "zh-HK": "重新整理佇列",
+                  en: "Refresh Queue",
+                })}
+              </span>
             </Button>
           </div>
         </div>
@@ -321,10 +443,10 @@ export function ExceptionsConsoleView() {
         <div
           role="status"
           data-testid="exceptions-worker-tick-result"
-          className="flex items-center gap-2.5 rounded-tile bg-[var(--accent-wash)] px-4 py-3 text-[12.5px] text-[var(--accent)]"
+          className="flex items-center gap-2.5 rounded-tile bg-[var(--accent-wash)] px-4 py-3 text-[12.5px] text-[var(--accent-ink)]"
         >
           <CheckCircle2 className="h-4 w-4 shrink-0" strokeWidth={1.85} />
-          <span>{tickNotice}</span>
+          <span>{tx(tickNotice)}</span>
         </div>
       )}
 
@@ -340,7 +462,7 @@ export function ExceptionsConsoleView() {
           ].join(" ")}
         >
           <CheckCircle2 className="h-4 w-4 shrink-0" strokeWidth={1.85} />
-          <span>{actionNotice.message}</span>
+          <span>{tx(actionNotice.text, actionNotice.vars)}</span>
         </div>
       )}
 
@@ -359,16 +481,24 @@ export function ExceptionsConsoleView() {
           error={loadError}
           onRetry={() => void loadExceptions()}
           backHref="/admin"
-          backLabel="返回运维监控中心"
+          backLabel={tx({
+            "zh-CN": "返回运维监控中心",
+            "zh-HK": "返回維運監控中心",
+            en: "Back to Operations",
+          })}
         />
       )}
 
-      {/* Exceptions Porcelain Sheet */}
+      {/* Exceptions Sheet */}
       {!loadError && (
         <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           {loading && items.length === 0 ? (
             <div className="px-6 py-14 text-center text-[13px] text-[var(--ink-muted)]">
-              正在加载异常单据队列…
+              {tx({
+                "zh-CN": "正在加载异常单据队列…",
+                "zh-HK": "正在載入異常單據佇列…",
+                en: "Loading exceptions queue…",
+              })}
             </div>
           ) : items.length === 0 ? (
             <div
@@ -379,33 +509,88 @@ export function ExceptionsConsoleView() {
                 <CheckCircle2 className="h-5.5 w-5.5" strokeWidth={1.85} />
               </div>
               <div className="text-[15px] font-semibold text-[var(--ink-primary)]">
-                当前没有待处置异常单据
+                {tx({
+                  "zh-CN": "当前没有待处置异常单据",
+                  "zh-HK": "目前沒有待處置異常單據",
+                  en: "No exceptions requiring action",
+                })}
               </div>
               <p className="max-w-[440px] text-[13px] text-[var(--ink-muted)] leading-relaxed">
-                授权仓库范围内所有已派发提案均运行正常，没有滞留在待确认或人工核查状态的记录。
+                {tx({
+                  "zh-CN":
+                    "授权仓库范围内所有已派发提案均运行正常，没有滞留在待确认或人工核查状态的记录。",
+                  "zh-HK":
+                    "授權倉庫範圍內所有已派發提案均運作正常，沒有滯留於待確認或人工核查狀態的紀錄。",
+                  en: "All dispatched proposals in your authorized warehouses are healthy with no stalled or operator-escalated records.",
+                })}
               </p>
             </div>
           ) : (
             <>
-              {/* Desktop Spacious Porcelain Table */}
+              {/* Desktop Spacious Table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full border-collapse text-left">
                   <thead>
                     <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[12px] font-medium text-[var(--ink-muted)]">
-                      <th className="px-5 py-3">提案编号</th>
-                      <th className="px-3.5 py-3">仓库</th>
-                      <th className="px-3.5 py-3">状态</th>
-                      <th className="px-3.5 py-3 text-right">核验轮次</th>
-                      <th className="px-3.5 py-3">最近异常说明</th>
-                      <th className="px-3.5 py-3 text-right">计划时间</th>
-                      <th className="px-5 py-3 text-right">操作</th>
+                      <th className="px-5 py-3">
+                        {tx({
+                          "zh-CN": "提案编号",
+                          "zh-HK": "提案編號",
+                          en: "Proposal ID",
+                        })}
+                      </th>
+                      <th className="px-3.5 py-3">
+                        {tx({
+                          "zh-CN": "仓库",
+                          "zh-HK": "倉庫",
+                          en: "Warehouse",
+                        })}
+                      </th>
+                      <th className="px-3.5 py-3">
+                        {tx({
+                          "zh-CN": "状态",
+                          "zh-HK": "狀態",
+                          en: "State",
+                        })}
+                      </th>
+                      <th className="px-3.5 py-3 text-right">
+                        {tx({
+                          "zh-CN": "核验轮次",
+                          "zh-HK": "核驗輪次",
+                          en: "Checks",
+                        })}
+                      </th>
+                      <th className="px-3.5 py-3">
+                        {tx({
+                          "zh-CN": "最近异常说明",
+                          "zh-HK": "最近異常說明",
+                          en: "Last Event",
+                        })}
+                      </th>
+                      <th className="px-3.5 py-3 text-right">
+                        {tx({
+                          "zh-CN": "计划时间",
+                          "zh-HK": "排程時間",
+                          en: "Scheduled",
+                        })}
+                      </th>
+                      <th className="px-5 py-3 text-right">
+                        {tx({
+                          "zh-CN": "操作",
+                          "zh-HK": "操作",
+                          en: "Actions",
+                        })}
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--hairline-subtle)]">
                     {items.map((item) => {
                       const canReconcile = item.state === "NEEDS_OPERATOR";
-                      const eventExplanation = item.last_event
+                      const eventEntry = item.last_event
                         ? LAST_EVENT_LABELS[item.last_event]
+                        : undefined;
+                      const eventExplanation = eventEntry
+                        ? tx(eventEntry)
                         : null;
                       return (
                         <tr
@@ -429,7 +614,7 @@ export function ExceptionsConsoleView() {
                           <td className="px-3.5 py-3.5">
                             <StatusBadge status={item.state} compact />
                           </td>
-                          <td className="px-3.5 py-3.5 text-right font-mono-code text-[13px] font-medium text-[var(--ink-primary)] tabular-nums">
+                          <td className="px-3.5 py-3.5 text-right text-[13px] font-medium text-[var(--ink-primary)] tabular-nums">
                             {item.checks}/3
                           </td>
                           <td className="px-3.5 py-3.5">
@@ -446,7 +631,7 @@ export function ExceptionsConsoleView() {
                             )}
                           </td>
                           <td className="px-3.5 py-3.5 text-right font-mono-code text-[12px] text-[var(--ink-secondary)] tabular-nums whitespace-nowrap">
-                            {formatUnixTime(item.due, { withSeconds: true })}
+                            {formatDateTime(item.due, { withSeconds: true })}
                           </td>
                           <td className="px-5 py-3.5">
                             <div className="flex items-center justify-end gap-1.5">
@@ -460,23 +645,43 @@ export function ExceptionsConsoleView() {
                                       kind: "proposal",
                                       id: item.proposal_id,
                                       warehouse: item.warehouse,
-                                      title: "异常单据核对",
+                                      title: tx({
+                                        "zh-CN": "异常单据核对",
+                                        "zh-HK": "異常單據核對",
+                                        en: "Exception Inspection",
+                                      }),
                                     },
                                     { tab: "current", trigger: e.currentTarget },
                                   )
                                 }
-                                title="在右侧面板预览提案详情"
+                                title={tx({
+                                  "zh-CN": "在右侧面板预览提案详情",
+                                  "zh-HK": "於右側面板預覽提案詳情",
+                                  en: "Preview proposal in inspector drawer",
+                                })}
                               >
                                 <Eye className="h-3.5 w-3.5" strokeWidth={1.85} />
-                                <span>面板</span>
+                                <span>
+                                  {tx({
+                                    "zh-CN": "面板",
+                                    "zh-HK": "面板",
+                                    en: "Inspect",
+                                  })}
+                                </span>
                               </Button>
 
                               <Link
                                 href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
                                 data-testid={`exception-view-${item.proposal_id}`}
-                                className="inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors"
+                                className="inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-[var(--accent-ink)] hover:bg-[var(--accent-wash)] transition-colors"
                               >
-                                <span>详情</span>
+                                <span>
+                                  {tx({
+                                    "zh-CN": "详情",
+                                    "zh-HK": "詳情",
+                                    en: "Details",
+                                  })}
+                                </span>
                                 <ArrowUpRight
                                   className="h-3.5 w-3.5"
                                   strokeWidth={1.85}
@@ -490,8 +695,18 @@ export function ExceptionsConsoleView() {
                                 disabled={!canReconcile || reconciling}
                                 title={
                                   canReconcile
-                                    ? "发起只读回执核查 (Reconcile)"
-                                    : "待确认单据将自动重试回查；仅需人工核查状态可手动重启"
+                                    ? tx({
+                                        "zh-CN": "发起只读回执核查 (Reconcile)",
+                                        "zh-HK": "發起唯讀回執核查 (Reconcile)",
+                                        en: "Reopen read-only receipt verification (Reconcile)",
+                                      })
+                                    : tx({
+                                        "zh-CN":
+                                          "待确认单据将自动重试回查；仅需人工核查状态可手动重启",
+                                        "zh-HK":
+                                          "待確認單據將自動重試回查；僅須人工核查狀態可手動重啟",
+                                        en: "Unknown-outcome items retry automatically; manual reconcile is enabled only for Needs Operator",
+                                      })
                                 }
                                 data-testid={`reconcile-btn-${item.proposal_id}`}
                                 onClick={() => setReconcileTarget(item)}
@@ -500,7 +715,13 @@ export function ExceptionsConsoleView() {
                                   className="h-3.5 w-3.5"
                                   strokeWidth={1.85}
                                 />
-                                <span>发起回执核查</span>
+                                <span>
+                                  {tx({
+                                    "zh-CN": "发起回执核查",
+                                    "zh-HK": "發起回執核查",
+                                    en: "Reconcile",
+                                  })}
+                                </span>
                               </Button>
                             </div>
                           </td>
@@ -511,10 +732,13 @@ export function ExceptionsConsoleView() {
                 </table>
               </div>
 
-              {/* Mobile Stacked Porcelain Rows */}
+              {/* Mobile Stacked Rows */}
               <div className="divide-y divide-[var(--hairline-subtle)] md:hidden">
                 {items.map((item) => {
                   const canReconcile = item.state === "NEEDS_OPERATOR";
+                  const eventEntry = item.last_event
+                    ? LAST_EVENT_LABELS[item.last_event]
+                    : undefined;
                   return (
                     <div
                       key={item.proposal_id}
@@ -530,27 +754,57 @@ export function ExceptionsConsoleView() {
                         </Link>
                         <StatusBadge status={item.state} compact />
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono-code text-[12px] text-[var(--ink-muted)] tabular-nums">
-                        <span>仓库 {item.warehouse}</span>
-                        <span>核验 {item.checks}/3</span>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--ink-muted)] tabular-nums">
                         <span>
-                          时间 {formatUnixTime(item.due, { withSeconds: true })}
+                          {tx({
+                            "zh-CN": "仓库",
+                            "zh-HK": "倉庫",
+                            en: "Warehouse",
+                          })}{" "}
+                          <span className="font-mono-code text-[var(--ink-secondary)]">
+                            {item.warehouse}
+                          </span>
+                        </span>
+                        <span>
+                          {tx(
+                            {
+                              "zh-CN": "核验 {checks}/3",
+                              "zh-HK": "核驗 {checks}/3",
+                              en: "Checks {checks}/3",
+                            },
+                            { checks: item.checks },
+                          )}
+                        </span>
+                        <span>
+                          {tx({
+                            "zh-CN": "时间",
+                            "zh-HK": "時間",
+                            en: "Due",
+                          })}{" "}
+                          <span className="font-mono-code text-[var(--ink-secondary)]">
+                            {formatDateTime(item.due, { withSeconds: true })}
+                          </span>
                         </span>
                       </div>
                       {item.last_event && (
                         <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3 py-2 text-[12px] text-[var(--ink-secondary)]">
                           <span>
-                            {LAST_EVENT_LABELS[item.last_event] ??
-                              item.last_event}
+                            {eventEntry ? tx(eventEntry) : item.last_event}
                           </span>
                         </div>
                       )}
                       <div className="flex flex-wrap items-center gap-2 pt-0.5">
                         <Link
                           href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
-                          className="inline-flex h-9 items-center gap-1 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)]"
+                          className="inline-flex h-9 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface-hover)] transition-colors"
                         >
-                          <span>查看单据详情</span>
+                          <span>
+                            {tx({
+                              "zh-CN": "查看单据详情",
+                              "zh-HK": "檢視單據詳情",
+                              en: "View Proposal",
+                            })}
+                          </span>
                           <ArrowUpRight className="h-3.5 w-3.5" />
                         </Link>
                         <Button
@@ -565,7 +819,13 @@ export function ExceptionsConsoleView() {
                             className="h-3.5 w-3.5"
                             strokeWidth={1.85}
                           />
-                          <span>发起回执核查</span>
+                          <span>
+                            {tx({
+                              "zh-CN": "发起回执核查",
+                              "zh-HK": "發起回執核查",
+                              en: "Reconcile",
+                            })}
+                          </span>
                         </Button>
                       </div>
                     </div>
@@ -577,8 +837,29 @@ export function ExceptionsConsoleView() {
               <div className="flex flex-col gap-2.5 border-t border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-[12px] text-[var(--ink-muted)] tabular-nums">
                   {nextCursor
-                    ? `已加载 ${items.length} 条，仍有更多异常单据`
-                    : `已加载全部可见异常单据（共 ${items.length} 条）`}
+                    ? tp(
+                        {
+                          "zh-CN": "已加载 {count} 条，仍有更多异常单据",
+                          "zh-HK": "已載入 {count} 筆，仍有更多異常單據",
+                          en: {
+                            one: "Loaded {count} exception — more available",
+                            other: "Loaded {count} exceptions — more available",
+                          },
+                        },
+                        items.length,
+                      )
+                    : tp(
+                        {
+                          "zh-CN": "已加载全部可见异常单据（共 {count} 条）",
+                          "zh-HK": "已載入全部可見異常單據（共 {count} 筆）",
+                          en: {
+                            one: "All visible exceptions loaded ({count} exception)",
+                            other:
+                              "All visible exceptions loaded ({count} exceptions)",
+                          },
+                        },
+                        items.length,
+                      )}
                 </span>
                 {nextCursor && (
                   <Button
@@ -589,7 +870,11 @@ export function ExceptionsConsoleView() {
                     data-testid="exceptions-load-more"
                     onClick={() => void handleLoadMore()}
                   >
-                    加载更多异常
+                    {tx({
+                      "zh-CN": "加载更多异常",
+                      "zh-HK": "載入更多異常",
+                      en: "Load More",
+                    })}
                   </Button>
                 )}
               </div>
@@ -606,39 +891,84 @@ export function ExceptionsConsoleView() {
         }}
         destructive={false}
         loading={reconciling}
-        title="确认发起回执核查 (Reconcile)"
-        description="系统将仅向 ERP 执行只读回执核查，不会重复发送任何 ERP 写入请求。确认后提案状态将重新进入结果待确认，并将自动核验计数重置为 0。"
-        scopeSummary={`租户 ${actor?.tenant ?? "—"} · 仓库 ${reconcileTarget?.warehouse ?? "—"} · 提案 ${reconcileTarget?.proposal_id ?? "—"}`}
+        title={tx({
+          "zh-CN": "确认发起回执核查 (Reconcile)",
+          "zh-HK": "確認發起回執核查 (Reconcile)",
+          en: "Confirm Read-Only Reconciliation",
+        })}
+        description={tx({
+          "zh-CN":
+            "系统将仅向 ERP 执行只读回执核查，不会重复发送任何 ERP 写入请求。确认后提案状态将重新进入结果待确认，并将自动核验计数重置为 0。",
+          "zh-HK":
+            "系統將僅向 ERP 執行唯讀回執核查，不會重複發送任何 ERP 寫入請求。確認後提案狀態將重新進入結果待確認，並將自動核驗計數重設為 0。",
+          en: "The platform will perform a read-only receipt check against ERP without replaying any write request. The proposal returns to Outcome Unknown and resets the check counter to 0.",
+        })}
+        scopeSummary={tx(
+          {
+            "zh-CN": "租户 {tenant} · 仓库 {warehouse} · 提案 {id}",
+            "zh-HK": "租戶 {tenant} · 倉庫 {warehouse} · 提案 {id}",
+            en: "Tenant {tenant} · Warehouse {warehouse} · Proposal {id}",
+          },
+          {
+            tenant: actor?.tenant ?? "—",
+            warehouse: reconcileTarget?.warehouse ?? "—",
+            id: reconcileTarget?.proposal_id ?? "—",
+          },
+        )}
         metadata={[
           {
-            label: "提案编号",
+            label: tx({
+              "zh-CN": "提案编号",
+              "zh-HK": "提案編號",
+              en: "Proposal ID",
+            }),
             value: reconcileTarget?.proposal_id ?? "—",
             mono: true,
           },
           {
-            label: "仓库站点",
+            label: tx({
+              "zh-CN": "仓库",
+              "zh-HK": "倉庫",
+              en: "Warehouse",
+            }),
             value: reconcileTarget?.warehouse ?? "—",
             mono: true,
           },
           {
-            label: "当前状态",
-            value: reconcileTarget?.state ?? "—",
-            mono: true,
+            label: tx({
+              "zh-CN": "当前状态",
+              "zh-HK": "目前狀態",
+              en: "Current State",
+            }),
+            value: reconcileTarget
+              ? localizeStatus(reconcileTarget.state)
+              : "—",
           },
           {
-            label: "当前核验轮次",
+            label: tx({
+              "zh-CN": "当前核验轮次",
+              "zh-HK": "目前核驗輪次",
+              en: "Current Checks",
+            }),
             value:
               reconcileTarget !== null ? `${reconcileTarget.checks}/3` : "—",
-            mono: true,
           },
           {
-            label: "最近异常事件",
+            label: tx({
+              "zh-CN": "最近异常事件",
+              "zh-HK": "最近異常事件",
+              en: "Last Event",
+            }),
             value: reconcileTarget?.last_event ?? "—",
             mono: true,
           },
         ]}
-        confirmLabel="确认发起回执核查"
-        cancelLabel="取消"
+        confirmLabel={tx({
+          "zh-CN": "确认发起回执核查",
+          "zh-HK": "確認發起回執核查",
+          en: "Confirm Reconcile",
+        })}
+        cancelLabel={t("common.cancel")}
         dialogTestId="reconcile-confirm-dialog"
         confirmTestId="confirm-dialog-submit"
         onConfirm={handleConfirmReconcile}

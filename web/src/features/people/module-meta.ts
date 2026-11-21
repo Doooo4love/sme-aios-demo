@@ -1,3 +1,11 @@
+import {
+  DEFAULT_LOCALE,
+  GRANT_LABELS_I18N,
+  MODULE_ACCESS_META_I18N,
+  TIMEZONE_LABELS_I18N,
+  type Locale,
+  type TrilingualText,
+} from "@/lib/i18n";
 import type { Grant, ModuleAssignment } from "@/lib/types";
 
 export const MAX_EXPIRES_AT_UNIX = 4_102_444_800; // 2100-01-01T00:00:00Z (backend upper bound)
@@ -10,6 +18,41 @@ export const PREFERRED_MODULE_ORDER: readonly string[] = [
   "approvals",
 ];
 
+/**
+ * Harmonized module titles aligned with Workbench nav labels and S-3 canonical glossary
+ * (orders -> 订单进件/訂單進件/Orders, dispatch -> 运单调度/運單調度/Dispatch,
+ * invoice-review -> 发票审阅/發票審閱/Invoice Review,
+ * warehouse-insights -> 仓库经营汇总/倉庫營運摘要/Warehouse Insights,
+ * approvals -> 主管审批/主管審批/Approvals).
+ */
+const HARMONIZED_MODULE_TITLES: Readonly<Record<string, TrilingualText>> = {
+  orders: {
+    "zh-CN": "订单进件",
+    "zh-HK": "訂單進件",
+    en: "Orders",
+  },
+  dispatch: {
+    "zh-CN": "运单调度",
+    "zh-HK": "運單調度",
+    en: "Dispatch",
+  },
+  "invoice-review": {
+    "zh-CN": "发票审阅",
+    "zh-HK": "發票審閱",
+    en: "Invoice Review",
+  },
+  "warehouse-insights": {
+    "zh-CN": "仓库经营汇总",
+    "zh-HK": "倉庫營運摘要",
+    en: "Warehouse Insights",
+  },
+  approvals: {
+    "zh-CN": "主管审批",
+    "zh-HK": "主管審批",
+    en: "Approvals",
+  },
+};
+
 export interface ModuleDisplayMeta {
   id: string;
   title: string;
@@ -17,80 +60,29 @@ export interface ModuleDisplayMeta {
   index: string;
 }
 
-export const MODULE_META: Record<string, ModuleDisplayMeta> = {
-  orders: {
-    id: "orders",
-    index: "01",
-    title: "订单",
-    description: "查看销售订单进件与草稿，或创建并提交销售订单草稿提案。",
-  },
-  dispatch: {
-    id: "dispatch",
-    index: "02",
-    title: "调度",
-    description: "查看仓内运单排期，或发起运单交期改期提案。",
-  },
-  "invoice-review": {
-    id: "invoice-review",
-    index: "03",
-    title: "发票审阅",
-    description: "按授权仓库范围查询财务发票金额、币种与结算状态。",
-  },
-  "warehouse-insights": {
-    id: "warehouse-insights",
-    index: "04",
-    title: "仓库概览",
-    description: "查看授权仓库的开放运单统计与经营汇总快照。",
-  },
-  approvals: {
-    id: "approvals",
-    index: "05",
-    title: "审批",
-    description: "独立审批订单草稿与运单改期提案（仅主管或管理员角色生效）。",
-  },
-};
-
 export interface GrantDisplayMeta {
   label: string;
   mode: "read" | "write" | "approve";
   requires?: Grant;
 }
 
-export const GRANT_META: Partial<Record<Grant, GrantDisplayMeta>> = {
-  "order.read": {
-    label: "读取订单进件与草稿",
-    mode: "read",
-  },
-  "order.work": {
-    label: "上传进件与创建订单草稿",
-    mode: "write",
-    requires: "order.read",
-  },
-  "shipment.read": {
-    label: "读取运单排期",
-    mode: "read",
-  },
-  "shipment.reschedule": {
-    label: "发起运单改期提案",
-    mode: "write",
-    requires: "shipment.read",
-  },
-  "finance.read": {
-    label: "读取财务发票",
-    mode: "read",
-  },
-  "decision.read": {
-    label: "读取仓库经营汇总",
-    mode: "read",
-  },
-  "workbench.approve.orders": {
-    label: "审批销售订单草稿",
-    mode: "approve",
-  },
-  "workbench.approve.shipments": {
-    label: "审批运单改期提案",
-    mode: "approve",
-  },
+const GRANT_MODES: Partial<
+  Record<Grant, { mode: "read" | "write" | "approve"; requires?: Grant }>
+> = {
+  "order.read": { mode: "read" },
+  "order.work": { mode: "write", requires: "order.read" },
+  "shipment.read": { mode: "read" },
+  "shipment.reschedule": { mode: "write", requires: "shipment.read" },
+  "finance.read": { mode: "read" },
+  "decision.read": { mode: "read" },
+  "workbench.approve.orders": { mode: "approve" },
+  "workbench.approve.shipments": { mode: "approve" },
+};
+
+const GRANT_MODE_RANK: Record<"read" | "write" | "approve", number> = {
+  read: 0,
+  write: 1,
+  approve: 2,
 };
 
 // Mirrors aios_platform/module_access.py prerequisites verbatim
@@ -98,6 +90,58 @@ export const GRANT_PREREQUISITES: Partial<Record<Grant, Grant>> = {
   "order.work": "order.read",
   "shipment.reschedule": "shipment.read",
 };
+
+export function getGrantLabel(
+  grant: Grant,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return GRANT_LABELS_I18N[grant]?.[locale] ?? grant;
+}
+
+export function getGrantMeta(
+  grant: Grant,
+  locale: Locale = DEFAULT_LOCALE,
+): GrantDisplayMeta | undefined {
+  const modeInfo = GRANT_MODES[grant];
+  const labelEntry = GRANT_LABELS_I18N[grant];
+  if (!modeInfo && !labelEntry) return undefined;
+  return {
+    label: labelEntry?.[locale] ?? grant,
+    mode: modeInfo?.mode ?? "read",
+    requires: modeInfo?.requires,
+  };
+}
+
+/**
+ * Deterministic grant display order: prerequisite read grants always precede
+ * dependent write grants, followed by approval grants; catalog order breaks ties.
+ */
+export function sortGrantsByDependency(
+  grants: readonly Grant[],
+  catalogOrder?: readonly Grant[],
+): Grant[] {
+  const catalogRank = new Map<Grant, number>(
+    (catalogOrder ?? []).map((g, idx) => [g, idx]),
+  );
+  return [...grants].sort((a, b) => {
+    // Explicit prerequisite relationship always wins
+    if (GRANT_PREREQUISITES[b] === a) return -1;
+    if (GRANT_PREREQUISITES[a] === b) return 1;
+
+    const modeA = GRANT_MODES[a]?.mode ?? "read";
+    const modeB = GRANT_MODES[b]?.mode ?? "read";
+    if (GRANT_MODE_RANK[modeA] !== GRANT_MODE_RANK[modeB]) {
+      return GRANT_MODE_RANK[modeA] - GRANT_MODE_RANK[modeB];
+    }
+
+    const rankA = catalogRank.get(a);
+    const rankB = catalogRank.get(b);
+    if (rankA !== undefined && rankB !== undefined && rankA !== rankB) {
+      return rankA - rankB;
+    }
+    return a.localeCompare(b, "en");
+  });
+}
 
 export function getDependentWriteGrants(readGrant: Grant): Grant[] {
   return (Object.entries(GRANT_PREREQUISITES) as Array<[Grant, Grant]>)
@@ -113,38 +157,91 @@ export interface ModuleStatePresentation {
   summary: string;
 }
 
+const MODULE_STATE_I18N: Readonly<
+  Record<
+    ModuleEffectiveState,
+    { label: TrilingualText; summary: TrilingualText }
+  >
+> = {
+  inherited: {
+    label: {
+      "zh-CN": "继承身份权限",
+      "zh-HK": "繼承身份權限",
+      en: "Inherited",
+    },
+    summary: {
+      "zh-CN": "尚未单独配置，当前沿用员工默认权限。",
+      "zh-HK": "尚未單獨設定，目前沿用員工預設權限。",
+      en: "Not explicitly configured; currently inheriting the employee's default identity grants.",
+    },
+  },
+  active: {
+    label: {
+      "zh-CN": "已显式配置",
+      "zh-HK": "已顯式設定",
+      en: "Configured",
+    },
+    summary: {
+      "zh-CN":
+        "独立授权规则生效中，实际访问范围将与员工身份已验证仓库取交集。",
+      "zh-HK":
+        "獨立授權規則生效中，實際存取範圍將與員工身份已驗證倉庫取交集。",
+      en: "Explicit override active; effective access intersects with verified identity warehouses.",
+    },
+  },
+  revoked: {
+    label: {
+      "zh-CN": "已撤销",
+      "zh-HK": "已撤銷",
+      en: "Revoked",
+    },
+    summary: {
+      "zh-CN": "已撤销此模块授权，相关查询与待派发提案已阻断。",
+      "zh-HK": "已撤銷此模組授權，相關查詢與待派發提案已阻斷。",
+      en: "Module access revoked; related queries and queued proposals are blocked.",
+    },
+  },
+  expired: {
+    label: {
+      "zh-CN": "已到期",
+      "zh-HK": "已到期",
+      en: "Expired",
+    },
+    summary: {
+      "zh-CN": "该授权已超过设定到期时间，当前不再开放此模块。",
+      "zh-HK": "該授權已超過設定到期時間，目前不再開放此模組。",
+      en: "Assignment has passed its expiration timestamp and this module is no longer active.",
+    },
+  },
+};
+
 export function classifyModuleAssignment(
   assignment: ModuleAssignment | undefined,
   nowUnixSeconds: number,
+  locale: Locale = DEFAULT_LOCALE,
 ): ModuleStatePresentation {
+  let status: ModuleEffectiveState;
   if (!assignment) {
-    return {
-      status: "inherited",
-      label: "继承身份权限",
-      summary: "尚未单独配置，当前沿用员工默认权限。",
-    };
-  }
-  if (assignment.grants.length === 0 && assignment.warehouses.length === 0) {
-    return {
-      status: "revoked",
-      label: "已撤销",
-      summary: "已撤销此模块授权，相关查询与待派发提案已阻断。",
-    };
-  }
-  if (
+    status = "inherited";
+  } else if (
+    assignment.grants.length === 0 &&
+    assignment.warehouses.length === 0
+  ) {
+    status = "revoked";
+  } else if (
     typeof assignment.expires_at === "number" &&
     assignment.expires_at <= nowUnixSeconds
   ) {
-    return {
-      status: "expired",
-      label: "已到期",
-      summary: "该授权已超过设定到期时间，当前不再开放此模块。",
-    };
+    status = "expired";
+  } else {
+    status = "active";
   }
+
+  const copy = MODULE_STATE_I18N[status];
   return {
-    status: "active",
-    label: "已显式配置",
-    summary: "独立授权规则生效中，实际访问范围将与员工身份已验证仓库取交集。",
+    status,
+    label: copy.label[locale],
+    summary: copy.summary[locale],
   };
 }
 
@@ -229,40 +326,54 @@ export function localInputToUnixSeconds(value: string): number | null {
   return Math.floor(ms / 1000);
 }
 
-const KNOWN_TZ_ZH: Record<string, string> = {
-  "Asia/Hong_Kong": "香港时间",
-  "Asia/Shanghai": "北京时间",
-  "Asia/Taipei": "台北时间",
-  "Asia/Singapore": "新加坡时间",
-  "Asia/Tokyo": "东京时间",
-  UTC: "协调世界时",
+const LOCAL_TIME_FALLBACK: TrilingualText = {
+  "zh-CN": "本地时间",
+  "zh-HK": "本地時間",
+  en: "Local time",
 };
 
-export function getLocalTimezoneLabel(): string {
+export function getLocalTimezoneLabel(locale: Locale = DEFAULT_LOCALE): string {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz && KNOWN_TZ_ZH[tz]) return KNOWN_TZ_ZH[tz]!;
+    if (tz && TIMEZONE_LABELS_I18N[tz]) {
+      return TIMEZONE_LABELS_I18N[tz]![locale];
+    }
     const offsetMin = -new Date().getTimezoneOffset();
     const sign = offsetMin >= 0 ? "+" : "-";
     const abs = Math.abs(offsetMin);
     const hh = String(Math.floor(abs / 60)).padStart(2, "0");
     const mm = String(abs % 60).padStart(2, "0");
-    return `本地时间 UTC${sign}${hh}:${mm}`;
+    return `${LOCAL_TIME_FALLBACK[locale]} UTC${sign}${hh}:${mm}`;
   } catch {
-    return "本地时间";
+    return LOCAL_TIME_FALLBACK[locale];
   }
 }
+
+const FALLBACK_MODULE_DESC: TrilingualText = {
+  "zh-CN": "租户级工作台模块授权配置。",
+  "zh-HK": "租戶級工作台模組授權設定。",
+  en: "Tenant-level workbench module access assignment.",
+};
 
 export function getModuleMeta(
   moduleId: string,
   fallbackIndex: number,
+  locale: Locale = DEFAULT_LOCALE,
 ): ModuleDisplayMeta {
-  const known = MODULE_META[moduleId];
-  if (known) return known;
+  const known = MODULE_ACCESS_META_I18N[moduleId];
+  const harmonizedTitle = HARMONIZED_MODULE_TITLES[moduleId];
+  if (known) {
+    return {
+      id: moduleId,
+      index: known.index,
+      title: (harmonizedTitle ?? known.title)[locale],
+      description: known.description[locale],
+    };
+  }
   return {
     id: moduleId,
     index: String(fallbackIndex + 1).padStart(2, "0"),
-    title: moduleId,
-    description: "租户级工作台模块授权配置。",
+    title: harmonizedTitle ? harmonizedTitle[locale] : moduleId,
+    description: FALLBACK_MODULE_DESC[locale],
   };
 }

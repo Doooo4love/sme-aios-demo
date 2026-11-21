@@ -29,7 +29,8 @@ import {
   getAuthGeneration,
   isStaleAuthError,
 } from "@/lib/api-client";
-import { formatRoleLabel } from "@/lib/format";
+import { sortWarehouses } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { Interactive3DCard } from "@/components/kinetic/Interactive3DCard";
@@ -42,10 +43,11 @@ import { DispatchModule } from "@/features/workbench/DispatchModule";
 import { FinanceModule } from "@/features/workbench/FinanceModule";
 import { OrdersModule } from "@/features/workbench/OrdersModule";
 import { UnifiedQueuesPanel } from "@/features/workbench/UnifiedQueuesPanel";
+import { fetchWorkbenchApprovals } from "@/features/workbench/api";
 import {
-  ALL_MODULE_SPECS,
-  PERMISSION_TIERS,
   deriveAuthorizedModules,
+  getModuleSpecs,
+  getPermissionTiers,
   type WorkbenchModuleId,
 } from "@/features/workbench/types";
 
@@ -71,6 +73,7 @@ interface GovernanceShortcut {
 }
 
 export function WorkbenchView() {
+  const { locale, tx, localizeRole, localizePersona } = useLocale();
   const {
     actor,
     profile,
@@ -84,6 +87,9 @@ export function WorkbenchView() {
   } = useSession();
   const { assignedCount, setAssignedCount } = useWorkbench();
 
+  const moduleSpecs = useMemo(() => getModuleSpecs(locale), [locale]);
+  const permissionTiers = useMemo(() => getPermissionTiers(locale), [locale]);
+
   // Strictly derived from server capabilities & grants — NEVER bypassed by client preference
   const authorizedModules = useMemo(
     () => deriveAuthorizedModules(actor, capabilities),
@@ -96,14 +102,19 @@ export function WorkbenchView() {
     Partial<Record<WorkbenchModuleId, boolean>>
   >({});
   const [activeModule, setActiveModule] = useState<WorkbenchModuleId>("queues");
+  const [requestedQueueView, setRequestedQueueView] = useState<{
+    view: "assigned" | "submitted" | "unified";
+    seq: number;
+  } | null>(null);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const prefsContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Real live task KPI counts (strictly from BFF /v1/workbench/tasks, zero fake numbers)
+  // Real live task & approval KPI counts (strictly from BFF endpoints, zero fake numbers)
   const [kpiCounts, setKpiCounts] = useState<{
     assigned: number | null;
     submitted: number | null;
-  }>({ assigned: null, submitted: null });
+    approvals: number | null;
+  }>({ assigned: null, submitted: null, approvals: null });
 
   const hasApprovalCapability = useMemo(
     () => authorizedModules.includes("approvals"),
@@ -113,28 +124,34 @@ export function WorkbenchView() {
   const loadKpiCounts = useCallback(async () => {
     const startGen = getAuthGeneration();
     try {
-      const [assignedRes, submittedRes] = await Promise.all([
+      const [assignedRes, submittedRes, approvalsRes] = await Promise.all([
         fetchTasks("assigned", { limit: 50 }),
         fetchTasks("submitted", { limit: 50 }),
+        hasApprovalCapability
+          ? fetchWorkbenchApprovals({ limit: 50 }).catch(() => null)
+          : Promise.resolve(null),
       ]);
       if (startGen !== getAuthGeneration()) return;
+      const approvalTotal = approvalsRes ? approvalsRes.items.length : null;
       setKpiCounts({
         assigned: assignedRes.items.length,
         submitted: submittedRes.items.length,
+        approvals: approvalTotal,
       });
       setAssignedCount(assignedRes.items.length);
     } catch (error) {
       if (isStaleAuthError(error) || startGen !== getAuthGeneration()) return;
     }
-  }, [setAssignedCount]);
+  }, [hasApprovalCapability, setAssignedCount]);
 
   // Purge personal display preferences & reload real KPI counts on authGeneration change
   useEffect(() => {
     setCustomOrder([]);
     setHiddenModules({});
     setActiveModule("queues");
+    setRequestedQueueView(null);
     setPrefsOpen(false);
-    setKpiCounts({ assigned: null, submitted: null });
+    setKpiCounts({ assigned: null, submitted: null, approvals: null });
     if (actor) {
       void loadKpiCounts();
     }
@@ -174,9 +191,9 @@ export function WorkbenchView() {
 
   const visibleModules = useMemo(() => {
     return orderedAuthorizedModules.filter(
-      (id) => ALL_MODULE_SPECS[id].required || !hiddenModules[id],
+      (id) => moduleSpecs[id].required || !hiddenModules[id],
     );
-  }, [orderedAuthorizedModules, hiddenModules]);
+  }, [orderedAuthorizedModules, hiddenModules, moduleSpecs]);
 
   // Keep activeModule valid whenever capabilities shrink or tab gets hidden
   useEffect(() => {
@@ -198,7 +215,7 @@ export function WorkbenchView() {
   };
 
   const toggleHideModule = (id: WorkbenchModuleId) => {
-    if (ALL_MODULE_SPECS[id].required) return;
+    if (moduleSpecs[id].required) return;
     setHiddenModules((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
@@ -209,8 +226,16 @@ export function WorkbenchView() {
       list.push({
         id: "people",
         href: "/admin/people",
-        label: "员工模块权限",
-        caption: "岗位授权、仓库范围与生效期管理",
+        label: tx({
+          "zh-CN": "员工模块权限",
+          "zh-HK": "員工模組權限",
+          en: "Employee Access",
+        }),
+        caption: tx({
+          "zh-CN": "岗位授权、仓库范围与生效期管理",
+          "zh-HK": "職位授權、倉庫範圍與生效期管理",
+          en: "Role grants, warehouse scopes, and expiration",
+        }),
         icon: Users,
       });
     }
@@ -218,72 +243,120 @@ export function WorkbenchView() {
       list.push({
         id: "ops",
         href: "/admin",
-        label: "运维监控与异常",
-        caption: "出站队列、熔断开关与异常回执核查",
+        label: tx({
+          "zh-CN": "运维监控与异常",
+          "zh-HK": "維運監控與異常",
+          en: "Ops & Exceptions",
+        }),
+        caption: tx({
+          "zh-CN": "出站队列、熔断开关与异常回执核查",
+          "zh-HK": "出站佇列、熔斷開關與異常回執核查",
+          en: "Outbox queue, write circuit breaker, and receipt triage",
+        }),
         icon: Activity,
       });
     }
     return list;
-  }, [canManagePeople, canAccessAdminOps]);
+  }, [canManagePeople, canAccessAdminOps, tx]);
 
   // Group visible modules into explicit Permission Tiers (only rendering tiers with >=1 authorized capability)
   const visibleTiers = useMemo(() => {
     const orderRank = new Map<WorkbenchModuleId, number>();
     visibleModules.forEach((id, idx) => orderRank.set(id, idx));
 
-    return PERMISSION_TIERS.map((tier) => {
-      if (tier.id === "governance") {
+    return permissionTiers
+      .map((tier) => {
+        if (tier.id === "governance") {
+          return {
+            ...tier,
+            modules: [] as WorkbenchModuleId[],
+            shortcuts: governanceShortcuts,
+          };
+        }
+        const tierModules = tier.moduleIds
+          .filter((id) => orderRank.has(id))
+          .sort((a, b) => (orderRank.get(a) ?? 0) - (orderRank.get(b) ?? 0));
         return {
           ...tier,
-          modules: [] as WorkbenchModuleId[],
-          shortcuts: governanceShortcuts,
+          modules: tierModules,
+          shortcuts: [] as GovernanceShortcut[],
         };
-      }
-      const tierModules = tier.moduleIds
-        .filter((id) => orderRank.has(id))
-        .sort((a, b) => (orderRank.get(a) ?? 0) - (orderRank.get(b) ?? 0));
-      return {
-        ...tier,
-        modules: tierModules,
-        shortcuts: [] as GovernanceShortcut[],
-      };
-    }).filter((tier) => tier.modules.length > 0 || tier.shortcuts.length > 0);
-  }, [visibleModules, governanceShortcuts]);
+      })
+      .filter((tier) => tier.modules.length > 0 || tier.shortcuts.length > 0);
+  }, [visibleModules, governanceShortcuts, permissionTiers]);
 
-  const activeSpec = ALL_MODULE_SPECS[activeModule];
+  const activeSpec = moduleSpecs[activeModule];
 
-  // Always prefer human display name (profile display_name -> persona display_name/label -> subject)
+  // Always prefer human display name (custom profile display_name -> localized persona -> subject)
   const userDisplayName = useMemo(() => {
-    const rawProfileName = profile?.display_name?.trim();
-    if (rawProfileName && rawProfileName !== actor?.subject) {
-      return rawProfileName;
-    }
     const persona = demoConfig?.personas.find(
       (p) => p.subject === actor?.subject,
     );
+    const localized = actor?.subject
+      ? localizePersona(actor.subject, persona)
+      : null;
+    const rawProfileName = profile?.display_name?.trim();
+    const isDefaultPersonaName =
+      Boolean(persona?.display_name) && rawProfileName === persona?.display_name;
+    if (
+      rawProfileName &&
+      rawProfileName !== actor?.subject &&
+      !isDefaultPersonaName
+    ) {
+      return rawProfileName;
+    }
     return (
-      persona?.display_name ||
-      persona?.label ||
+      localized?.displayName ||
       rawProfileName ||
       actor?.subject ||
-      "成员"
+      tx({ "zh-CN": "成员", "zh-HK": "成員", en: "Member" })
     );
-  }, [profile?.display_name, actor?.subject, demoConfig?.personas]);
+  }, [
+    profile?.display_name,
+    actor?.subject,
+    demoConfig?.personas,
+    localizePersona,
+    tx,
+  ]);
 
   const userAvatarSrc = profile?.has_avatar
     ? `/v1/profile/avatar?v=${avatarVersion}`
     : null;
-  const warehouses = actor?.warehouses ?? [];
+  const warehouses = useMemo(
+    () => sortWarehouses(actor?.warehouses ?? []),
+    [actor?.warehouses],
+  );
 
   const liveAssignedCount =
     kpiCounts.assigned !== null ? kpiCounts.assigned : assignedCount;
   const liveSubmittedCount = kpiCounts.submitted;
+  const liveApprovalCount = kpiCounts.approvals;
   const hasActionableAssigned = liveAssignedCount > 0;
-  const hasActionableApproval = hasApprovalCapability && liveAssignedCount > 0;
+  const hasActionableApproval =
+    hasApprovalCapability && (liveApprovalCount ?? 0) > 0;
 
   const handleQueueCountsSync = useCallback(
     (counts: { assigned: number; submitted: number }) => {
-      setKpiCounts(counts);
+      setKpiCounts((prev) => ({
+        ...prev,
+        assigned: counts.assigned,
+        submitted: counts.submitted,
+      }));
+    },
+    [],
+  );
+
+  const handleApprovalCountSync = useCallback((count: number) => {
+    setKpiCounts((prev) => ({
+      ...prev,
+      approvals: count,
+    }));
+  }, []);
+
+  const openQueuesLane = useCallback(
+    (view: "assigned" | "submitted" | "unified") => {
+      setActiveModule("queues");
+      setRequestedQueueView((prev) => ({ view, seq: (prev?.seq ?? 0) + 1 }));
     },
     [],
   );
@@ -308,17 +381,24 @@ export function WorkbenchView() {
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-[19px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] truncate">
-                  {userDisplayName} · 工作台
+                  {tx(
+                    {
+                      "zh-CN": "{name} · 工作台",
+                      "zh-HK": "{name} · 工作台",
+                      en: "{name} · Workbench",
+                    },
+                    { name: userDisplayName },
+                  )}
                 </h1>
                 {actor?.role && (
-                  <span className="inline-flex items-center rounded-full bg-[var(--accent-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--accent)]">
-                    {formatRoleLabel(actor.role)}
+                  <span className="inline-flex items-center rounded-full bg-[var(--accent-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--accent-ink)]">
+                    {localizeRole(actor.role)}
                   </span>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-[var(--ink-muted)]">
                 <span>
-                  租户{" "}
+                  {tx({ "zh-CN": "租户", "zh-HK": "租戶", en: "Tenant" })}{" "}
                   <span className="font-mono-code text-[var(--ink-secondary)]">
                     {actor?.tenant ?? "—"}
                   </span>
@@ -327,7 +407,7 @@ export function WorkbenchView() {
                   ·
                 </span>
                 <span>
-                  账号{" "}
+                  {tx({ "zh-CN": "账号", "zh-HK": "帳號", en: "Account" })}{" "}
                   <span className="font-mono-code text-[var(--ink-secondary)]">
                     {actor?.subject ?? "—"}
                   </span>
@@ -341,7 +421,13 @@ export function WorkbenchView() {
                       ·
                     </span>
                     <div className="inline-flex flex-wrap items-center gap-1">
-                      <span>授权仓库</span>
+                      <span>
+                        {tx({
+                          "zh-CN": "授权仓库",
+                          "zh-HK": "授權倉庫",
+                          en: "Authorized Warehouses",
+                        })}
+                      </span>
                       {warehouses.map((wh) => (
                         <span
                           key={wh}
@@ -362,10 +448,16 @@ export function WorkbenchView() {
               <Link
                 href="/orders/new"
                 data-testid="work-header-new-order-link"
-                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.24)] hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_12px_-2px_rgba(22,104,227,0.32)] active:scale-[0.98] transition-all duration-[165ms]"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-4 text-[13px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] hover:shadow-[var(--shadow-card)] active:scale-[0.98] transition-all duration-[165ms]"
               >
                 <FilePlus2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-                <span>新建订单进件</span>
+                <span>
+                  {tx({
+                    "zh-CN": "新建订单进件",
+                    "zh-HK": "新增訂單進件",
+                    en: "New Order Intake",
+                  })}
+                </span>
               </Link>
             )}
 
@@ -381,23 +473,43 @@ export function WorkbenchView() {
                 data-testid="work-view-prefs-btn"
               >
                 <SlidersHorizontal className="h-3.5 w-3.5 text-[var(--ink-secondary)]" />
-                <span>模块排序</span>
+                <span>
+                  {tx({
+                    "zh-CN": "模块排序",
+                    "zh-HK": "模組排序",
+                    en: "Module Layout",
+                  })}
+                </span>
               </Button>
 
               {prefsOpen && (
                 <div
                   role="dialog"
-                  aria-label="模块显示顺序与折叠偏好"
+                  aria-label={tx({
+                    "zh-CN": "模块显示顺序与折叠偏好",
+                    "zh-HK": "模組顯示順序與摺疊偏好",
+                    en: "Module layout and visibility preferences",
+                  })}
                   data-testid="work-view-prefs-panel"
                   className="absolute right-0 top-full z-30 mt-2 w-[min(420px,calc(100vw-32px))] rounded-card bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-popover)] space-y-3"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-                        模块显示偏好
+                        {tx({
+                          "zh-CN": "模块显示偏好",
+                          "zh-HK": "模組顯示偏好",
+                          en: "Module Layout",
+                        })}
                       </div>
                       <p className="mt-0.5 text-[11.5px] text-[var(--ink-muted)] leading-relaxed">
-                        仅调整当前会话内的排序与折叠，严格受服务端授权边界约束。
+                        {tx({
+                          "zh-CN":
+                            "仅调整当前会话内的排序与折叠，严格受服务端授权边界约束。",
+                          "zh-HK":
+                            "僅調整目前工作階段內的排序與摺疊，嚴格受伺服器端授權邊界約束。",
+                          en: "Session-only ordering and visibility; server authorization boundaries always apply.",
+                        })}
                       </p>
                     </div>
                     <button
@@ -406,16 +518,18 @@ export function WorkbenchView() {
                         setCustomOrder([]);
                         setHiddenModules({});
                       }}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors cursor-pointer"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
                     >
                       <RotateCcw className="h-3 w-3" />
-                      <span>重置</span>
+                      <span>
+                        {tx({ "zh-CN": "重置", "zh-HK": "重設", en: "Reset" })}
+                      </span>
                     </button>
                   </div>
 
                   <div className="space-y-1.5">
                     {orderedAuthorizedModules.map((id, idx) => {
-                      const spec = ALL_MODULE_SPECS[id];
+                      const spec = moduleSpecs[id];
                       const Icon = MODULE_ICONS[id];
                       const isHidden = Boolean(hiddenModules[id]);
                       return (
@@ -438,7 +552,11 @@ export function WorkbenchView() {
                             </span>
                             {spec.required && (
                               <span className="rounded-full bg-[var(--bg-surface)] px-1.5 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                                常驻
+                                {tx({
+                                  "zh-CN": "常驻",
+                                  "zh-HK": "常駐",
+                                  en: "Pinned",
+                                })}
                               </span>
                             )}
                           </div>
@@ -447,7 +565,14 @@ export function WorkbenchView() {
                               type="button"
                               disabled={idx === 0}
                               onClick={() => moveModule(id, -1)}
-                              aria-label={`将 ${spec.label} 左移`}
+                              aria-label={tx(
+                                {
+                                  "zh-CN": "将 {label} 左移",
+                                  "zh-HK": "將 {label} 左移",
+                                  en: "Move {label} left",
+                                },
+                                { label: spec.label },
+                              )}
                               className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[var(--bg-surface)] disabled:opacity-30 cursor-pointer transition-colors"
                             >
                               <ArrowLeft className="h-3 w-3" />
@@ -458,7 +583,14 @@ export function WorkbenchView() {
                                 idx === orderedAuthorizedModules.length - 1
                               }
                               onClick={() => moveModule(id, 1)}
-                              aria-label={`将 ${spec.label} 右移`}
+                              aria-label={tx(
+                                {
+                                  "zh-CN": "将 {label} 右移",
+                                  "zh-HK": "將 {label} 右移",
+                                  en: "Move {label} right",
+                                },
+                                { label: spec.label },
+                              )}
                               className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[var(--bg-surface)] disabled:opacity-30 cursor-pointer transition-colors"
                             >
                               <ArrowRight className="h-3 w-3" />
@@ -469,8 +601,22 @@ export function WorkbenchView() {
                                 onClick={() => toggleHideModule(id)}
                                 aria-label={
                                   isHidden
-                                    ? `显示 ${spec.label}`
-                                    : `隐藏 ${spec.label}`
+                                    ? tx(
+                                        {
+                                          "zh-CN": "显示 {label}",
+                                          "zh-HK": "顯示 {label}",
+                                          en: "Show {label}",
+                                        },
+                                        { label: spec.label },
+                                      )
+                                    : tx(
+                                        {
+                                          "zh-CN": "隐藏 {label}",
+                                          "zh-HK": "隱藏 {label}",
+                                          en: "Hide {label}",
+                                        },
+                                        { label: spec.label },
+                                      )
                                 }
                                 className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[var(--bg-surface)] cursor-pointer transition-colors"
                               >
@@ -498,37 +644,45 @@ export function WorkbenchView() {
             maxTilt={2}
             hoverLiftPx={-1}
             sheenIntensity="subtle"
-            onClick={() => setActiveModule("queues")}
+            onClick={() => openQueuesLane("assigned")}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                setActiveModule("queues");
+                openQueuesLane("assigned");
               }
             }}
             className="group cursor-pointer rounded-tile bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)] transition-all duration-[200ms]"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
-                待我处理
+                {tx({
+                  "zh-CN": "待我处理",
+                  "zh-HK": "待我處理",
+                  en: "Assigned to Me",
+                })}
               </span>
               <span
                 className={[
                   "flex h-7 w-7 items-center justify-center rounded-full",
                   hasActionableAssigned
-                    ? "bg-[var(--accent-wash)] text-[var(--accent)]"
+                    ? "bg-[var(--accent-wash)] text-[var(--accent-ink)]"
                     : "bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]",
                 ].join(" ")}
               >
                 <Inbox className="h-3.5 w-3.5" strokeWidth={1.9} />
               </span>
             </div>
-            <div className="mt-2 font-mono-code tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <div className="mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
               {kpiCounts.assigned !== null ? kpiCounts.assigned : "—"}
             </div>
             <div className="mt-1 text-[11.5px] text-[var(--ink-muted)]">
-              当前待办与分派任务
+              {tx({
+                "zh-CN": "当前待办与分派任务",
+                "zh-HK": "目前待辦與分派任務",
+                en: "Active inbox & assigned tasks",
+              })}
             </div>
           </Interactive3DCard>
 
@@ -536,30 +690,34 @@ export function WorkbenchView() {
             maxTilt={2}
             hoverLiftPx={-1}
             sheenIntensity="subtle"
-            onClick={() => setActiveModule("queues")}
+            onClick={() => openQueuesLane("submitted")}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                setActiveModule("queues");
+                openQueuesLane("submitted");
               }
             }}
             className="group cursor-pointer rounded-tile bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)] transition-all duration-[200ms]"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
-                已提交
+                {tx({ "zh-CN": "已提交", "zh-HK": "已提交", en: "Submitted" })}
               </span>
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                 <Send className="h-3.5 w-3.5" strokeWidth={1.9} />
               </span>
             </div>
-            <div className="mt-2 font-mono-code tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <div className="mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
               {liveSubmittedCount !== null ? liveSubmittedCount : "—"}
             </div>
             <div className="mt-1 text-[11.5px] text-[var(--ink-muted)]">
-              本人发起的提案与回执
+              {tx({
+                "zh-CN": "本人发起的提案与回执",
+                "zh-HK": "本人發起的提案與回執",
+                en: "Proposals & receipts you initiated",
+              })}
             </div>
           </Interactive3DCard>
 
@@ -599,13 +757,17 @@ export function WorkbenchView() {
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
-                待我审批
+                {tx({
+                  "zh-CN": "待我审批",
+                  "zh-HK": "待我審批",
+                  en: "Pending Approval",
+                })}
               </span>
               <span
                 className={[
                   "flex h-7 w-7 items-center justify-center rounded-full",
                   hasActionableApproval
-                    ? "bg-[var(--accent-wash)] text-[var(--accent)]"
+                    ? "bg-[var(--accent-wash)] text-[var(--accent-ink)]"
                     : "bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]",
                 ].join(" ")}
               >
@@ -614,22 +776,30 @@ export function WorkbenchView() {
             </div>
             <div
               className={[
-                "mt-2 font-mono-code tabular-nums text-[24px] font-semibold tracking-[-0.02em]",
+                "mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em]",
                 hasActionableApproval
                   ? "text-[var(--accent)]"
                   : "text-[var(--ink-primary)]",
               ].join(" ")}
             >
               {hasApprovalCapability
-                ? kpiCounts.assigned !== null
-                  ? kpiCounts.assigned
-                  : liveAssignedCount
+                ? liveApprovalCount !== null
+                  ? liveApprovalCount
+                  : "—"
                 : "—"}
             </div>
             <div className="mt-1 text-[11.5px] text-[var(--ink-muted)]">
               {hasApprovalCapability
-                ? "授权站点待独立确认"
-                : "当前岗位未开通审批权限"}
+                ? tx({
+                    "zh-CN": "授权仓库待独立确认",
+                    "zh-HK": "授權倉庫待獨立確認",
+                    en: "Awaiting independent confirmation",
+                  })
+                : tx({
+                    "zh-CN": "当前岗位未开通审批权限",
+                    "zh-HK": "目前職位未開通審批權限",
+                    en: "Approval authority not enabled",
+                  })}
             </div>
           </Interactive3DCard>
 
@@ -640,17 +810,32 @@ export function WorkbenchView() {
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
-                授权仓库
+                {tx({
+                  "zh-CN": "授权仓库",
+                  "zh-HK": "授權倉庫",
+                  en: "Authorized Warehouses",
+                })}
               </span>
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                 <Building2 className="h-3.5 w-3.5" strokeWidth={1.9} />
               </span>
             </div>
-            <div className="mt-2 font-mono-code tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <div className="mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
               {warehouses.length}
             </div>
-            <div className="mt-1 truncate font-mono-code text-[11.5px] text-[var(--ink-muted)]">
-              {warehouses.length > 0 ? warehouses.join(" · ") : "未分配站点"}
+            <div
+              className={[
+                "mt-1 truncate text-[11.5px] text-[var(--ink-muted)]",
+                warehouses.length > 0 ? "font-mono-code" : "",
+              ].join(" ")}
+            >
+              {warehouses.length > 0
+                ? warehouses.join(" · ")
+                : tx({
+                    "zh-CN": "未分配仓库",
+                    "zh-HK": "未分配倉庫",
+                    en: "No warehouses assigned",
+                  })}
             </div>
           </Interactive3DCard>
         </div>
@@ -658,7 +843,11 @@ export function WorkbenchView() {
 
       {/* 2. Explicit Permission-Tiered Navigation Hub (Only Authorized Tiers Rendered) */}
       <section
-        aria-label="权限层级功能导航"
+        aria-label={tx({
+          "zh-CN": "权限层级功能导航",
+          "zh-HK": "權限層級功能導覽",
+          en: "Permission-tiered workbench navigation",
+        })}
         className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-4"
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:flex xl:flex-wrap xl:items-stretch">
@@ -681,11 +870,12 @@ export function WorkbenchView() {
                   className="flex flex-wrap items-center gap-1.5"
                 >
                   {tier.modules.map((id) => {
-                    const spec = ALL_MODULE_SPECS[id];
+                    const spec = moduleSpecs[id];
                     const Icon = MODULE_ICONS[id];
                     const active = activeModule === id;
                     const showBadge =
-                      id === "approvals" && liveAssignedCount > 0;
+                      id === "approvals" && (liveApprovalCount ?? 0) > 0;
+                    const badgeCount = liveApprovalCount ?? 0;
                     return (
                       <button
                         key={id}
@@ -697,7 +887,7 @@ export function WorkbenchView() {
                         className={[
                           "inline-flex h-9 items-center gap-1.5 rounded-sm px-3 text-[13px] transition-all duration-[165ms] cursor-pointer",
                           active
-                            ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)] ring-1 ring-[var(--accent-border)]"
+                            ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] font-semibold shadow-[var(--shadow-subtle)] ring-1 ring-[var(--accent-border)]"
                             : "text-[var(--ink-secondary)] font-medium hover:bg-[var(--bg-surface)]/70 hover:text-[var(--ink-primary)]",
                         ].join(" ")}
                       >
@@ -705,15 +895,15 @@ export function WorkbenchView() {
                           className={[
                             "h-3.5 w-3.5 shrink-0",
                             active
-                              ? "text-[var(--accent)]"
+                              ? "text-[var(--accent-ink)]"
                               : "text-[var(--ink-muted)]",
                           ].join(" ")}
                           strokeWidth={1.85}
                         />
                         <span>{spec.label}</span>
                         {showBadge && (
-                          <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent)] px-1.5 font-mono-code tabular-nums text-[10.5px] font-semibold text-white">
-                            {liveAssignedCount > 99 ? "99+" : liveAssignedCount}
+                          <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 tabular-nums text-[10.5px] font-semibold text-[var(--accent-fg)]">
+                            {badgeCount > 99 ? "99+" : badgeCount}
                           </span>
                         )}
                       </button>
@@ -737,7 +927,7 @@ export function WorkbenchView() {
                           strokeWidth={1.85}
                         />
                         <span>{shortcut.label}</span>
-                        <ArrowUpRight className="h-3.5 w-3.5 text-[var(--ink-faint)] group-hover:text-[var(--accent)] transition-colors" />
+                        <ArrowUpRight className="h-3.5 w-3.5 text-[var(--ink-muted)] group-hover:text-[var(--accent)] transition-colors" />
                       </Link>
                     );
                   })}
@@ -766,10 +956,15 @@ export function WorkbenchView() {
       {/* 3. Active Capability-Authorized Module Surface */}
       <div>
         {activeModule === "queues" && (
-          <UnifiedQueuesPanel onCountsLoaded={handleQueueCountsSync} />
+          <UnifiedQueuesPanel
+            requestedView={requestedQueueView}
+            onCountsLoaded={handleQueueCountsSync}
+          />
         )}
         {activeModule === "orders" && <OrdersModule />}
-        {activeModule === "approvals" && <ApprovalsModule />}
+        {activeModule === "approvals" && (
+          <ApprovalsModule onCountLoaded={handleApprovalCountSync} />
+        )}
         {activeModule === "dispatch" && <DispatchModule />}
         {activeModule === "finance" && <FinanceModule />}
         {activeModule === "assurance" && <AssurancePanel />}

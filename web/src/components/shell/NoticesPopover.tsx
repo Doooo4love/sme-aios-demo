@@ -11,34 +11,21 @@ import {
   isStaleAuthError,
   markNoticeRead,
 } from "@/lib/api-client";
-import { formatUnixTime } from "@/lib/format";
+import {
+  DEFAULT_LOCALE,
+  localizeNoticeKindForLocale,
+  useLocale,
+  type Locale,
+} from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import type { NoticeKind, NoticeSummary } from "@/lib/types";
 
-function noticeKindToLabel(kind: NoticeKind): string {
-  switch (kind) {
-    case "meeting_created":
-      return "新会议通知";
-    case "meeting_changed":
-      return "会议时间变更";
-    case "meeting_cancelled":
-      return "会议已取消";
-    case "proposal_assigned":
-      return "单据已分派给你审批";
-    case "proposal_returned":
-      return "提案已退回修改";
-    case "proposal_rejected":
-      return "提案已被拒绝";
-    case "proposal_approved":
-      return "提案已批准入队";
-    case "proposal_verified":
-      return "ERP 回执已核验";
-    case "proposal_needs_operator":
-      return "提案需人工核查";
-    default:
-      return "工作台通知";
-  }
+function noticeKindToLabel(
+  kind: NoticeKind,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return localizeNoticeKindForLocale(kind, locale);
 }
 
 export function NoticesPopover({
@@ -51,6 +38,7 @@ export function NoticesPopover({
   const router = useRouter();
   const { status, authGeneration } = useSession();
   const { unreadNoticesCount, setUnreadNoticesCount } = useWorkbench();
+  const { t, formatDateTime } = useLocale();
 
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NoticeSummary[]>([]);
@@ -121,9 +109,9 @@ export function NoticesPopover({
     } catch (error) {
       if (isStaleAuthError(error)) return;
       if (isApiError(error) && error.status === 404) {
-        setInlineNotice("当前账号无法访问这条记录。");
+        setInlineNotice(t("notice.recordUnavailable.message"));
       } else {
-        setInlineNotice("暂时无法打开该通知，请稍后重试。");
+        setInlineNotice(t("notices.openFailed"));
       }
     } finally {
       setOpeningId(null);
@@ -137,10 +125,10 @@ export function NoticesPopover({
           type="button"
           aria-label={
             unreadNoticesCount > 0
-              ? `通知（${unreadNoticesCount} 条未读）`
-              : "通知"
+              ? t("notices.unreadAria", { count: unreadNoticesCount })
+              : t("notices.label")
           }
-          title="通知"
+          title={t("notices.label")}
           className={[
             "relative inline-flex h-8 w-8 items-center justify-center rounded-full",
             "text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)]",
@@ -149,7 +137,7 @@ export function NoticesPopover({
         >
           <Bell className="h-[17px] w-[17px]" strokeWidth={1.75} />
           {unreadNoticesCount > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 font-mono-code text-[9.5px] font-semibold text-white ring-2 ring-white">
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent-solid)] px-1 tabular-nums text-[9.5px] font-semibold text-[var(--accent-fg)] ring-2 ring-[var(--bg-header-solid)]">
               {unreadNoticesCount > 99 ? "99+" : unreadNoticesCount}
             </span>
           )}
@@ -168,13 +156,13 @@ export function NoticesPopover({
         >
           <div className="flex items-center justify-between border-b border-[var(--hairline)] px-4 py-3">
             <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-              站内通知
+              {t("notices.title")}
             </span>
             <button
               type="button"
               onClick={() => void loadNotices()}
               disabled={loading}
-              aria-label="刷新通知"
+              aria-label={t("notices.refreshAria")}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
             >
               <RefreshCw
@@ -196,7 +184,7 @@ export function NoticesPopover({
           <div className="max-h-[340px] overflow-auto p-1.5 space-y-0.5">
             {items.length === 0 ? (
               <div className="px-4 py-10 text-center text-[12.5px] text-[var(--ink-muted)]">
-                {loading ? "正在加载通知…" : "暂无工作台通知"}
+                {loading ? t("notices.loading") : t("notices.empty")}
               </div>
             ) : (
               items.map((item) => {
@@ -220,8 +208,8 @@ export function NoticesPopover({
                           {item.id}
                         </span>
                         {unread ? (
-                          <span className="rounded-full bg-[var(--accent)] px-1.5 py-0.5 text-[9.5px] font-semibold text-white leading-none">
-                            未读
+                          <span className="rounded-full bg-[var(--accent-solid)] px-1.5 py-0.5 text-[9.5px] font-semibold text-[var(--accent-fg)] leading-none">
+                            {t("notices.unreadBadge")}
                           </span>
                         ) : (
                           <Check
@@ -230,12 +218,14 @@ export function NoticesPopover({
                           />
                         )}
                       </div>
-                      <div className="mt-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                        {formatUnixTime(item.created_at)}
+                      <div className="mt-0.5 tabular-nums text-[11px] text-[var(--ink-muted)]">
+                        {formatDateTime(item.created_at)}
                       </div>
                     </div>
-                    <span className="shrink-0 text-[12px] font-medium text-[var(--accent)]">
-                      {openingId === item.id ? "核验中…" : "查看"}
+                    <span className="shrink-0 text-[12px] font-medium text-[var(--accent-ink)]">
+                      {openingId === item.id
+                        ? t("notices.verifying")
+                        : t("notices.view")}
                     </span>
                   </button>
                 );
@@ -243,7 +233,7 @@ export function NoticesPopover({
             )}
           </div>
           <div className="border-t border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-4 py-2.5 text-[11px] text-[var(--ink-muted)]">
-            点击通知时将按当前权限实时核验目标记录
+            {t("notices.footer")}
           </div>
         </Popover.Content>
       </Popover.Portal>

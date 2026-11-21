@@ -1,4 +1,4 @@
-import { apiFetch, isApiError } from "@/lib/api-client";
+import { apiFetch, isApiError, type ApiError } from "@/lib/api-client";
 import type {
   AssuranceCheckpoint,
   ExceptionPage,
@@ -11,6 +11,8 @@ export interface HealthProbeResult {
   status: string;
   httpStatus: number;
   message?: string;
+  apiError?: ApiError;
+  unreachable?: boolean;
   requestId?: string | null;
   checkedAt: number;
 }
@@ -38,6 +40,7 @@ export async function fetchHealthz(
         status: "down",
         httpStatus: error.status,
         message: error.message,
+        apiError: error,
         requestId: error.requestId,
         checkedAt,
       };
@@ -46,7 +49,7 @@ export async function fetchHealthz(
       ok: false,
       status: "unreachable",
       httpStatus: 0,
-      message: "无法连接到 /healthz 探针。",
+      unreachable: true,
       checkedAt,
     };
   }
@@ -75,6 +78,7 @@ export async function fetchReadyz(
         status: error.status === 503 ? "unavailable" : "error",
         httpStatus: error.status,
         message: error.message,
+        apiError: error,
         requestId: error.requestId,
         checkedAt,
       };
@@ -83,7 +87,7 @@ export async function fetchReadyz(
       ok: false,
       status: "unreachable",
       httpStatus: 0,
-      message: "无法连接到 /readyz 探针。",
+      unreachable: true,
       checkedAt,
     };
   }

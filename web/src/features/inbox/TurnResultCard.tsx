@@ -14,12 +14,13 @@ import {
   Receipt,
   Warehouse,
 } from "lucide-react";
+import { formatShortDigest } from "@/lib/format";
 import {
-  formatProposalAction,
-  formatProposalStateLabel,
-  formatShortDigest,
-  formatUnixTime,
-} from "@/lib/format";
+  DEFAULT_LOCALE,
+  translateInline,
+  useLocale,
+  type Locale,
+} from "@/lib/i18n";
 import { Interactive3DCard } from "@/components/kinetic";
 import { Button } from "@/components/ui/Button";
 import { SourceTag } from "@/components/ui/SourceTag";
@@ -35,14 +36,22 @@ import type {
   WarehouseDecisionSummary,
 } from "@/lib/types";
 
+export type CapabilityDomainId = "finance" | "shipment" | "insights" | "mail";
+
 export interface ClarificationOption {
+  /** Stable locale-independent icon key */
+  domainId: CapabilityDomainId;
+  /** Backwards-compatible E2E data-testid suffix */
+  domain: string;
+  /** Localized short domain badge */
+  domainLabel: string;
   label: string;
   prompt: string;
-  domain: string;
 }
 
 export function buildCapabilityPromptOptions(
   capabilities: Capabilities | null,
+  locale: Locale = DEFAULT_LOCALE,
 ): ClarificationOption[] {
   if (!capabilities) return [];
   const options: ClarificationOption[] = [];
@@ -53,43 +62,114 @@ export function buildCapabilityPromptOptions(
 
     if (tool.id === "finance.invoice.read" && wh) {
       options.push({
+        domainId: "finance",
         domain: "财务",
-        label: `查看 ${wh} 发票 INV-100`,
-        prompt: `查看发票 INV-100 仓库 ${wh}`,
+        domainLabel: translateInline(locale, {
+          "zh-CN": "财务",
+          "zh-HK": "財務",
+          en: "Finance",
+        }),
+        label: translateInline(
+          locale,
+          {
+            "zh-CN": "查看 {wh} 发票 INV-100",
+            "zh-HK": "檢視 {wh} 發票 INV-100",
+            en: "Check {wh} invoice INV-100",
+          },
+          { wh },
+        ),
+        prompt: translateInline(
+          locale,
+          {
+            "zh-CN": "查看发票 INV-100 仓库 {wh}",
+            "zh-HK": "檢視發票 INV-100 倉庫 {wh}",
+            en: "Show invoice INV-100 in {wh}",
+          },
+          { wh },
+        ),
       });
     } else if (tool.id === "shipment.read" && wh) {
       const shp = wh === "HK02" ? "SHP-2001" : "SHP-1001";
       options.push({
+        domainId: "shipment",
         domain: "运单",
-        label: `查看 ${wh} 运单 ${shp}`,
-        prompt: `查看运单 ${shp} 仓库 ${wh}`,
+        domainLabel: translateInline(locale, {
+          "zh-CN": "运单",
+          "zh-HK": "運單",
+          en: "Shipments",
+        }),
+        label: translateInline(
+          locale,
+          {
+            "zh-CN": "查看 {wh} 运单 {shp}",
+            "zh-HK": "檢視 {wh} 運單 {shp}",
+            en: "Check {wh} shipment {shp}",
+          },
+          { wh, shp },
+        ),
+        prompt: translateInline(
+          locale,
+          {
+            "zh-CN": "查看运单 {shp} 仓库 {wh}",
+            "zh-HK": "檢視運單 {shp} 倉庫 {wh}",
+            en: "Show shipment {shp} in {wh}",
+          },
+          { wh, shp },
+        ),
       });
     } else if (tool.id === "decision.warehouse.summary" && wh) {
       options.push({
+        domainId: "insights",
         domain: "经营",
-        label: `查看 ${wh} 仓库概览`,
-        prompt: `仓库汇总 ${wh}`,
+        domainLabel: translateInline(locale, {
+          "zh-CN": "经营",
+          "zh-HK": "營運",
+          en: "Insights",
+        }),
+        label: translateInline(
+          locale,
+          {
+            "zh-CN": "查看 {wh} 仓库概览",
+            "zh-HK": "檢視 {wh} 倉庫概覽",
+            en: "{wh} warehouse summary",
+          },
+          { wh },
+        ),
+        prompt: translateInline(
+          locale,
+          {
+            "zh-CN": "仓库汇总 {wh}",
+            "zh-HK": "倉庫摘要 {wh}",
+            en: "Warehouse summary {wh}",
+          },
+          { wh },
+        ),
       });
     } else if (tool.id === "mail.inbox.read") {
       options.push({
+        domainId: "mail",
         domain: "邮箱",
-        label: "查看我的收件箱",
-        prompt: "查看我的收件箱",
+        domainLabel: translateInline(locale, {
+          "zh-CN": "邮箱",
+          "zh-HK": "電郵",
+          en: "Mail",
+        }),
+        label: translateInline(locale, {
+          "zh-CN": "查看我的收件箱",
+          "zh-HK": "檢視我的收件箱",
+          en: "Check my inbox",
+        }),
+        prompt: translateInline(locale, {
+          "zh-CN": "查看我的收件箱",
+          "zh-HK": "檢視我的收件箱",
+          en: "Check my inbox",
+        }),
       });
     }
   }
 
   return options;
 }
-
-const TOOL_LABELS: Record<string, string> = {
-  "shipment.read": "运单实时状态",
-  "shipment.reschedule": "运单改期提案",
-  "order.draft.prepare": "销售订单草稿",
-  "finance.invoice.read": "财务发票核对",
-  "mail.inbox.read": "企业收件箱",
-  "decision.warehouse.summary": "仓库经营概览",
-};
 
 function isInvoiceView(
   data: Record<string, unknown>,
@@ -125,59 +205,6 @@ function isMailInboxView(
   return Array.isArray(data.messages);
 }
 
-function renderConciseDiff(proposal: Proposal): React.ReactNode {
-  const { action, before, after } = proposal.plan;
-  if (action === "shipment.reschedule") {
-    const oldDate =
-      typeof before.delivery_date === "string" ? before.delivery_date : "—";
-    const newDate =
-      typeof after.delivery_date === "string" ? after.delivery_date : "—";
-    return (
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12.5px]">
-        <span className="text-[var(--ink-muted)]">交付日期</span>
-        <span className="font-mono-code text-[var(--ink-secondary)] line-through">
-          {oldDate}
-        </span>
-        <ArrowRight className="h-3.5 w-3.5 text-[var(--ink-faint)]" />
-        <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent)]">
-          {newDate}
-        </span>
-      </div>
-    );
-  }
-
-  if (action === "sales_order.create_draft") {
-    const po = typeof after.po === "string" ? after.po : proposal.plan.target;
-    const currency = typeof after.currency === "string" ? after.currency : "";
-    const total = typeof after.total === "string" ? after.total : "—";
-    const items = Array.isArray(after.items) ? after.items.length : 0;
-    return (
-      <div className="mt-3 grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
-        <div>
-          <div className="text-[11px] text-[var(--ink-muted)]">采购单号</div>
-          <div className="mt-0.5 truncate font-mono-code font-medium text-[var(--ink-primary)]">
-            {po}
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] text-[var(--ink-muted)]">订单总额</div>
-          <div className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
-            {currency} {total}
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] text-[var(--ink-muted)]">明细行数</div>
-          <div className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
-            {items} 行
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-}
-
 export interface TurnResultCardProps {
   result: TurnResult;
   capabilities: Capabilities | null;
@@ -196,8 +223,103 @@ export function TurnResultCard({
   onSelectClarification,
   onInspectObject,
 }: TurnResultCardProps) {
+  const {
+    locale,
+    tx,
+    tp,
+    formatDateTime,
+    localizeAction,
+    localizePersona,
+    localizeStatus,
+    localizeTool,
+  } = useLocale();
+
+  const renderConciseDiff = (proposal: Proposal): React.ReactNode => {
+    const { action, before, after } = proposal.plan;
+    if (action === "shipment.reschedule") {
+      const oldDate =
+        typeof before.delivery_date === "string" ? before.delivery_date : "—";
+      const newDate =
+        typeof after.delivery_date === "string" ? after.delivery_date : "—";
+      return (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12.5px]">
+          <span className="text-[var(--ink-muted)]">
+            {tx({
+              "zh-CN": "交付日期",
+              "zh-HK": "交付日期",
+              en: "Delivery Date",
+            })}
+          </span>
+          <span className="font-mono-code text-[var(--ink-secondary)] line-through">
+            {oldDate}
+          </span>
+          <ArrowRight className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
+          <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent-ink)]">
+            {newDate}
+          </span>
+        </div>
+      );
+    }
+
+    if (action === "sales_order.create_draft") {
+      const po = typeof after.po === "string" ? after.po : proposal.plan.target;
+      const currency = typeof after.currency === "string" ? after.currency : "";
+      const total = typeof after.total === "string" ? after.total : "—";
+      const items = Array.isArray(after.items) ? after.items.length : 0;
+      return (
+        <div className="mt-3 grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
+          <div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "采购单号",
+                "zh-HK": "採購單號",
+                en: "PO Number",
+              })}
+            </div>
+            <div className="mt-0.5 truncate font-mono-code font-medium text-[var(--ink-primary)]">
+              {po}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "订单总额",
+                "zh-HK": "訂單總額",
+                en: "Order Total",
+              })}
+            </div>
+            <div className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
+              {currency} {total}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "明细行数",
+                "zh-HK": "明細行數",
+                en: "Line Items",
+              })}
+            </div>
+            <div className="mt-0.5 font-medium text-[var(--ink-primary)] tabular-nums">
+              {tp(
+                {
+                  "zh-CN": "{count} 行",
+                  "zh-HK": "{count} 行",
+                  en: { one: "{count} line", other: "{count} lines" },
+                },
+                items,
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   if (result.kind === "clarification") {
-    const options = buildCapabilityPromptOptions(capabilities);
+    const options = buildCapabilityPromptOptions(capabilities, locale);
     return (
       <Interactive3DCard
         maxTilt={2}
@@ -211,7 +333,13 @@ export function TurnResultCard({
             className="h-4 w-4 text-[var(--accent)]"
             strokeWidth={1.85}
           />
-          <span>需要补充指令要素</span>
+          <span>
+            {tx({
+              "zh-CN": "需要补充指令要素",
+              "zh-HK": "須補充指令條件",
+              en: "More Details Needed",
+            })}
+          </span>
         </div>
         <p className="mt-2 text-[14px] leading-relaxed text-[var(--ink-primary)] break-words">
           {result.question}
@@ -220,7 +348,11 @@ export function TurnResultCard({
         {options.length > 0 && onSelectClarification && (
           <div className="mt-3.5 border-t border-[var(--hairline-subtle)] pt-3">
             <div className="mb-2 text-[11.5px] text-[var(--ink-muted)]">
-              可直接点选常用查询：
+              {tx({
+                "zh-CN": "可直接点选常用查询：",
+                "zh-HK": "可直接點選常用查詢：",
+                en: "Try a quick query:",
+              })}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {options.map((opt) => (
@@ -229,10 +361,10 @@ export function TurnResultCard({
                   type="button"
                   data-testid={`clarification-option-${opt.domain}`}
                   onClick={() => onSelectClarification(opt.prompt)}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent)] transition-colors duration-[140ms] cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors duration-[140ms] cursor-pointer"
                 >
                   <span className="text-[11px] text-[var(--ink-muted)]">
-                    {opt.domain}
+                    {opt.domainLabel}
                   </span>
                   <span>{opt.label}</span>
                 </button>
@@ -246,7 +378,7 @@ export function TurnResultCard({
 
   if (result.kind === "result") {
     const rawData = (result.data ?? {}) as Record<string, unknown>;
-    const toolLabel = TOOL_LABELS[result.tool] || result.tool;
+    const toolLabel = localizeTool(result.tool);
     const warehouse =
       typeof rawData.warehouse === "string" ? rawData.warehouse : undefined;
 
@@ -256,7 +388,14 @@ export function TurnResultCard({
           kind: "shipment",
           id: rawData.shipment_id,
           warehouse: rawData.warehouse,
-          title: `运单 ${rawData.shipment_id}`,
+          title: tx(
+            {
+              "zh-CN": "运单 {id}",
+              "zh-HK": "運單 {id}",
+              en: "Shipment {id}",
+            },
+            { id: rawData.shipment_id },
+          ),
           meta: { result },
         };
       }
@@ -265,7 +404,14 @@ export function TurnResultCard({
           kind: "invoice",
           id: rawData.invoice_id,
           warehouse: rawData.warehouse,
-          title: `发票 ${rawData.invoice_id}`,
+          title: tx(
+            {
+              "zh-CN": "发票 {id}",
+              "zh-HK": "發票 {id}",
+              en: "Invoice {id}",
+            },
+            { id: rawData.invoice_id },
+          ),
           meta: { result },
         };
       }
@@ -303,7 +449,7 @@ export function TurnResultCard({
             <SourceTag source={result.source} />
             {timestamp && (
               <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                {formatUnixTime(timestamp)}
+                {formatDateTime(timestamp)}
               </span>
             )}
           </div>
@@ -314,11 +460,15 @@ export function TurnResultCard({
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                     <Receipt className="h-4 w-4" strokeWidth={1.85} />
                   </span>
                   <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                    发票{" "}
+                    {tx({
+                      "zh-CN": "发票",
+                      "zh-HK": "發票",
+                      en: "Invoice",
+                    })}{" "}
                     <span className="font-mono-code font-medium">
                       {rawData.invoice_id}
                     </span>
@@ -328,19 +478,37 @@ export function TurnResultCard({
               </div>
               <dl className="grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">所属仓库</dt>
+                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "仓库",
+                      "zh-HK": "倉庫",
+                      en: "Warehouse",
+                    })}
+                  </dt>
                   <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
                     {rawData.warehouse}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">币种</dt>
+                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "币种",
+                      "zh-HK": "幣別",
+                      en: "Currency",
+                    })}
+                  </dt>
                   <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
                     {rawData.currency}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">发票金额</dt>
+                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "发票金额",
+                      "zh-HK": "發票金額",
+                      en: "Amount",
+                    })}
+                  </dt>
                   <dd className="mt-0.5 font-mono-code text-[13.5px] font-semibold text-[var(--ink-primary)] tabular-nums">
                     {rawData.amount}
                   </dd>
@@ -351,11 +519,15 @@ export function TurnResultCard({
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                     <Package className="h-4 w-4" strokeWidth={1.85} />
                   </span>
                   <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                    运单{" "}
+                    {tx({
+                      "zh-CN": "运单",
+                      "zh-HK": "運單",
+                      en: "Shipment",
+                    })}{" "}
                     <span className="font-mono-code font-medium">
                       {rawData.shipment_id}
                     </span>
@@ -365,19 +537,37 @@ export function TurnResultCard({
               </div>
               <dl className="grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">仓库站点</dt>
+                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "仓库",
+                      "zh-HK": "倉庫",
+                      en: "Warehouse",
+                    })}
+                  </dt>
                   <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
                     {rawData.warehouse}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">计划交付日</dt>
-                  <dd className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
+                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "计划交付日",
+                      "zh-HK": "預計交付日",
+                      en: "Delivery Date",
+                    })}
+                  </dt>
+                  <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
                     {rawData.delivery_date}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">记录版本</dt>
+                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "记录版本",
+                      "zh-HK": "紀錄版本",
+                      en: "Version",
+                    })}
+                  </dt>
                   <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
                     v{rawData.version}
                   </dd>
@@ -388,20 +578,33 @@ export function TurnResultCard({
             isWarehouseSummary(rawData) ? (
             <div className="flex flex-wrap items-center justify-between gap-4 rounded-tile bg-[var(--bg-surface-tint)] px-4 py-3">
               <div className="flex items-center gap-3">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                   <Warehouse className="h-4 w-4" strokeWidth={1.85} />
                 </span>
                 <div>
                   <div className="text-[11.5px] text-[var(--ink-muted)]">
-                    仓库站点 {rawData.warehouse} · 在途未关闭运单
+                    {tx(
+                      {
+                        "zh-CN": "仓库 {wh} · 在途未关闭运单",
+                        "zh-HK": "倉庫 {wh} · 進行中未關閉運單",
+                        en: "Warehouse {wh} · Open Shipments",
+                      },
+                      { wh: rawData.warehouse },
+                    )}
                   </div>
-                  <div className="mt-0.5 font-mono-code text-[22px] font-semibold text-[var(--ink-primary)] tabular-nums">
+                  <div className="mt-0.5 text-[22px] font-semibold text-[var(--ink-primary)] tabular-nums">
                     {rawData.open_shipments}
                   </div>
                 </div>
               </div>
               <div>
-                <div className="text-[11px] text-[var(--ink-muted)]">统计基准日</div>
+                <div className="text-[11px] text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "统计基准日",
+                    "zh-HK": "統計基準日",
+                    en: "As of",
+                  })}
+                </div>
                 <div className="mt-0.5 font-mono-code text-[12.5px] font-medium text-[var(--ink-secondary)] tabular-nums">
                   {rawData.as_of}
                 </div>
@@ -410,12 +613,28 @@ export function TurnResultCard({
           ) : result.tool === "mail.inbox.read" && isMailInboxView(rawData) ? (
             <div className="space-y-2.5">
               <div className="flex items-center gap-2 text-[12px] text-[var(--ink-muted)]">
-                <Mail className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.85} />
-                <span>共 {rawData.messages.length} 封邮件摘要</span>
+                <Mail
+                  className="h-3.5 w-3.5 text-[var(--accent)]"
+                  strokeWidth={1.85}
+                />
+                <span>
+                  {tp(
+                    {
+                      "zh-CN": "共 {count} 封邮件摘要",
+                      "zh-HK": "共 {count} 封電郵摘要",
+                      en: { one: "{count} message", other: "{count} messages" },
+                    },
+                    rawData.messages.length,
+                  )}
+                </span>
               </div>
               {rawData.messages.length === 0 ? (
                 <div className="rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-3 text-[12.5px] text-[var(--ink-muted)]">
-                  当前收件箱暂无邮件记录。
+                  {tx({
+                    "zh-CN": "当前收件箱暂无邮件记录。",
+                    "zh-HK": "目前收件箱暫無電郵紀錄。",
+                    en: "No messages in inbox.",
+                  })}
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)]">
@@ -429,8 +648,13 @@ export function TurnResultCard({
                           {msg.id}
                         </span>
                       </div>
-                      <div className="mt-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                        发件人：{msg.sender}
+                      <div className="mt-0.5 text-[11px] text-[var(--ink-muted)]">
+                        {tx({
+                          "zh-CN": "发件人：",
+                          "zh-HK": "寄件人：",
+                          en: "From: ",
+                        })}
+                        <span className="font-mono-code">{msg.sender}</span>
                       </div>
                     </div>
                   ))}
@@ -456,7 +680,11 @@ export function TurnResultCard({
 
           <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-3">
             <span className="text-[11.5px] text-[var(--ink-muted)]">
-              实时只读视图
+              {tx({
+                "zh-CN": "实时只读视图",
+                "zh-HK": "即時唯讀檢視",
+                en: "Live read-only view",
+              })}
             </span>
             <Button
               size="sm"
@@ -468,7 +696,13 @@ export function TurnResultCard({
               }
             >
               <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>在右侧核对</span>
+              <span>
+                {tx({
+                  "zh-CN": "在右侧核对",
+                  "zh-HK": "於右側核對",
+                  en: "Inspect",
+                })}
+              </span>
             </Button>
           </div>
         </div>
@@ -480,8 +714,19 @@ export function TurnResultCard({
     const { proposal } = result;
     const headline =
       proposal.state === "PROPOSED"
-        ? "已生成待审提案"
-        : `提案状态 · ${formatProposalStateLabel(proposal.state)}`;
+        ? tx({
+            "zh-CN": "已生成待审提案",
+            "zh-HK": "已產生待審提案",
+            en: "Proposal Ready",
+          })
+        : tx(
+            {
+              "zh-CN": "提案状态 · {state}",
+              "zh-HK": "提案狀態 · {state}",
+              en: "Proposal · {state}",
+            },
+            { state: localizeStatus(proposal.state) },
+          );
 
     return (
       <Interactive3DCard
@@ -509,7 +754,7 @@ export function TurnResultCard({
           <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px]">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-[var(--ink-primary)]">
-                {formatProposalAction(proposal.plan.action)}
+                {localizeAction(proposal.plan.action)}
               </span>
               <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
                 {proposal.warehouse}
@@ -521,8 +766,11 @@ export function TurnResultCard({
                 {formatShortDigest(proposal.id, 6, 4)}
               </span>
             </div>
-            <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-              摘要 {formatShortDigest(proposal.digest)}
+            <span className="text-[11px] text-[var(--ink-muted)]">
+              {tx({ "zh-CN": "摘要 ", "zh-HK": "摘要 ", en: "Digest " })}
+              <span className="font-mono-code">
+                {formatShortDigest(proposal.digest)}
+              </span>
             </span>
           </div>
 
@@ -540,21 +788,33 @@ export function TurnResultCard({
                     kind: "proposal",
                     id: proposal.id,
                     warehouse: proposal.warehouse,
-                    title: formatProposalAction(proposal.plan.action),
+                    title: localizeAction(proposal.plan.action),
                   },
                   e.currentTarget,
                 )
               }
             >
               <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>右侧核对</span>
+              <span>
+                {tx({
+                  "zh-CN": "右侧核对",
+                  "zh-HK": "右側核對",
+                  en: "Inspect",
+                })}
+              </span>
             </Button>
             <Link
               href={`/proposals/${encodeURIComponent(proposal.id)}`}
               data-testid="turn-proposal-open-page"
-              className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 text-[12.5px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-colors"
+              className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent-solid)] px-3.5 text-[12.5px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] transition-colors"
             >
-              <span>打开单据详情</span>
+              <span>
+                {tx({
+                  "zh-CN": "打开单据详情",
+                  "zh-HK": "開啟單據詳情",
+                  en: "Open Proposal",
+                })}
+              </span>
               <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.9} />
             </Link>
           </div>
@@ -576,11 +836,15 @@ export function TurnResultCard({
       <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--accent-wash)] px-4 py-2.5">
         <div className="flex items-center gap-2">
           <CheckSquare
-            className="h-3.5 w-3.5 text-[var(--accent)]"
+            className="h-3.5 w-3.5 text-[var(--accent-ink)]"
             strokeWidth={1.9}
           />
           <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
-            审批快照预览 · 需核对摘要后确认
+            {tx({
+              "zh-CN": "审批快照预览 · 需核对摘要后确认",
+              "zh-HK": "審批快照預覽 · 須核對摘要後確認",
+              en: "Approval Preview · Verify Digest Before Confirming",
+            })}
           </span>
         </div>
         <StatusBadge status={proposal.state} compact />
@@ -589,7 +853,13 @@ export function TurnResultCard({
       <div className="p-4">
         <div className="grid grid-cols-2 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px] sm:grid-cols-3">
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">单据编号</div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "单据编号",
+                "zh-HK": "單據編號",
+                en: "Proposal ID",
+              })}
+            </div>
             <div
               title={proposal.id}
               className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]"
@@ -598,13 +868,32 @@ export function TurnResultCard({
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">发起人 / 仓库</div>
-            <div className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
-              {proposal.requester} · {proposal.warehouse}
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "发起人 / 仓库",
+                "zh-HK": "發起人 / 倉庫",
+                en: "Requester / Warehouse",
+              })}
+            </div>
+            <div
+              title={proposal.requester}
+              className="mt-0.5 text-[var(--ink-primary)]"
+            >
+              <span className="font-medium">
+                {localizePersona(proposal.requester).displayName}
+              </span>
+              <span> · </span>
+              <span className="font-mono-code">{proposal.warehouse}</span>
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">摘要锁</div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "摘要锁",
+                "zh-HK": "摘要鎖",
+                en: "Digest lock",
+              })}
+            </div>
             <div className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
               {formatShortDigest(proposal.digest)}
             </div>
@@ -614,7 +903,11 @@ export function TurnResultCard({
         {renderConciseDiff(proposal)}
 
         <p className="mt-3 text-[12px] text-[var(--ink-muted)]">
-          正式批准、退回或拒绝需在单据详情页核对摘要后显式确认。
+          {tx({
+            "zh-CN": "正式批准、退回或拒绝需在单据详情页核对摘要后显式确认。",
+            "zh-HK": "正式批准、退回或拒絕須於單據詳情頁核對摘要後明確確認。",
+            en: "Approving, returning, or rejecting requires verifying the digest on the proposal page.",
+          })}
         </p>
 
         <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--hairline-subtle)] pt-3">
@@ -629,21 +922,37 @@ export function TurnResultCard({
                   kind: "proposal",
                   id: proposal.id,
                   warehouse: proposal.warehouse,
-                  title: "审批核对预览",
+                  title: tx({
+                    "zh-CN": "审批核对预览",
+                    "zh-HK": "審批核對預覽",
+                    en: "Approval Preview",
+                  }),
                 },
                 e.currentTarget,
               )
             }
           >
             <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.85} />
-            <span>右侧预览</span>
+            <span>
+              {tx({
+                "zh-CN": "右侧预览",
+                "zh-HK": "右側預覽",
+                en: "Preview",
+              })}
+            </span>
           </Button>
           <Link
             href={`/proposals/${encodeURIComponent(proposal.id)}`}
             data-testid="turn-approval-open-formal"
-            className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 text-[12.5px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-colors"
+            className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent-solid)] px-3.5 text-[12.5px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] transition-colors"
           >
-            <span>前往正式审批页确认</span>
+            <span>
+              {tx({
+                "zh-CN": "前往正式审批页确认",
+                "zh-HK": "前往正式審批頁確認",
+                en: "Review & Approve",
+              })}
+            </span>
             <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.9} />
           </Link>
         </div>

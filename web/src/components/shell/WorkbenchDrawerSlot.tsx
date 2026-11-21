@@ -26,11 +26,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import {
-  formatProposalAction,
-  formatShortDigest,
-  formatUnixTime,
-} from "@/lib/format";
+import { formatLocalIsoDate, formatShortDigest } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { BriefProgressChain } from "@/components/kinetic/BriefProgressChain";
@@ -52,13 +49,30 @@ import { fetchIntakeDetail } from "@/features/orders/api";
 import { ProposalInspectorPanel } from "@/features/proposals/ProposalInspectorPanel";
 import { AssuranceCaseInspector } from "@/features/workbench/AssurancePanel";
 
-const DRAWER_TABS: ReadonlyArray<{ id: DrawerTab; label: string }> = [
-  { id: "current", label: "当前对象" },
-  { id: "assigned", label: "待我处理" },
-  { id: "submitted", label: "已提交" },
-];
+function defaultRescheduleDateFrom(deliveryDate: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(deliveryDate.trim());
+  if (match) {
+    const y = Number(match[1]);
+    const mo = Number(match[2]);
+    const d = Number(match[3]);
+    // Noon Hong Kong Time (04:00 UTC) avoids UTC midnight day-shift
+    return formatLocalIsoDate(new Date(Date.UTC(y, mo - 1, d + 3, 4, 0, 0)));
+  }
+  const parsed = new Date(deliveryDate);
+  if (!Number.isNaN(parsed.getTime())) {
+    return formatLocalIsoDate(new Date(parsed.getTime() + 3 * 86_400_000));
+  }
+  return formatLocalIsoDate(new Date(Date.now() + 3 * 86_400_000));
+}
 
 export function WorkbenchDrawerSlot() {
+  const {
+    tx,
+    formatDateTime,
+    formatCurrency,
+    localizeAction,
+    localizeStatus,
+  } = useLocale();
   const { status, actor, capabilities, authGeneration, handleAccessChanged } =
     useSession();
   const {
@@ -71,6 +85,36 @@ export function WorkbenchDrawerSlot() {
     openDrawer,
     setAssignedCount,
   } = useWorkbench();
+
+  const drawerTabs = useMemo<ReadonlyArray<{ id: DrawerTab; label: string }>>(
+    () => [
+      {
+        id: "current",
+        label: tx({
+          "zh-CN": "当前对象",
+          "zh-HK": "當前對象",
+          en: "Current",
+        }),
+      },
+      {
+        id: "assigned",
+        label: tx({
+          "zh-CN": "待我处理",
+          "zh-HK": "待我處理",
+          en: "Assigned",
+        }),
+      },
+      {
+        id: "submitted",
+        label: tx({
+          "zh-CN": "已提交",
+          "zh-HK": "已提交",
+          en: "Submitted",
+        }),
+      },
+    ],
+    [tx],
+  );
 
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -258,11 +302,7 @@ export function WorkbenchDrawerSlot() {
         if (res.kind === "result") {
           const view = res.data as ShipmentView;
           setShipmentData({ view, source: res.source });
-          const next = new Date(`${view.delivery_date}T00:00:00`);
-          if (!Number.isNaN(next.getTime())) {
-            next.setDate(next.getDate() + 3);
-            setRescheduleDate(next.toISOString().slice(0, 10));
-          }
+          setRescheduleDate(defaultRescheduleDateFrom(view.delivery_date));
         }
       } catch (error) {
         if (isStaleAuthError(error) || startGen !== getAuthGeneration()) return;
@@ -366,7 +406,7 @@ export function WorkbenchDrawerSlot() {
   const canRescheduleDrawerShipment = useMemo(() => {
     if (!shipmentData || !capabilities) return false;
     const tool = capabilities.tools.find(
-      (t) => t.id === "shipment.reschedule" && t.available,
+      (tItem) => tItem.id === "shipment.reschedule" && tItem.available,
     );
     return Boolean(tool?.warehouses.includes(shipmentData.view.warehouse));
   }, [shipmentData, capabilities]);
@@ -401,6 +441,12 @@ export function WorkbenchDrawerSlot() {
     }
   };
 
+  const defaultDrawerHeading = tx({
+    "zh-CN": "业务核对面板",
+    "zh-HK": "業務核對面板",
+    en: "Business Inspector",
+  });
+
   return (
     <>
       {drawerOpen && (
@@ -412,15 +458,15 @@ export function WorkbenchDrawerSlot() {
       )}
 
       <aside
-        aria-label="业务核对面板"
+        aria-label={defaultDrawerHeading}
         aria-hidden={!drawerOpen}
         data-testid="workbench-drawer"
         className={[
-          "aios-drawer-transition flex flex-col bg-[rgba(255,255,255,0.92)] backdrop-blur-2xl overflow-hidden",
-          // Frosted Porcelain Glass Slide-Over (380-420px): floating below xl, docked with crisp ambient left shadow >= xl
+          "aios-drawer-transition flex flex-col bg-[var(--bg-sheet)]/94 backdrop-blur-2xl overflow-hidden",
+          // Frosted Porcelain / Obsidian Slide-Over (380-420px): floating below xl, docked with crisp ambient left shadow >= xl
           "fixed bottom-2.5 right-2.5 top-2.5 z-40 rounded-card xl:static xl:z-auto xl:top-auto xl:bottom-auto xl:right-auto xl:h-full xl:rounded-none xl:border-l xl:border-[var(--hairline)]",
           drawerOpen
-            ? "w-[min(420px,calc(100vw-20px))] xl:w-[clamp(380px,30vw,420px)] translate-x-0 opacity-100 shadow-[var(--shadow-modal)] xl:shadow-[-12px_0_32px_-16px_rgba(17,19,24,0.08)]"
+            ? "w-[min(420px,calc(100vw-20px))] xl:w-[clamp(380px,30vw,420px)] translate-x-0 opacity-100 shadow-[var(--shadow-modal)] xl:shadow-[var(--shadow-floating)]"
             : "w-0 translate-x-[calc(100%+16px)] xl:translate-x-0 opacity-0 pointer-events-none xl:border-l-0",
         ].join(" ")}
       >
@@ -434,7 +480,7 @@ export function WorkbenchDrawerSlot() {
             >
               {selectedObject?.title && activeTab === "current"
                 ? selectedObject.title
-                : "业务核对面板"}
+                : defaultDrawerHeading}
             </h2>
             {selectedObject?.warehouse && activeTab === "current" && (
               <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[10.5px] font-medium text-[var(--ink-secondary)]">
@@ -449,7 +495,11 @@ export function WorkbenchDrawerSlot() {
             <button
               type="button"
               onClick={() => closeDrawer({ restoreFocus: true })}
-              aria-label="收起业务面板"
+              aria-label={tx({
+                "zh-CN": "收起业务面板",
+                "zh-HK": "收合業務面板",
+                en: "Close inspector drawer",
+              })}
               data-testid="workbench-drawer-close"
               className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors duration-[150ms] cursor-pointer"
             >
@@ -462,10 +512,14 @@ export function WorkbenchDrawerSlot() {
         <div className="shrink-0 border-b border-[var(--hairline)] px-4 py-2.5">
           <div
             role="tablist"
-            aria-label="业务面板视图"
+            aria-label={tx({
+              "zh-CN": "业务面板视图",
+              "zh-HK": "業務面板檢視",
+              en: "Inspector drawer views",
+            })}
             className="grid grid-cols-3 gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
           >
-            {DRAWER_TABS.map((tab) => {
+            {drawerTabs.map((tab) => {
               const active = activeTab === tab.id;
               return (
                 <button
@@ -478,7 +532,7 @@ export function WorkbenchDrawerSlot() {
                   className={[
                     "rounded-full px-2.5 py-1.5 text-[12px] transition-all duration-[160ms] cursor-pointer",
                     active
-                      ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                      ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] font-semibold shadow-[var(--shadow-subtle)]"
                       : "text-[var(--ink-muted)] font-medium hover:text-[var(--ink-primary)]",
                   ].join(" ")}
                 >
@@ -502,10 +556,22 @@ export function WorkbenchDrawerSlot() {
                       className="h-4 w-4 text-[var(--accent)]"
                       strokeWidth={1.85}
                     />
-                    <span>按需核对业务单据与证据</span>
+                    <span>
+                      {tx({
+                        "zh-CN": "按需核对业务单据与证据",
+                        "zh-HK": "按需核對業務單據與憑證",
+                        en: "Inspect Records & Evidence On Demand",
+                      })}
+                    </span>
                   </div>
                   <p className="text-[12.5px] text-[var(--ink-muted)] leading-relaxed">
-                    在对话卡片、审批队列、进件页或业务模块中点击任意单据，即可在此展开差异比对、摘要核验、正式确认动作或工作简报，同时保留当前对话上下文。
+                    {tx({
+                      "zh-CN":
+                        "在对话卡片、审批队列、进件页或业务模块中点击任意单据，即可在此展开差异比对、摘要核验、正式确认动作或工作简报，同时保留当前对话上下文。",
+                      "zh-HK":
+                        "在對話卡片、審批佇列、進件頁或業務模組中點擊任意單據，即可在此展開差異比對、摘要核驗、正式確認操作或工作簡報，同時保留目前對話上下文。",
+                      en: "Click any record from chat, queues, intake, or workbench modules to inspect diffs, verify digests, take formal actions, or view your 7-day brief without losing context.",
+                    })}
                   </p>
                   <Button
                     size="sm"
@@ -515,7 +581,11 @@ export function WorkbenchDrawerSlot() {
                       openDrawer({
                         kind: "brief",
                         id: "brief-7d",
-                        title: "工作简报（未来 7 天）",
+                        title: tx({
+                          "zh-CN": "工作简报（未来 7 天）",
+                          "zh-HK": "工作簡報（未來 7 天）",
+                          en: "Work Brief (Next 7 Days)",
+                        }),
                       })
                     }
                   >
@@ -523,7 +593,13 @@ export function WorkbenchDrawerSlot() {
                       className="h-3.5 w-3.5 text-[var(--accent)]"
                       strokeWidth={1.85}
                     />
-                    <span>查看工作简报</span>
+                    <span>
+                      {tx({
+                        "zh-CN": "查看工作简报",
+                        "zh-HK": "檢視工作簡報",
+                        en: "View Work Brief",
+                      })}
+                    </span>
                   </Button>
                 </div>
               ) : selectedObject.kind === "proposal" ? (
@@ -540,7 +616,11 @@ export function WorkbenchDrawerSlot() {
                 <div className="space-y-3" data-testid="drawer-intake-inspector">
                   {intakeLoading && (
                     <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-                      正在读取进件证据…
+                      {tx({
+                        "zh-CN": "正在读取进件证据…",
+                        "zh-HK": "正在讀取進件憑證…",
+                        en: "Loading intake evidence…",
+                      })}
                     </div>
                   )}
                   {intakeError && <AccessNoticeCard error={intakeError} />}
@@ -548,16 +628,31 @@ export function WorkbenchDrawerSlot() {
                     <>
                       <BriefProgressChain
                         phase="done"
-                        summaryLabel="进件证据核验明细"
+                        summaryLabel={tx({
+                          "zh-CN": "进件证据核验明细",
+                          "zh-HK": "進件憑證核驗明細",
+                          en: "Intake Evidence Check",
+                        })}
                         steps={[
                           {
                             id: "intake-scope",
-                            label: `站点与读取权限已校验（${intakeDetail.warehouse}）`,
+                            label: tx(
+                              {
+                                "zh-CN": "仓库与读取权限已校验（{wh}）",
+                                "zh-HK": "倉庫與讀取權限已校驗（{wh}）",
+                                en: "Warehouse & read scope verified ({wh})",
+                              },
+                              { wh: intakeDetail.warehouse },
+                            ),
                             status: "done",
                           },
                           {
                             id: "intake-sha",
-                            label: "已核对内容寻址证据摘要",
+                            label: tx({
+                              "zh-CN": "已核对内容寻址证据摘要",
+                              "zh-HK": "已核對內容定址憑證摘要",
+                              en: "Content-addressed artifact digest matched",
+                            }),
                             status: "done",
                             meta: formatShortDigest(
                               intakeDetail.evidence.artifact_sha256,
@@ -586,15 +681,35 @@ export function WorkbenchDrawerSlot() {
 
                       <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12.5px]">
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">进件类型</dt>
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "进件类型",
+                              "zh-HK": "進件類型",
+                              en: "Intake Type",
+                            })}
+                          </dt>
                           <dd className="text-[var(--ink-primary)]">
                             {intakeDetail.evidence.kind === "structured"
-                              ? "结构化进件"
-                              : "图片 OCR 进件"}
+                              ? tx({
+                                  "zh-CN": "结构化进件",
+                                  "zh-HK": "結構化進件",
+                                  en: "Structured PO",
+                                })
+                              : tx({
+                                  "zh-CN": "图片 OCR 进件",
+                                  "zh-HK": "圖片 OCR 進件",
+                                  en: "Image OCR",
+                                })}
                           </dd>
                         </div>
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">证据摘要</dt>
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "证据摘要",
+                              "zh-HK": "憑證摘要",
+                              en: "Artifact Digest",
+                            })}
+                          </dt>
                           <dd className="font-mono-code text-[var(--ink-primary)]">
                             {formatShortDigest(
                               intakeDetail.evidence.artifact_sha256,
@@ -610,16 +725,30 @@ export function WorkbenchDrawerSlot() {
                               </dd>
                             </div>
                             <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                              <dt className="text-[var(--ink-muted)]">买方</dt>
+                              <dt className="text-[var(--ink-muted)]">
+                                {tx({
+                                  "zh-CN": "买方",
+                                  "zh-HK": "買方",
+                                  en: "Buyer",
+                                })}
+                              </dt>
                               <dd className="font-mono-code text-[var(--ink-primary)]">
                                 {intakeDetail.evidence.order.buyer}
                               </dd>
                             </div>
                             <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                              <dt className="text-[var(--ink-muted)]">总额</dt>
+                              <dt className="text-[var(--ink-muted)]">
+                                {tx({
+                                  "zh-CN": "总额",
+                                  "zh-HK": "總額",
+                                  en: "Total",
+                                })}
+                              </dt>
                               <dd className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
-                                {intakeDetail.evidence.order.currency}{" "}
-                                {intakeDetail.evidence.order.total}
+                                {formatCurrency(
+                                  intakeDetail.evidence.order.total,
+                                  intakeDetail.evidence.order.currency,
+                                )}
                               </dd>
                             </div>
                           </>
@@ -628,9 +757,15 @@ export function WorkbenchDrawerSlot() {
 
                       <Link
                         href={`/orders/new?intake=${encodeURIComponent(selectedObject.id)}`}
-                        className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-all duration-[160ms]"
+                        className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-4 text-[13px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] transition-all duration-[160ms]"
                       >
-                        <span>在订单进件页查看完整证据</span>
+                        <span>
+                          {tx({
+                            "zh-CN": "在订单进件页查看完整证据",
+                            "zh-HK": "在訂單進件頁檢視完整憑證",
+                            en: "View Full Evidence in Order Intake",
+                          })}
+                        </span>
                         <ArrowUpRight className="h-3.5 w-3.5" />
                       </Link>
                     </>
@@ -643,7 +778,11 @@ export function WorkbenchDrawerSlot() {
                 >
                   {shipmentLoading && (
                     <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-                      正在实时查询运单状态…
+                      {tx({
+                        "zh-CN": "正在实时查询运单状态…",
+                        "zh-HK": "正在即時查詢運單狀態…",
+                        en: "Fetching live shipment status…",
+                      })}
                     </div>
                   )}
                   {shipmentError && <AccessNoticeCard error={shipmentError} />}
@@ -651,16 +790,31 @@ export function WorkbenchDrawerSlot() {
                     <>
                       <BriefProgressChain
                         phase="done"
-                        summaryLabel="运单实时核验明细"
+                        summaryLabel={tx({
+                          "zh-CN": "运单实时核验明细",
+                          "zh-HK": "運單即時核驗明細",
+                          en: "Live Shipment Check",
+                        })}
                         steps={[
                           {
                             id: "ship-scope",
-                            label: `仓库范围鉴权通过（${shipmentData.view.warehouse}）`,
+                            label: tx(
+                              {
+                                "zh-CN": "仓库范围鉴权通过（{wh}）",
+                                "zh-HK": "倉庫範圍鑑權通過（{wh}）",
+                                en: "Warehouse scope authorized ({wh})",
+                              },
+                              { wh: shipmentData.view.warehouse },
+                            ),
                             status: "done",
                           },
                           {
                             id: "ship-read",
-                            label: "已拉取最新交期与版本锁",
+                            label: tx({
+                              "zh-CN": "已拉取最新交期与版本锁",
+                              "zh-HK": "已拉取最新交期與版本鎖",
+                              en: "Fetched live delivery date & version lock",
+                            }),
                             status: "done",
                             meta: `v${shipmentData.view.version}`,
                           },
@@ -683,19 +837,37 @@ export function WorkbenchDrawerSlot() {
 
                       <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12.5px]">
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">仓库站点</dt>
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "仓库",
+                              "zh-HK": "倉庫",
+                              en: "Warehouse",
+                            })}
+                          </dt>
                           <dd className="font-mono-code text-[var(--ink-primary)]">
                             {shipmentData.view.warehouse}
                           </dd>
                         </div>
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">当前交期</dt>
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "当前交期",
+                              "zh-HK": "目前交期",
+                              en: "Delivery Date",
+                            })}
+                          </dt>
                           <dd className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
                             {shipmentData.view.delivery_date}
                           </dd>
                         </div>
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">版本号</dt>
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "版本号",
+                              "zh-HK": "版本號",
+                              en: "Version",
+                            })}
+                          </dt>
                           <dd className="font-mono-code tabular-nums text-[var(--ink-primary)]">
                             v{shipmentData.view.version}
                           </dd>
@@ -709,7 +881,11 @@ export function WorkbenchDrawerSlot() {
                             className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5 space-y-2.5"
                           >
                             <div className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-                              快捷发起改期提案
+                              {tx({
+                                "zh-CN": "快捷发起改期提案",
+                                "zh-HK": "快捷發起改期提案",
+                                en: "Quick Reschedule Proposal",
+                              })}
                             </div>
                             <input
                               type="date"
@@ -718,7 +894,7 @@ export function WorkbenchDrawerSlot() {
                               onChange={(e) =>
                                 setRescheduleDate(e.target.value)
                               }
-                              className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-3 font-mono-code text-[12.5px] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none"
+                              className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none"
                             />
                             <Button
                               type="submit"
@@ -733,7 +909,13 @@ export function WorkbenchDrawerSlot() {
                               className="w-full"
                             >
                               <CalendarClock className="h-3.5 w-3.5" />
-                              <span>提交改期提案</span>
+                              <span>
+                                {tx({
+                                  "zh-CN": "提交改期提案",
+                                  "zh-HK": "提交改期提案",
+                                  en: "Submit Reschedule Proposal",
+                                })}
+                              </span>
                             </Button>
                           </form>
                         )}
@@ -747,8 +929,20 @@ export function WorkbenchDrawerSlot() {
                           <div className="flex items-center gap-1.5 font-medium text-[var(--status-emerald)]">
                             <CheckCircle2 className="h-4 w-4" />
                             <span>
-                              已生成提案{" "}
-                              {formatShortDigest(rescheduleProposal.id, 6, 4)}
+                              {tx(
+                                {
+                                  "zh-CN": "已生成提案 {id}",
+                                  "zh-HK": "已產生提案 {id}",
+                                  en: "Created proposal {id}",
+                                },
+                                {
+                                  id: formatShortDigest(
+                                    rescheduleProposal.id,
+                                    6,
+                                    4,
+                                  ),
+                                },
+                              )}
                             </span>
                           </div>
                           <Button
@@ -761,14 +955,31 @@ export function WorkbenchDrawerSlot() {
                                   kind: "proposal",
                                   id: rescheduleProposal.id,
                                   warehouse: rescheduleProposal.warehouse,
-                                  title: `运单改期 · ${formatShortDigest(rescheduleProposal.id, 6, 4)}`,
+                                  title: tx(
+                                    {
+                                      "zh-CN": "运单改期 · {id}",
+                                      "zh-HK": "運單改期 · {id}",
+                                      en: "Reschedule · {id}",
+                                    },
+                                    {
+                                      id: formatShortDigest(
+                                        rescheduleProposal.id,
+                                        6,
+                                        4,
+                                      ),
+                                    },
+                                  ),
                                 },
                                 { tab: "current" },
                               )
                             }
                             className="w-full"
                           >
-                            切换查看提案详情
+                            {tx({
+                              "zh-CN": "切换查看提案详情",
+                              "zh-HK": "切換檢視提案詳情",
+                              en: "Inspect Proposal",
+                            })}
                           </Button>
                         </div>
                       )}
@@ -782,7 +993,11 @@ export function WorkbenchDrawerSlot() {
                 >
                   {invoiceLoading && (
                     <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-                      正在实时核验发票数据…
+                      {tx({
+                        "zh-CN": "正在实时核验发票数据…",
+                        "zh-HK": "正在即時核驗發票資料…",
+                        en: "Fetching live invoice data…",
+                      })}
                     </div>
                   )}
                   {invoiceError && <AccessNoticeCard error={invoiceError} />}
@@ -790,18 +1005,33 @@ export function WorkbenchDrawerSlot() {
                     <>
                       <BriefProgressChain
                         phase="done"
-                        summaryLabel="财务发票核验明细"
+                        summaryLabel={tx({
+                          "zh-CN": "财务发票核验明细",
+                          "zh-HK": "財務發票核驗明細",
+                          en: "Invoice Verification",
+                        })}
                         steps={[
                           {
                             id: "inv-scope",
-                            label: `财务读取范围已校验（${invoiceData.view.warehouse}）`,
+                            label: tx(
+                              {
+                                "zh-CN": "财务读取范围已校验（{wh}）",
+                                "zh-HK": "財務讀取範圍已校驗（{wh}）",
+                                en: "Finance read scope verified ({wh})",
+                              },
+                              { wh: invoiceData.view.warehouse },
+                            ),
                             status: "done",
                           },
                           {
                             id: "inv-read",
-                            label: "已返回实时结算状态",
+                            label: tx({
+                              "zh-CN": "已返回实时结算状态",
+                              "zh-HK": "已回傳即時結算狀態",
+                              en: "Returned live settlement status",
+                            }),
                             status: "done",
-                            meta: invoiceData.view.state,
+                            meta: localizeStatus(invoiceData.view.state),
                           },
                         ]}
                       />
@@ -818,22 +1048,42 @@ export function WorkbenchDrawerSlot() {
                       </div>
                       <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12.5px]">
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">仓库站点</dt>
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "仓库",
+                              "zh-HK": "倉庫",
+                              en: "Warehouse",
+                            })}
+                          </dt>
                           <dd className="font-mono-code text-[var(--ink-primary)]">
                             {invoiceData.view.warehouse}
                           </dd>
                         </div>
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">发票金额</dt>
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "发票金额",
+                              "zh-HK": "發票金額",
+                              en: "Amount",
+                            })}
+                          </dt>
                           <dd className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
-                            {invoiceData.view.currency}{" "}
-                            {invoiceData.view.amount}
+                            {formatCurrency(
+                              invoiceData.view.amount,
+                              invoiceData.view.currency,
+                            )}
                           </dd>
                         </div>
                         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-                          <dt className="text-[var(--ink-muted)]">结算状态</dt>
-                          <dd className="font-mono-code text-[var(--ink-primary)]">
-                            {invoiceData.view.state}
+                          <dt className="text-[var(--ink-muted)]">
+                            {tx({
+                              "zh-CN": "结算状态",
+                              "zh-HK": "結算狀態",
+                              en: "Status",
+                            })}
+                          </dt>
+                          <dd className="font-medium text-[var(--ink-primary)]">
+                            {localizeStatus(invoiceData.view.state)}
                           </dd>
                         </div>
                       </dl>
@@ -847,7 +1097,11 @@ export function WorkbenchDrawerSlot() {
                 >
                   {summaryLoading && (
                     <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-                      正在实时鉴权拉取站点汇总…
+                      {tx({
+                        "zh-CN": "正在实时鉴权拉取仓库汇总…",
+                        "zh-HK": "正在即時鑑權拉取倉庫摘要…",
+                        en: "Authorizing and fetching warehouse summary…",
+                      })}
                     </div>
                   )}
                   {summaryError && <AccessNoticeCard error={summaryError} />}
@@ -855,16 +1109,42 @@ export function WorkbenchDrawerSlot() {
                     <>
                       <BriefProgressChain
                         phase="done"
-                        summaryLabel="经营汇总实时鉴权明细"
+                        summaryLabel={tx({
+                          "zh-CN": "经营汇总实时鉴权明细",
+                          "zh-HK": "營運摘要即時鑑權明細",
+                          en: "Live Authorized Summary",
+                        })}
                         steps={[
                           {
                             id: "sum-scope",
-                            label: `租户与站点只读范围核验（${actor?.tenant ?? "当前租户"} · ${summaryData.view.warehouse}）`,
+                            label: tx(
+                              {
+                                "zh-CN":
+                                  "租户与仓库只读范围核验（{tenant} · {wh}）",
+                                "zh-HK":
+                                  "租戶與倉庫唯讀範圍核驗（{tenant} · {wh}）",
+                                en: "Tenant & warehouse read-only scope verified ({tenant} · {wh})",
+                              },
+                              {
+                                tenant:
+                                  actor?.tenant ??
+                                  tx({
+                                    "zh-CN": "当前租户",
+                                    "zh-HK": "目前租戶",
+                                    en: "Current tenant",
+                                  }),
+                                wh: summaryData.view.warehouse,
+                              },
+                            ),
                             status: "done",
                           },
                           {
                             id: "sum-asof",
-                            label: "已同步实时在途统计基准",
+                            label: tx({
+                              "zh-CN": "已同步实时在途统计基准",
+                              "zh-HK": "已同步即時在途統計基準",
+                              en: "Synced live open-shipment snapshot",
+                            }),
                             status: "done",
                             meta: summaryData.view.as_of,
                           },
@@ -882,13 +1162,24 @@ export function WorkbenchDrawerSlot() {
                       </div>
                       <div className="rounded-tile bg-[var(--bg-surface-tint)] p-4.5">
                         <div className="text-[12px] text-[var(--ink-muted)]">
-                          在途未结运单
+                          {tx({
+                            "zh-CN": "在途未结运单",
+                            "zh-HK": "在途未結運單",
+                            en: "Open Shipments",
+                          })}
                         </div>
-                        <div className="mt-1 font-mono-code tabular-nums text-[30px] font-semibold text-[var(--accent)]">
+                        <div className="mt-1 tabular-nums text-[30px] font-semibold tracking-[-0.02em] text-[var(--accent)]">
                           {summaryData.view.open_shipments}
                         </div>
-                        <div className="mt-2 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
-                          统计基准日：{summaryData.view.as_of}
+                        <div className="mt-2 text-[11px] text-[var(--ink-muted)]">
+                          {tx({
+                            "zh-CN": "统计基准日：",
+                            "zh-HK": "統計基準日：",
+                            en: "As of: ",
+                          })}
+                          <span className="font-mono-code tabular-nums">
+                            {summaryData.view.as_of}
+                          </span>
                         </div>
                       </div>
                       <Button
@@ -899,7 +1190,13 @@ export function WorkbenchDrawerSlot() {
                         className="w-full"
                       >
                         <RefreshCw className="h-3.5 w-3.5" />
-                        <span>重新鉴权刷新</span>
+                        <span>
+                          {tx({
+                            "zh-CN": "重新鉴权刷新",
+                            "zh-HK": "重新鑑權重新整理",
+                            en: "Re-Verify & Refresh",
+                          })}
+                        </span>
                       </Button>
                     </>
                   )}
@@ -908,7 +1205,11 @@ export function WorkbenchDrawerSlot() {
                 <div className="space-y-3" data-testid="drawer-brief-inspector">
                   {briefLoading && (
                     <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-                      正在汇总工作简报…
+                      {tx({
+                        "zh-CN": "正在汇总工作简报…",
+                        "zh-HK": "正在彙整工作簡報…",
+                        en: "Compiling work brief…",
+                      })}
                     </div>
                   )}
                   {briefError && <AccessNoticeCard error={briefError} />}
@@ -916,18 +1217,30 @@ export function WorkbenchDrawerSlot() {
                     <>
                       <BriefProgressChain
                         phase="done"
-                        summaryLabel="简报快照明细"
+                        summaryLabel={tx({
+                          "zh-CN": "简报快照明细",
+                          "zh-HK": "簡報快照明細",
+                          en: "Brief Snapshot",
+                        })}
                         steps={[
                           {
                             id: "brief-auth",
-                            label: "已按当前账号授权站点汇总待办与会议",
+                            label: tx({
+                              "zh-CN": "已按当前账号授权仓库汇总待办与会议",
+                              "zh-HK": "已按目前帳號授權倉庫彙整待辦與會議",
+                              en: "Aggregated tasks & meetings for your authorized warehouses",
+                            }),
                             status: "done",
                           },
                           {
                             id: "brief-time",
-                            label: "快照生成时间",
+                            label: tx({
+                              "zh-CN": "快照生成时间",
+                              "zh-HK": "快照產生時間",
+                              en: "Snapshot timestamp",
+                            }),
                             status: "done",
-                            meta: formatUnixTime(brief.as_of),
+                            meta: formatDateTime(brief.as_of),
                           },
                         ]}
                       />
@@ -935,18 +1248,26 @@ export function WorkbenchDrawerSlot() {
                       <div className="grid grid-cols-2 gap-2.5">
                         <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
                           <div className="text-[12px] text-[var(--ink-muted)]">
-                            待我审批
+                            {tx({
+                              "zh-CN": "待我审批",
+                              "zh-HK": "待我審批",
+                              en: "Pending Approvals",
+                            })}
                           </div>
-                          <div className="mt-1 font-mono-code tabular-nums text-[24px] font-semibold text-[var(--ink-primary)]">
+                          <div className="mt-1 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
                             {brief.pending_approvals}
                             {brief.pending_approvals_capped ? "+" : ""}
                           </div>
                         </div>
                         <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
                           <div className="text-[12px] text-[var(--ink-muted)]">
-                            未来 7 天会议
+                            {tx({
+                              "zh-CN": "未来 7 天会议",
+                              "zh-HK": "未來 7 天會議",
+                              en: "Meetings (7d)",
+                            })}
                           </div>
-                          <div className="mt-1 font-mono-code tabular-nums text-[24px] font-semibold text-[var(--ink-primary)]">
+                          <div className="mt-1 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
                             {brief.meetings}
                           </div>
                         </div>
@@ -954,13 +1275,21 @@ export function WorkbenchDrawerSlot() {
 
                       <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
                         <div className="px-3.5 py-2.5 text-[12px] font-semibold text-[var(--ink-secondary)]">
-                          已提交单据状态分布
+                          {tx({
+                            "zh-CN": "已提交单据状态分布",
+                            "zh-HK": "已提交單據狀態分佈",
+                            en: "Submitted Proposal Breakdown",
+                          })}
                         </div>
                         <div className="divide-y divide-[var(--hairline-subtle)]">
                           {Object.entries(brief.submitted_current_states)
                             .length === 0 ? (
                             <div className="px-3.5 py-5 text-center text-[12px] text-[var(--ink-muted)]">
-                              暂无已提交记录
+                              {tx({
+                                "zh-CN": "暂无已提交记录",
+                                "zh-HK": "暫無已提交紀錄",
+                                en: "No submitted proposals",
+                              })}
                             </div>
                           ) : (
                             Object.entries(brief.submitted_current_states).map(
@@ -970,7 +1299,7 @@ export function WorkbenchDrawerSlot() {
                                   className="flex items-center justify-between px-3.5 py-2.5 text-[12px]"
                                 >
                                   <StatusBadge status={stateKey} compact />
-                                  <span className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
+                                  <span className="tabular-nums font-semibold text-[var(--ink-primary)]">
                                     {count}
                                   </span>
                                 </div>
@@ -980,14 +1309,27 @@ export function WorkbenchDrawerSlot() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
-                        <span>快照：{formatUnixTime(brief.as_of)}</span>
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--ink-muted)]">
+                        <span>
+                          {tx({
+                            "zh-CN": "快照：",
+                            "zh-HK": "快照：",
+                            en: "Snapshot: ",
+                          })}
+                          <span className="font-mono-code tabular-nums">
+                            {formatDateTime(brief.as_of)}
+                          </span>
+                        </span>
                         <button
                           type="button"
                           onClick={() => void loadSelectedObject()}
                           className="text-[var(--accent)] hover:underline cursor-pointer"
                         >
-                          刷新简报
+                          {tx({
+                            "zh-CN": "刷新简报",
+                            "zh-HK": "重新整理簡報",
+                            en: "Refresh Brief",
+                          })}
                         </button>
                       </div>
                     </>
@@ -995,8 +1337,9 @@ export function WorkbenchDrawerSlot() {
                 </div>
               ) : (
                 <div className="rounded-tile bg-[var(--bg-surface-tint)] p-4 text-[12.5px] text-[var(--ink-secondary)]">
-                  <div className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                    {selectedObject.kind} · {selectedObject.id}
+                  <div className="text-[11px] text-[var(--ink-muted)]">
+                    {selectedObject.kind} ·{" "}
+                    <span className="font-mono-code">{selectedObject.id}</span>
                   </div>
                   <div className="mt-1 font-semibold text-[var(--ink-primary)]">
                     {selectedObject.title || selectedObject.id}
@@ -1010,7 +1353,11 @@ export function WorkbenchDrawerSlot() {
             <div className="space-y-2.5">
               {tasksLoading && (
                 <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-                  正在加载队列…
+                  {tx({
+                    "zh-CN": "正在加载队列…",
+                    "zh-HK": "正在載入佇列…",
+                    en: "Loading queue…",
+                  })}
                 </div>
               )}
               {tasksError && <AccessNoticeCard error={tasksError} />}
@@ -1019,8 +1366,16 @@ export function WorkbenchDrawerSlot() {
                   <Inbox className="h-5 w-5 opacity-60" strokeWidth={1.6} />
                   <span>
                     {activeTab === "assigned"
-                      ? "当前没有待您审批的单据"
-                      : "暂无已提交的单据"}
+                      ? tx({
+                          "zh-CN": "当前没有待您审批的单据",
+                          "zh-HK": "目前沒有待您審批的單據",
+                          en: "No proposals currently awaiting your approval",
+                        })
+                      : tx({
+                          "zh-CN": "暂无已提交的单据",
+                          "zh-HK": "暫無已提交的單據",
+                          en: "No submitted proposals yet",
+                        })}
                   </span>
                 </div>
               )}
@@ -1028,6 +1383,7 @@ export function WorkbenchDrawerSlot() {
                 <div className="space-y-2">
                   {tasks.map((item) => {
                     const shortId = formatShortDigest(item.id, 4, 4);
+                    const actionLabel = localizeAction(item.action);
                     return (
                       <button
                         key={item.id}
@@ -1038,7 +1394,7 @@ export function WorkbenchDrawerSlot() {
                               kind: "proposal",
                               id: item.id,
                               warehouse: item.warehouse,
-                              title: `${formatProposalAction(item.action)} · ${shortId}`,
+                              title: `${actionLabel} · ${shortId}`,
                             },
                             { tab: "current" },
                           )
@@ -1047,8 +1403,7 @@ export function WorkbenchDrawerSlot() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[12.5px] font-semibold text-[var(--ink-primary)] truncate">
-                            {formatProposalAction(item.action)} ·{" "}
-                            {item.warehouse}
+                            {actionLabel} · {item.warehouse}
                           </span>
                           <StatusBadge
                             status={
@@ -1068,7 +1423,7 @@ export function WorkbenchDrawerSlot() {
                             {shortId}
                           </span>
                           <span className="font-mono-code tabular-nums">
-                            {formatUnixTime(item.due)}
+                            {formatDateTime(item.due)}
                           </span>
                         </div>
                       </button>
@@ -1081,7 +1436,13 @@ export function WorkbenchDrawerSlot() {
                   href="/work"
                   className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--accent)] hover:underline"
                 >
-                  <span>前往完整工作台列表</span>
+                  <span>
+                    {tx({
+                      "zh-CN": "前往完整工作台列表",
+                      "zh-HK": "前往完整工作台清單",
+                      en: "Open Full Workbench",
+                    })}
+                  </span>
                   <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.85} />
                 </Link>
               </div>

@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/types";
+
 export interface IcsEventInput {
   id: string;
   tenant: string;
@@ -70,21 +72,67 @@ function foldIcsLine(line: string): string {
   return out.join("\r\n");
 }
 
+interface IcsLocaleStrings {
+  defaultCalName: string;
+  defaultDescription: string;
+  organizerLabel: string;
+  zoomLinkLabel: string;
+  passcodeLabel: string;
+  defaultLocation: string;
+  prodLang: string;
+}
+
+function getIcsLocaleStrings(locale: Locale): IcsLocaleStrings {
+  if (locale === "en") {
+    return {
+      defaultCalName: "AIOS Enterprise Calendar",
+      defaultDescription: "AIOS Internal Enterprise Calendar",
+      organizerLabel: "Organizer",
+      zoomLinkLabel: "Zoom Join URL",
+      passcodeLabel: "Passcode",
+      defaultLocation: "AIOS Internal Calendar",
+      prodLang: "EN",
+    };
+  }
+  if (locale === "zh-HK") {
+    return {
+      defaultCalName: "AIOS 企業日程",
+      defaultDescription: "AIOS 站內企業日程",
+      organizerLabel: "組織者",
+      zoomLinkLabel: "Zoom 會議連結",
+      passcodeLabel: "入會密碼",
+      defaultLocation: "AIOS 站內協作日曆",
+      prodLang: "ZH-HK",
+    };
+  }
+  return {
+    defaultCalName: "AIOS 企业日程",
+    defaultDescription: "AIOS 站内企业日程",
+    organizerLabel: "组织者",
+    zoomLinkLabel: "Zoom 会议链接",
+    passcodeLabel: "入会密码",
+    defaultLocation: "AIOS 站内协作日历",
+    prodLang: "ZH",
+  };
+}
+
 /**
  * Pure RFC 5545 + RFC 7986 iCalendar (.ics) generator.
  * Compatible with Apple iCloud Calendar, Google Calendar, and Microsoft Outlook.
  */
 export function buildCalendarIcs(
   events: readonly IcsEventInput[],
-  options?: { calendarName?: string },
+  options?: { calendarName?: string; locale?: Locale },
 ): string {
-  const calName = options?.calendarName || "AIOS 企业日程";
+  const locale = options?.locale ?? DEFAULT_LOCALE;
+  const strings = getIcsLocaleStrings(locale);
+  const calName = options?.calendarName || strings.defaultCalName;
   const dtStamp = formatIcsUtc(Math.floor(Date.now() / 1000));
 
   const rawLines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//SME AIOS//Enterprise Workbench Calendar//ZH",
+    `PRODID:-//SME AIOS//Enterprise Workbench Calendar//${strings.prodLang}`,
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     `X-WR-CALNAME:${escapeIcsText(calName)}`,
@@ -101,13 +149,13 @@ export function buildCalendarIcs(
         : null;
 
     const descParts: string[] = [
-      ev.description?.trim() || "AIOS 站内企业日程",
-      `组织者: ${ev.organizer}`,
+      ev.description?.trim() || strings.defaultDescription,
+      `${strings.organizerLabel}: ${ev.organizer}`,
     ];
     if (safeJoinUrl) {
-      descParts.push(`Zoom 会议链接: ${safeJoinUrl}`);
+      descParts.push(`${strings.zoomLinkLabel}: ${safeJoinUrl}`);
       if (safePasscode) {
-        descParts.push(`入会密码: ${safePasscode}`);
+        descParts.push(`${strings.passcodeLabel}: ${safePasscode}`);
       }
     }
 
@@ -129,7 +177,7 @@ export function buildCalendarIcs(
         `CONFERENCE;VALUE=URI;FEATURE=AUDIO,VIDEO;LABEL="Join Zoom Meeting":${safeJoinUrl}`,
       );
     } else {
-      rawLines.push("LOCATION:AIOS 站内协作日历");
+      rawLines.push(`LOCATION:${escapeIcsText(strings.defaultLocation)}`);
     }
 
     if (ev.attendees && ev.attendees.length > 0) {
@@ -139,7 +187,9 @@ export function buildCalendarIcs(
           /[\r\n\s]/g,
           "",
         );
-        rawLines.push(`ATTENDEE;CN="${cn}";ROLE=REQ-PARTICIPANT:mailto:${mail}`);
+        rawLines.push(
+          `ATTENDEE;CN="${cn}";ROLE=REQ-PARTICIPANT:mailto:${mail}`,
+        );
       }
     }
 

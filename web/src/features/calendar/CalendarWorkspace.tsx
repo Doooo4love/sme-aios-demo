@@ -18,7 +18,8 @@ import {
   parseNaturalLanguageZoomBooking,
   type ApiError,
 } from "@/lib/api-client";
-import { formatClockRange } from "@/lib/format";
+import { formatClockRange, formatLocalIsoDate } from "@/lib/format";
+import { useLocale, type Locale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
@@ -42,35 +43,45 @@ import type {
 
 type CalendarViewMode = "day" | "week" | "month";
 
-const WEEKDAY_NAMES = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const WEEKDAY_NAMES_BY_LOCALE: Readonly<Record<Locale, readonly string[]>> = {
+  "zh-CN": ["周日", "周一", "周二", "周三", "周四", "周五", "周六"],
+  "zh-HK": ["週日", "週一", "週二", "週三", "週四", "週五", "週六"],
+  en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+};
 
-const NL_ZOOM_EXAMPLES = [
-  "明天下午3点和manager用Zoom开HK01订单评审会",
-  "后天上午10点和finance开INV-100对账会",
-] as const;
+const NL_ZOOM_EXAMPLES_BY_LOCALE: Readonly<Record<Locale, readonly string[]>> = {
+  "zh-CN": [
+    "明天下午 3 点和 manager 用 Zoom 开 HK01 订单评审会",
+    "后天上午 10 点和 finance 开 INV-100 对账会",
+  ],
+  "zh-HK": [
+    "明天下午 3 點和 manager 用 Zoom 開 HK01 訂單評審會",
+    "後天上午 10 點和 finance 開 INV-100 對帳會",
+  ],
+  en: [
+    "Book a Zoom meeting with manager tomorrow at 3pm for HK01 order review",
+    "Schedule a Zoom call with finance Friday at 10am for INV-100 review",
+  ],
+};
 
 function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
 }
 
-function formatDayKey(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 function computeWindow(
   anchor: Date,
   mode: CalendarViewMode,
+  locale: Locale,
 ): { start: Date; end: Date; label: string } {
   const dayStart = startOfLocalDay(anchor);
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const weekdays = WEEKDAY_NAMES_BY_LOCALE[locale];
 
   if (mode === "day") {
     const end = new Date(dayStart.getTime() + 86_400_000);
     return {
       start: dayStart,
       end,
-      label: `${formatDayKey(dayStart)} ${WEEKDAY_NAMES[dayStart.getDay()]}`,
+      label: `${formatLocalIsoDate(dayStart)} ${weekdays[dayStart.getDay()]}`,
     };
   }
 
@@ -80,7 +91,7 @@ function computeWindow(
     return {
       start: dayStart,
       end,
-      label: `${formatDayKey(dayStart)} – ${formatDayKey(lastDay)}`,
+      label: `${formatLocalIsoDate(dayStart)} – ${formatLocalIsoDate(lastDay)}`,
     };
   }
 
@@ -100,10 +111,17 @@ function computeWindow(
     0,
     0,
   );
+  const monthLabel =
+    locale === "en"
+      ? new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          year: "numeric",
+        }).format(monthStart)
+      : `${monthStart.getFullYear()} 年 ${monthStart.getMonth() + 1} 月`;
   return {
     start: monthStart,
     end: monthEnd,
-    label: `${monthStart.getFullYear()} 年 ${pad(monthStart.getMonth() + 1)} 月`,
+    label: monthLabel,
   };
 }
 
@@ -137,6 +155,7 @@ export function CalendarWorkspace() {
     clearSelectedObject,
     setCustomDrawerContent,
   } = useWorkbench();
+  const { locale, t, tp, tx, localizePersona, localizeError } = useLocale();
 
   const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
   const [anchorDate, setAnchorDate] = useState<Date>(() =>
@@ -160,8 +179,8 @@ export function CalendarWorkspace() {
   const nlInputRef = useRef<HTMLInputElement | null>(null);
 
   const range = useMemo(
-    () => computeWindow(anchorDate, viewMode),
-    [anchorDate, viewMode],
+    () => computeWindow(anchorDate, viewMode, locale),
+    [anchorDate, viewMode, locale],
   );
 
   const loadEvents = useCallback(
@@ -278,8 +297,12 @@ export function CalendarWorkspace() {
       if (isStaleAuthError(err)) return;
       setNlParseError(
         isApiError(err)
-          ? err.message
-          : "未能解析会议内容，请检查时间或同事名称后重试。",
+          ? localizeError(err)
+          : tx({
+              "zh-CN": "未能解析会议内容，请检查时间或同事名称后重试。",
+              "zh-HK": "未能解析會議內容，請檢查時間或同事名稱後重試。",
+              en: "Could not parse the meeting details. Check time or colleague name and retry.",
+            }),
       );
     } finally {
       setNlParsing(false);
@@ -287,22 +310,25 @@ export function CalendarWorkspace() {
   };
 
   const groupedByDay = useMemo(() => {
+    const weekdays = WEEKDAY_NAMES_BY_LOCALE[locale];
     const map = new Map<string, { label: string; items: CalendarEvent[] }>();
     for (const ev of events) {
       const d = new Date(ev.starts_at * 1000);
-      const key = formatDayKey(d);
+      const key = formatLocalIsoDate(d);
       const existing = map.get(key);
       if (existing) {
         existing.items.push(ev);
       } else {
         map.set(key, {
-          label: `${key} ${WEEKDAY_NAMES[d.getDay()]}`,
+          label: `${key} ${weekdays[d.getDay()]}`,
           items: [ev],
         });
       }
     }
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [events]);
+  }, [events, locale]);
+
+  const nlExamples = NL_ZOOM_EXAMPLES_BY_LOCALE[locale];
 
   return (
     <div
@@ -315,10 +341,18 @@ export function CalendarWorkspace() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
-                日历与会议协作中心
+                {tx({
+                  "zh-CN": "日历与会议协作中心",
+                  "zh-HK": "日曆與會議協作中心",
+                  en: "Calendar & Meetings",
+                })}
               </h1>
               <p className="mt-1 text-[13px] text-[var(--ink-muted)]">
-                用自然语言直接预约同租户 Zoom 会议，并同步 Google Calendar、Apple iCloud、Outlook / M365。
+                {tx({
+                  "zh-CN": "用自然语言直接预约同租户 Zoom 会议，并同步 Google 日历、Apple iCloud、Outlook / M365。",
+                  "zh-HK": "以自然語言直接預約同租戶 Zoom 會議，並同步 Google 日曆、Apple iCloud、Outlook / M365。",
+                  en: "Book tenant Zoom calls in natural language and sync with Google, Apple iCloud, and Outlook / M365.",
+                })}
               </p>
             </div>
             <Button
@@ -329,7 +363,7 @@ export function CalendarWorkspace() {
               onClick={() => setCreateModalOpen(true)}
             >
               <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-              <span>新建日程</span>
+              <span>{t("calendar.newEvent")}</span>
             </Button>
           </div>
 
@@ -350,8 +384,13 @@ export function CalendarWorkspace() {
               value={nlUtterance}
               onChange={(e) => setNlUtterance(e.target.value)}
               data-testid="zoom-nl-input"
-              placeholder="输入自然语言预定 Zoom 会议，如：明天下午3点和 manager 开 HK01 评审会"
-              className="min-w-[220px] flex-1 bg-transparent py-1 text-[13.5px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none"
+              placeholder={tx({
+                "zh-CN": "输入自然语言预定 Zoom 会议，如：明天下午 3 点和 manager 开 HK01 评审会",
+                "zh-HK": "輸入自然語言預訂 Zoom 會議，如：明天下午 3 點和 manager 開 HK01 評審會",
+                en: "Book a Zoom meeting in natural language, e.g. Tomorrow 3pm with manager for HK01 review",
+              })}
+              style={{ outline: "none" }}
+              className="min-w-[220px] flex-1 border-0 bg-transparent py-1 text-[13.5px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
             />
             <Button
               type="submit"
@@ -362,18 +401,32 @@ export function CalendarWorkspace() {
               disabled={!nlUtterance.trim() || nlParsing}
             >
               <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} />
-              <span>{nlParsing ? "解析中…" : "解析预约预览"}</span>
+              <span>
+                {nlParsing
+                  ? tx({
+                      "zh-CN": "解析中…",
+                      "zh-HK": "解析中…",
+                      en: "Parsing…",
+                    })
+                  : tx({
+                      "zh-CN": "解析预约预览",
+                      "zh-HK": "解析預約預覽",
+                      en: "Parse Draft",
+                    })}
+              </span>
             </Button>
           </form>
 
           <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
-            <span className="text-[var(--ink-muted)]">试试：</span>
-            {NL_ZOOM_EXAMPLES.map((example) => (
+            <span className="text-[var(--ink-muted)]">
+              {tx({ "zh-CN": "试试：", "zh-HK": "試試：", en: "Try:" })}
+            </span>
+            {nlExamples.map((example) => (
               <button
                 key={example}
                 type="button"
                 onClick={() => void handleNlZoomParse(example)}
-                className="rounded-full bg-[var(--bg-surface-subtle)] px-3 py-1 text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent)] transition-colors cursor-pointer"
+                className="rounded-full bg-[var(--bg-surface-subtle)] px-3 py-1 text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
               >
                 {example}
               </button>
@@ -409,7 +462,7 @@ export function CalendarWorkspace() {
           onQuickZoomBook={() => {
             nlInputRef.current?.focus();
             if (!nlUtterance.trim()) {
-              setNlUtterance(NL_ZOOM_EXAMPLES[0]);
+              setNlUtterance(nlExamples[0]!);
             }
           }}
         />
@@ -420,14 +473,31 @@ export function CalendarWorkspace() {
             <div className="flex flex-wrap items-center gap-2.5">
               <div
                 role="tablist"
-                aria-label="日历视图切换"
+                aria-label={tx({
+                  "zh-CN": "日历视图切换",
+                  "zh-HK": "日曆檢視切換",
+                  en: "Calendar view switcher",
+                })}
                 className="inline-flex rounded-full bg-[var(--bg-surface-subtle)] p-0.5"
               >
                 {(
                   [
-                    { id: "day", label: "日" },
-                    { id: "week", label: "周" },
-                    { id: "month", label: "月列表" },
+                    {
+                      id: "day",
+                      label: tx({ "zh-CN": "日", "zh-HK": "日", en: "Day" }),
+                    },
+                    {
+                      id: "week",
+                      label: tx({ "zh-CN": "周", "zh-HK": "週", en: "Week" }),
+                    },
+                    {
+                      id: "month",
+                      label: tx({
+                        "zh-CN": "月",
+                        "zh-HK": "月",
+                        en: "Month",
+                      }),
+                    },
                   ] as const
                 ).map((tab) => (
                   <button
@@ -440,7 +510,7 @@ export function CalendarWorkspace() {
                     className={[
                       "rounded-full px-3.5 py-1 text-[12.5px] font-medium transition-all duration-[140ms] cursor-pointer",
                       viewMode === tab.id
-                        ? "bg-[var(--bg-surface)] text-[var(--accent)] shadow-[var(--shadow-subtle)] font-semibold"
+                        ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
                         : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
@@ -452,7 +522,11 @@ export function CalendarWorkspace() {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  aria-label="上一周期"
+                  aria-label={tx({
+                    "zh-CN": "上一周期",
+                    "zh-HK": "上一週期",
+                    en: "Previous period",
+                  })}
                   onClick={() =>
                     setAnchorDate((d) => shiftAnchor(d, viewMode, -1))
                   }
@@ -466,11 +540,15 @@ export function CalendarWorkspace() {
                   pill
                   onClick={() => setAnchorDate(startOfLocalDay(new Date()))}
                 >
-                  今天
+                  {t("calendar.view.today")}
                 </Button>
                 <button
                   type="button"
-                  aria-label="下一周期"
+                  aria-label={tx({
+                    "zh-CN": "下一周期",
+                    "zh-HK": "下一週期",
+                    en: "Next period",
+                  })}
                   onClick={() =>
                     setAnchorDate((d) => shiftAnchor(d, viewMode, 1))
                   }
@@ -482,7 +560,7 @@ export function CalendarWorkspace() {
 
               <span
                 data-testid="calendar-range-label"
-                className="font-mono-code text-[13.5px] font-semibold text-[var(--ink-primary)] tabular-nums ml-1"
+                className="text-[13.5px] font-semibold text-[var(--ink-primary)] tabular-nums ml-1"
               >
                 {range.label}
               </span>
@@ -497,8 +575,11 @@ export function CalendarWorkspace() {
                   data-testid="calendar-ics-download-btn"
                   className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors"
                 >
-                  <Download className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.85} />
-                  <span>导出 .ics</span>
+                  <Download
+                    className="h-3.5 w-3.5 text-[var(--accent)]"
+                    strokeWidth={1.85}
+                  />
+                  <span>{t("calendar.exportIcs")}</span>
                 </a>
               )}
               <Button
@@ -515,7 +596,13 @@ export function CalendarWorkspace() {
                   ].join(" ")}
                   strokeWidth={1.85}
                 />
-                <span>刷新日程</span>
+                <span>
+                  {tx({
+                    "zh-CN": "刷新日程",
+                    "zh-HK": "重新整理行程",
+                    en: "Refresh",
+                  })}
+                </span>
               </Button>
             </div>
           </div>
@@ -529,7 +616,11 @@ export function CalendarWorkspace() {
 
           {loading && events.length === 0 ? (
             <div className="rounded-card bg-[var(--bg-surface)] py-16 text-center text-[13px] text-[var(--ink-muted)] shadow-[var(--shadow-card)]">
-              正在加载站内日程…
+              {tx({
+                "zh-CN": "正在加载站内日程…",
+                "zh-HK": "正在載入站內行程…",
+                en: "Loading calendar events…",
+              })}
             </div>
           ) : !error && groupedByDay.length === 0 ? (
             <div
@@ -540,10 +631,18 @@ export function CalendarWorkspace() {
                 <CalendarIcon className="h-5 w-5" strokeWidth={1.7} />
               </span>
               <h3 className="mt-3 text-[15px] font-semibold text-[var(--ink-primary)]">
-                当前时间窗口内暂无日程
+                {tx({
+                  "zh-CN": "当前时间窗口内暂无日程",
+                  "zh-HK": "目前時間範圍內暫無行程",
+                  en: "No events in this time range",
+                })}
               </h3>
               <p className="mt-1 text-[13px] text-[var(--ink-muted)]">
-                可在上方用自然语言预定 Zoom 会议，或点击“新建日程”创建站内安排。
+                {tx({
+                  "zh-CN": "可在上方用自然语言预定 Zoom 会议，或点击“新建日程”创建站内安排。",
+                  "zh-HK": "可於上方以自然語言預訂 Zoom 會議，或點擊「新增行程」建立站內安排。",
+                  en: "Book a Zoom call above in natural language, or click New Event to create one.",
+                })}
               </p>
               <Button
                 size="sm"
@@ -553,7 +652,13 @@ export function CalendarWorkspace() {
                 onClick={() => setCreateModalOpen(true)}
               >
                 <Plus className="h-3.5 w-3.5" />
-                <span>新建站内日程</span>
+                <span>
+                  {tx({
+                    "zh-CN": "新建站内日程",
+                    "zh-HK": "新增站內行程",
+                    en: "New Calendar Event",
+                  })}
+                </span>
               </Button>
             </div>
           ) : (
@@ -564,11 +669,21 @@ export function CalendarWorkspace() {
                   className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
                 >
                   <header className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-5 py-2.5 border-b border-[var(--hairline-subtle)]">
-                    <h3 className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums">
+                    <h3 className="text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums">
                       {group.label}
                     </h3>
-                    <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)] tabular-nums">
-                      {group.items.length} 项日程
+                    <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 text-[11px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)] tabular-nums">
+                      {tp(
+                        {
+                          "zh-CN": "{count} 项日程",
+                          "zh-HK": "{count} 項行程",
+                          en: {
+                            one: "{count} event",
+                            other: "{count} events",
+                          },
+                        },
+                        group.items.length,
+                      )}
                     </span>
                   </header>
 
@@ -615,14 +730,32 @@ export function CalendarWorkspace() {
                               >
                                 {ev.title}
                               </div>
-                              <div className="mt-0.5 flex flex-wrap items-center gap-2 font-mono-code text-[11.5px] text-[var(--ink-muted)]">
-                                <span>组织人: {ev.organizer}</span>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-[var(--ink-muted)]">
+                                <span title={ev.organizer}>
+                                  {tx(
+                                    {
+                                      "zh-CN": "组织者：{org}",
+                                      "zh-HK": "組織者：{org}",
+                                      en: "Organizer: {org}",
+                                    },
+                                    {
+                                      org: localizePersona(ev.organizer)
+                                        .displayName,
+                                    },
+                                  )}
+                                </span>
                                 {isOrganizer && (
-                                  <span className="text-[var(--accent)]">
-                                    · 我发起的
+                                  <span className="text-[var(--accent-ink)]">
+                                    {tx({
+                                      "zh-CN": "· 我发起的",
+                                      "zh-HK": "· 我發起的",
+                                      en: "· Organized by you",
+                                    })}
                                   </span>
                                 )}
-                                <span>· r{ev.revision}</span>
+                                <span className="font-mono-code">
+                                  · r{ev.revision}
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -651,7 +784,13 @@ export function CalendarWorkspace() {
                     onClick={() => void loadEvents(nextCursor)}
                     className="w-full"
                   >
-                    {loadingMore ? "加载中…" : "加载更多日程"}
+                    {loadingMore
+                      ? t("common.loading")
+                      : tx({
+                          "zh-CN": "加载更多日程",
+                          "zh-HK": "載入更多行程",
+                          en: "Load More Events",
+                        })}
                   </Button>
                 </div>
               )}

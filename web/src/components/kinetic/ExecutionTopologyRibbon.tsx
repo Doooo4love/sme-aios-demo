@@ -2,7 +2,7 @@
 
 import React from "react";
 import { AlertTriangle, Check, XCircle } from "lucide-react";
-import { formatUnixTime } from "@/lib/format";
+import { useLocale, type TranslationKey } from "@/lib/i18n";
 import type { AuditEvent, ProposalState } from "@/lib/types";
 
 export interface ExecutionTopologyRibbonProps {
@@ -18,16 +18,41 @@ export interface ExecutionTopologyRibbonProps {
 interface SpineNode {
   index: string;
   key: "PROPOSED" | "QUEUED" | "SENDING" | "VERIFYING" | "VERIFIED";
-  label: string;
+  labelKey: TranslationKey;
   code: string;
 }
 
 const SPINE_NODES: readonly SpineNode[] = [
-  { index: "1", key: "PROPOSED", label: "待审批", code: "PROPOSED" },
-  { index: "2", key: "QUEUED", label: "已批准", code: "QUEUED" },
-  { index: "3", key: "SENDING", label: "ERP 写入", code: "SENDING" },
-  { index: "4", key: "VERIFYING", label: "回执核验", code: "VERIFYING" },
-  { index: "5", key: "VERIFIED", label: "已入账", code: "VERIFIED" },
+  {
+    index: "1",
+    key: "PROPOSED",
+    labelKey: "kinetic.topology.step.proposed",
+    code: "PROPOSED",
+  },
+  {
+    index: "2",
+    key: "QUEUED",
+    labelKey: "kinetic.topology.step.queued",
+    code: "QUEUED",
+  },
+  {
+    index: "3",
+    key: "SENDING",
+    labelKey: "kinetic.topology.step.sending",
+    code: "SENDING",
+  },
+  {
+    index: "4",
+    key: "VERIFYING",
+    labelKey: "kinetic.topology.step.verifying",
+    code: "VERIFYING",
+  },
+  {
+    index: "5",
+    key: "VERIFIED",
+    labelKey: "kinetic.topology.step.verified",
+    code: "VERIFIED",
+  },
 ];
 
 function getReachedStep(state: ProposalState, events?: AuditEvent[]): number {
@@ -91,6 +116,7 @@ export function ExecutionTopologyRibbon({
   headerRight,
   className = "",
 }: ExecutionTopologyRibbonProps) {
+  const { t, formatDateTime, formatTimeOnly } = useLocale();
   const reached = getReachedStep(state, events);
   const isBranch =
     state === "OUTCOME_UNKNOWN" ||
@@ -104,7 +130,7 @@ export function ExecutionTopologyRibbon({
     if (state === "OUTCOME_UNKNOWN") {
       return {
         code: "OUTCOME_UNKNOWN",
-        label: "结果待确认 · 等待回查",
+        label: t("kinetic.topology.branch.unknown"),
         tone: "amber" as const,
         at: findBranchTimestamp("OUTCOME_UNKNOWN", events),
       };
@@ -112,7 +138,7 @@ export function ExecutionTopologyRibbon({
     if (state === "NEEDS_OPERATOR") {
       return {
         code: "NEEDS_OPERATOR",
-        label: "需人工核查回执",
+        label: t("kinetic.topology.branch.operator"),
         tone: "crimson" as const,
         at: findBranchTimestamp("NEEDS_OPERATOR", events),
       };
@@ -120,7 +146,7 @@ export function ExecutionTopologyRibbon({
     if (state === "REJECTED") {
       return {
         code: "REJECTED",
-        label: "已退回 / 已拒绝 / 终止",
+        label: t("kinetic.topology.branch.rejected"),
         tone: "crimson" as const,
         at: findBranchTimestamp("REJECTED", events),
       };
@@ -153,11 +179,11 @@ export function ExecutionTopologyRibbon({
       <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2.5">
           <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
-            单据执行进度
+            {t("kinetic.topology.title")}
           </span>
           {(checks > 0 || state === "CHECKING" || state === "OUTCOME_UNKNOWN") && (
-            <span className="rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 font-mono-code text-[11px] font-medium text-[var(--status-amber-ink)]">
-              核验轮次 {checks}/3
+            <span className="rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 tabular-nums text-[11px] font-medium text-[var(--status-amber-ink)]">
+              {t("kinetic.topology.checks", { checks })}
             </span>
           )}
         </div>
@@ -188,6 +214,7 @@ export function ExecutionTopologyRibbon({
             {SPINE_NODES.map((node, idx) => {
               const stepState = getStepState(idx);
               const ts = findTimestampForStep(node.key, events);
+              const nodeLabel = t(node.labelKey);
 
               return (
                 <div
@@ -199,16 +226,16 @@ export function ExecutionTopologyRibbon({
                     className={[
                       "flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-semibold ring-[3px] ring-[var(--bg-surface)] transition-all duration-[200ms]",
                       stepState === "verified"
-                        ? "bg-[var(--status-emerald)] text-white shadow-[0_0_0_5px_var(--status-emerald-wash)]"
+                        ? "bg-[var(--status-emerald-solid)] text-white shadow-[0_0_0_5px_var(--status-emerald-wash)]"
                         : stepState === "current"
-                          ? "bg-[var(--accent)] text-white shadow-[0_0_0_5px_var(--accent-wash-strong)]"
+                          ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[0_0_0_5px_var(--accent-wash-strong)]"
                           : stepState === "done"
-                            ? "bg-[#E7F4ED] text-[var(--status-emerald)]"
-                            : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]",
+                            ? "bg-[color-mix(in_srgb,var(--status-emerald)_12%,var(--bg-surface))] text-[var(--status-emerald)] border border-[var(--status-emerald-border)]"
+                            : "bg-[var(--bg-surface-subtle)] text-[var(--ink-muted)]",
                     ].join(" ")}
                   >
                     {stepState === "done" || stepState === "verified" ? (
-                      <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                      <Check className="h-4 w-4" strokeWidth={2.6} />
                     ) : (
                       <span className="font-mono-code text-[11px]">
                         {node.index}
@@ -222,18 +249,18 @@ export function ExecutionTopologyRibbon({
                       stepState === "idle"
                         ? "text-[var(--ink-muted)]"
                         : stepState === "current"
-                          ? "text-[var(--accent)] font-semibold"
+                          ? "text-[var(--accent-ink)] font-semibold"
                           : stepState === "verified"
                             ? "text-[var(--status-emerald)] font-semibold"
                             : "text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
-                    {node.label}
+                    {nodeLabel}
                   </div>
 
                   <div className="mt-0.5 font-mono-code text-[10.5px] text-[var(--ink-muted)]">
                     {ts
-                      ? formatUnixTime(ts, { withSeconds: true }).slice(11)
+                      ? formatTimeOnly(ts, { withSeconds: true })
                       : node.key === "VERIFYING" &&
                           (state === "CHECKING" || state === "VERIFYING") &&
                           checks > 0
@@ -264,7 +291,7 @@ export function ExecutionTopologyRibbon({
               </div>
               {branchInfo.at && (
                 <span className="font-mono-code text-[11px] opacity-80 shrink-0">
-                  {formatUnixTime(branchInfo.at, { withSeconds: true })}
+                  {formatDateTime(branchInfo.at, { withSeconds: true })}
                 </span>
               )}
             </div>
@@ -293,16 +320,16 @@ export function ExecutionTopologyRibbon({
                     className={[
                       "absolute -left-6 flex h-5 w-5 items-center justify-center rounded-full ring-2 ring-[var(--bg-surface)]",
                       stepState === "verified"
-                        ? "bg-[var(--status-emerald)] text-white"
+                        ? "bg-[var(--status-emerald-solid)] text-white"
                         : stepState === "current"
-                          ? "bg-[var(--accent)] text-white"
+                          ? "bg-[var(--accent-solid)] text-[var(--accent-fg)]"
                           : stepState === "done"
-                            ? "bg-[#E7F4ED] text-[var(--status-emerald)]"
-                            : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]",
+                            ? "bg-[color-mix(in_srgb,var(--status-emerald)_12%,var(--bg-surface))] text-[var(--status-emerald)] border border-[var(--status-emerald-border)]"
+                            : "bg-[var(--bg-surface-subtle)] text-[var(--ink-muted)]",
                     ].join(" ")}
                   >
                     {stepState === "done" || stepState === "verified" ? (
-                      <Check className="h-3 w-3" strokeWidth={2.4} />
+                      <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
                     ) : (
                       <span className="font-mono-code text-[9.5px] font-semibold">
                         {node.index}
@@ -313,16 +340,16 @@ export function ExecutionTopologyRibbon({
                     className={[
                       "font-medium",
                       stepState === "idle"
-                        ? "text-[var(--ink-faint)]"
+                        ? "text-[var(--ink-muted)]"
                         : stepState === "current"
-                          ? "text-[var(--accent)] font-semibold"
+                          ? "text-[var(--accent-ink)] font-semibold"
                           : "text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
-                    {node.label}
+                    {t(node.labelKey)}
                   </span>
                   <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                    {ts ? formatUnixTime(ts, { withSeconds: true }).slice(11) : "—"}
+                    {ts ? formatTimeOnly(ts, { withSeconds: true }) : "—"}
                   </span>
                 </li>
               );
@@ -340,7 +367,7 @@ export function ExecutionTopologyRibbon({
                 <span className="font-medium truncate">{branchInfo.label}</span>
                 {branchInfo.at && (
                   <span className="font-mono-code text-[11px] shrink-0">
-                    {formatUnixTime(branchInfo.at, { withSeconds: true }).slice(11)}
+                    {formatTimeOnly(branchInfo.at, { withSeconds: true })}
                   </span>
                 )}
               </li>

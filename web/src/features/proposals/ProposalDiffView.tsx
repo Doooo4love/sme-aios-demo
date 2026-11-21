@@ -3,6 +3,15 @@
 import React, { useMemo, useState } from "react";
 import { ArrowRight, Check, Copy, Maximize2 } from "lucide-react";
 import { formatShortDigest } from "@/lib/format";
+import {
+  DEFAULT_LOCALE,
+  localizeStatusForLocale,
+  translateInline,
+  translateKey,
+  useLocale,
+  type Locale,
+  type TrilingualText,
+} from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import type {
@@ -39,6 +48,38 @@ function asString(v: unknown, fallback = "—"): string {
   return fallback;
 }
 
+const UOM_LABELS_I18N: Readonly<Record<string, TrilingualText>> = {
+  CASE: { "zh-CN": "箱", "zh-HK": "箱", en: "Case" },
+  CS: { "zh-CN": "箱", "zh-HK": "箱", en: "Case" },
+  CARTON: { "zh-CN": "箱", "zh-HK": "箱", en: "Carton" },
+  CTN: { "zh-CN": "箱", "zh-HK": "箱", en: "Carton" },
+  EACH: { "zh-CN": "件", "zh-HK": "件", en: "Each" },
+  EA: { "zh-CN": "件", "zh-HK": "件", en: "Each" },
+  PCS: { "zh-CN": "件", "zh-HK": "件", en: "Pcs" },
+  PC: { "zh-CN": "件", "zh-HK": "件", en: "Pc" },
+  UNIT: { "zh-CN": "件", "zh-HK": "件", en: "Unit" },
+  PACK: { "zh-CN": "包", "zh-HK": "包", en: "Pack" },
+  PK: { "zh-CN": "包", "zh-HK": "包", en: "Pack" },
+  BOX: { "zh-CN": "盒", "zh-HK": "盒", en: "Box" },
+  PALLET: { "zh-CN": "托盘", "zh-HK": "卡板", en: "Pallet" },
+  PLT: { "zh-CN": "托盘", "zh-HK": "卡板", en: "Pallet" },
+  KG: { "zh-CN": "千克", "zh-HK": "公斤", en: "kg" },
+  G: { "zh-CN": "克", "zh-HK": "克", en: "g" },
+};
+
+export function localizeUom(
+  uom: string,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const normalized = uom.trim().toUpperCase();
+  const entry = UOM_LABELS_I18N[normalized];
+  return entry ? entry[locale] : uom;
+}
+
+function isPlaceholderBefore(before: string): boolean {
+  return before === "—" || before === "";
+}
+
 export function extractSalesOrderAfter(
   plan: Plan,
 ): SalesOrderPlanAfter | null {
@@ -70,16 +111,24 @@ export function extractSalesOrderBefore(
   };
 }
 
-export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
+export function buildPlanDiffRows(
+  plan: Plan,
+  locale: Locale = DEFAULT_LOCALE,
+): DiffRowItem[] {
   if (plan.action === "shipment.reschedule") {
     const before = plan.before as Partial<ShipmentView>;
     const after = plan.after as Partial<ShipmentReschedulePlanAfter>;
     const beforeDate = asString(before.delivery_date);
     const afterDate = asString(after.delivery_date);
+    const statusRaw = asString(before.status);
+    const statusLabel =
+      statusRaw !== "—"
+        ? localizeStatusForLocale(statusRaw, locale)
+        : statusRaw;
     return [
       {
         key: "shipment_id",
-        label: "运单编号",
+        label: translateKey(locale, "proposal.diff.field.shipmentId"),
         before: asString(before.shipment_id, plan.target),
         after: asString(before.shipment_id, plan.target),
         changed: false,
@@ -87,7 +136,11 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
       },
       {
         key: "warehouse",
-        label: "仓库站点",
+        label: translateInline(locale, {
+          "zh-CN": "仓库",
+          "zh-HK": "倉庫",
+          en: "Warehouse",
+        }),
         before: asString(before.warehouse, plan.warehouse),
         after: plan.warehouse,
         changed: false,
@@ -95,15 +148,15 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
       },
       {
         key: "status",
-        label: "当前状态",
-        before: asString(before.status),
-        after: asString(before.status),
+        label: translateKey(locale, "proposal.diff.field.status"),
+        before: statusLabel,
+        after: statusLabel,
         changed: false,
-        mono: true,
+        mono: false,
       },
       {
         key: "expected_version",
-        label: "版本锁",
+        label: translateKey(locale, "proposal.diff.field.expectedVersion"),
         before: `v${asString(before.version ?? plan.expected_version, "—")}`,
         after:
           typeof before.version === "number"
@@ -114,7 +167,7 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
       },
       {
         key: "delivery_date",
-        label: "预计交付日期",
+        label: translateKey(locale, "proposal.diff.field.deliveryDate"),
         before: beforeDate,
         after: afterDate,
         changed: beforeDate !== afterDate,
@@ -142,7 +195,11 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
     const rows: DiffRowItem[] = [
       {
         key: "legal_entity",
-        label: "法人实体 / 站点",
+        label: translateInline(locale, {
+          "zh-CN": "法人实体 / 仓库",
+          "zh-HK": "法人實體 / 倉庫",
+          en: "Legal Entity / Warehouse",
+        }),
         before: plan.warehouse,
         after: legalEntityDisplay,
         changed: false,
@@ -150,15 +207,15 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
       },
       {
         key: "po",
-        label: "客户采购单号 (PO)",
-        before: "新建草稿",
+        label: translateKey(locale, "proposal.diff.field.po"),
+        before: "—",
         after: after?.po ?? "—",
         changed: true,
         mono: true,
       },
       {
         key: "buyer",
-        label: "买方编码",
+        label: translateKey(locale, "proposal.diff.field.buyer"),
         before: "—",
         after: after?.buyer ?? "—",
         changed: true,
@@ -166,7 +223,11 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
       },
       {
         key: "delivery",
-        label: "交付日期",
+        label: translateInline(locale, {
+          "zh-CN": "交付日期",
+          "zh-HK": "交付日期",
+          en: "Delivery Date",
+        }),
         before: "—",
         after: after?.delivery ?? "—",
         changed: true,
@@ -174,15 +235,15 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
       },
       {
         key: "total",
-        label: "订单总额",
-        before: "0.00",
+        label: translateKey(locale, "proposal.diff.field.total"),
+        before: "—",
         after: after ? `${after.currency} ${after.total}` : "—",
         changed: true,
         mono: true,
       },
       {
         key: "intake_id",
-        label: "来源进件编号",
+        label: translateKey(locale, "proposal.diff.field.intakeId"),
         before: shortIntakeId,
         after: shortIntakeId,
         changed: false,
@@ -191,7 +252,7 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
       },
       {
         key: "source_sha256",
-        label: "源证据摘要",
+        label: translateKey(locale, "proposal.diff.field.sourceSha"),
         before: shortSourceHash,
         after: shortSourceHash,
         changed: false,
@@ -223,21 +284,50 @@ export function buildPlanDiffRows(plan: Plan): DiffRowItem[] {
   });
 }
 
-export function summarizePlanChange(plan: Plan): string {
+export function summarizePlanChange(
+  plan: Plan,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
   if (plan.action === "shipment.reschedule") {
     const before = plan.before as Partial<ShipmentView>;
     const after = plan.after as Partial<ShipmentReschedulePlanAfter>;
-    return `运单 ${plan.target} 交期：${asString(before.delivery_date)} → ${asString(after.delivery_date)}`;
+    return translateInline(
+      locale,
+      {
+        "zh-CN": "运单 {target} 交期：{from} → {to}",
+        "zh-HK": "運單 {target} 交期：{from} → {to}",
+        en: "Shipment {target} delivery: {from} → {to}",
+      },
+      {
+        target: plan.target,
+        from: asString(before.delivery_date),
+        to: asString(after.delivery_date),
+      },
+    );
   }
   const after = extractSalesOrderAfter(plan);
   if (after) {
+    const sep = locale === "en" ? "; " : "；";
     const itemSummary = after.items
       .map(
         (item) =>
-          `${item.source_sku} (${item.source_quantity} ${item.source_uom} → ${item.erp_quantity} ${item.erp_uom})`,
+          `${item.source_sku} (${item.source_quantity} ${localizeUom(item.source_uom, locale)} → ${item.erp_quantity} ${localizeUom(item.erp_uom, locale)})`,
       )
-      .join("；");
-    return `PO ${after.po} · 总额 ${after.currency} ${after.total}${itemSummary ? ` · ${itemSummary}` : ""}`;
+      .join(sep);
+    return translateInline(
+      locale,
+      {
+        "zh-CN": "PO {po} · 总额 {currency} {total}{items}",
+        "zh-HK": "PO {po} · 總額 {currency} {total}{items}",
+        en: "PO {po} · Total {currency} {total}{items}",
+      },
+      {
+        po: after.po,
+        currency: after.currency,
+        total: after.total,
+        items: itemSummary ? ` · ${itemSummary}` : "",
+      },
+    );
   }
   return `${plan.action} · ${plan.target}`;
 }
@@ -248,10 +338,14 @@ export function ProposalDiffView({
   compact = false,
   className = "",
 }: ProposalDiffViewProps) {
+  const { locale, t, tx, tp } = useLocale();
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [copiedRowKey, setCopiedRowKey] = useState<string | null>(null);
 
-  const diffRows = useMemo(() => buildPlanDiffRows(plan), [plan]);
+  const diffRows = useMemo(
+    () => buildPlanDiffRows(plan, locale),
+    [plan, locale],
+  );
   const salesOrderAfter = useMemo(() => extractSalesOrderAfter(plan), [plan]);
 
   const handleCopyRaw = async (key: string, value: string) => {
@@ -277,7 +371,7 @@ export function ProposalDiffView({
       <div className="flex items-center justify-between gap-2 border-b border-[var(--hairline)] px-4.5 py-3">
         <div className="min-w-0">
           <h3 className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-            拟变更字段比对
+            {t("proposal.diff.title")}
           </h3>
         </div>
         <Button
@@ -288,7 +382,7 @@ export function ProposalDiffView({
           data-testid="proposal-fullscreen-diff-btn"
         >
           <Maximize2 className="h-3 w-3" strokeWidth={1.85} />
-          <span>全屏对比</span>
+          <span>{t("proposal.diff.fullscreenBtn")}</span>
         </Button>
       </div>
 
@@ -310,21 +404,26 @@ export function ProposalDiffView({
                   {row.label}
                 </span>
                 {row.changed && (
-                  <span className="rounded-full bg-[var(--accent-wash)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--accent)]">
-                    变更
+                  <span className="rounded-full bg-[var(--accent-wash)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--accent-ink)]">
+                    {t("proposal.diff.changedBadge")}
                   </span>
                 )}
               </div>
               {row.changed ? (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono-code text-[12px]">
-                  <span className="text-[var(--ink-muted)] line-through">
+                  <span
+                    className={[
+                      "text-[var(--ink-muted)]",
+                      !isPlaceholderBefore(row.before) ? "line-through" : "",
+                    ].join(" ")}
+                  >
                     {row.before}
                   </span>
                   <ArrowRight
                     className="h-3 w-3 shrink-0 text-[var(--accent)]"
                     strokeWidth={1.9}
                   />
-                  <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent)]">
+                  <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent-ink)]">
                     {row.after}
                   </span>
                 </div>
@@ -337,8 +436,22 @@ export function ProposalDiffView({
                     <button
                       type="button"
                       onClick={() => void handleCopyRaw(row.key, row.rawValue!)}
-                      title={`复制完整值 ${row.rawValue}`}
-                      aria-label={`复制 ${row.label}`}
+                      title={tx(
+                        {
+                          "zh-CN": "复制完整值 {val}",
+                          "zh-HK": "複製完整值 {val}",
+                          en: "Copy full value {val}",
+                        },
+                        { val: row.rawValue },
+                      )}
+                      aria-label={tx(
+                        {
+                          "zh-CN": "复制 {label}",
+                          "zh-HK": "複製 {label}",
+                          en: "Copy {label}",
+                        },
+                        { label: row.label },
+                      )}
                       className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] cursor-pointer"
                     >
                       {copiedRowKey === row.key ? (
@@ -359,9 +472,15 @@ export function ProposalDiffView({
           <table className="w-full border-collapse text-left text-[13px]">
             <thead>
               <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
-                <th className="px-4.5 py-2.5 font-medium w-[28%]">字段</th>
-                <th className="px-4 py-2.5 font-medium w-[32%]">原值</th>
-                <th className="px-4.5 py-2.5 font-medium w-[40%]">拟写入值</th>
+                <th className="px-4.5 py-2.5 font-medium w-[28%]">
+                  {t("proposal.diff.colField")}
+                </th>
+                <th className="px-4 py-2.5 font-medium w-[32%]">
+                  {t("proposal.diff.colBefore")}
+                </th>
+                <th className="px-4.5 py-2.5 font-medium w-[40%]">
+                  {t("proposal.diff.colAfter")}
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -376,14 +495,53 @@ export function ProposalDiffView({
                     {row.label}
                   </td>
                   <td
-                    title={row.rawValue}
                     className={[
                       "px-4 py-3 text-[var(--ink-muted)]",
                       row.mono ? "font-mono-code" : "tabular-nums",
-                      row.changed ? "line-through" : "",
+                      row.changed && !isPlaceholderBefore(row.before)
+                        ? "line-through"
+                        : "",
                     ].join(" ")}
                   >
-                    {row.before}
+                    {row.rawValue ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span title={row.rawValue}>{row.before}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleCopyRaw(
+                              `${row.key}-before`,
+                              row.rawValue!,
+                            )
+                          }
+                          title={tx(
+                            {
+                              "zh-CN": "复制完整值 {val}",
+                              "zh-HK": "複製完整值 {val}",
+                              en: "Copy full value {val}",
+                            },
+                            { val: row.rawValue },
+                          )}
+                          aria-label={tx(
+                            {
+                              "zh-CN": "复制 {label}",
+                              "zh-HK": "複製 {label}",
+                              en: "Copy {label}",
+                            },
+                            { label: row.label },
+                          )}
+                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
+                        >
+                          {copiedRowKey === `${row.key}-before` ? (
+                            <Check className="h-3 w-3 text-[var(--status-emerald)]" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </button>
+                      </span>
+                    ) : (
+                      row.before
+                    )}
                   </td>
                   <td
                     className={[
@@ -392,7 +550,7 @@ export function ProposalDiffView({
                     ].join(" ")}
                   >
                     {row.changed ? (
-                      <span className="inline-block rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent)]">
+                      <span className="inline-block rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent-ink)]">
                         {row.after}
                       </span>
                     ) : (
@@ -404,13 +562,30 @@ export function ProposalDiffView({
                           <button
                             type="button"
                             onClick={() =>
-                              void handleCopyRaw(row.key, row.rawValue!)
+                              void handleCopyRaw(
+                                `${row.key}-after`,
+                                row.rawValue!,
+                              )
                             }
-                            title={`复制完整值 ${row.rawValue}`}
-                            aria-label={`复制 ${row.label}`}
-                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--ink-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
+                            title={tx(
+                              {
+                                "zh-CN": "复制完整值 {val}",
+                                "zh-HK": "複製完整值 {val}",
+                                en: "Copy full value {val}",
+                              },
+                              { val: row.rawValue },
+                            )}
+                            aria-label={tx(
+                              {
+                                "zh-CN": "复制 {label}",
+                                "zh-HK": "複製 {label}",
+                                en: "Copy {label}",
+                              },
+                              { label: row.label },
+                            )}
+                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                           >
-                            {copiedRowKey === row.key ? (
+                            {copiedRowKey === `${row.key}-after` ? (
                               <Check className="h-3 w-3 text-[var(--status-emerald)]" />
                             ) : (
                               <Copy className="h-3 w-3" />
@@ -431,9 +606,22 @@ export function ProposalDiffView({
       {salesOrderAfter && salesOrderAfter.items.length > 0 && (
         <div className="border-t border-[var(--hairline)]">
           <div className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-4.5 py-2.5 text-[12px] font-semibold text-[var(--ink-secondary)] border-b border-[var(--hairline-subtle)]">
-            <span>订单明细行换算（源单据 → ERP 标准单位）</span>
-            <span className="font-mono-code tabular-nums text-[11.5px] font-normal text-[var(--ink-muted)]">
-              {salesOrderAfter.items.length} 行
+            <span>
+              {tx({
+                "zh-CN": "订单明细行换算（源单据 → ERP 标准单位）",
+                "zh-HK": "訂單明細行換算（源單據 → ERP 標準單位）",
+                en: "Line Item Mapping (Source → ERP UOM)",
+              })}
+            </span>
+            <span className="tabular-nums text-[11.5px] font-normal text-[var(--ink-muted)]">
+              {tp(
+                {
+                  "zh-CN": "{count} 行",
+                  "zh-HK": "{count} 行",
+                  en: { one: "{count} line", other: "{count} lines" },
+                },
+                salesOrderAfter.items.length,
+              )}
             </span>
           </div>
 
@@ -453,10 +641,22 @@ export function ProposalDiffView({
                       {salesOrderAfter.currency} {item.line_total}
                     </span>
                   </div>
-                  <div className="font-mono-code tabular-nums text-[11.5px] text-[var(--ink-muted)]">
-                    {item.source_quantity} {item.source_uom} →{" "}
-                    <span className="rounded-xs bg-[var(--accent-wash)] px-1.5 py-0.5 font-semibold text-[var(--accent)]">
-                      {item.erp_quantity} {item.erp_uom}
+                  <div className="tabular-nums text-[11.5px] text-[var(--ink-muted)]">
+                    <span title={item.source_uom}>
+                      <span className="font-mono-code">
+                        {item.source_quantity}
+                      </span>{" "}
+                      {localizeUom(item.source_uom, locale)}
+                    </span>{" "}
+                    →{" "}
+                    <span
+                      title={item.erp_uom}
+                      className="rounded-xs bg-[var(--accent-wash)] px-1.5 py-0.5 font-semibold text-[var(--accent-ink)]"
+                    >
+                      <span className="font-mono-code">
+                        {item.erp_quantity}
+                      </span>{" "}
+                      {localizeUom(item.erp_uom, locale)}
                     </span>
                   </div>
                 </div>
@@ -467,16 +667,37 @@ export function ProposalDiffView({
               <table className="w-full border-collapse text-left text-[12.5px]">
                 <thead>
                   <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)]/60 text-[11.5px] text-[var(--ink-muted)]">
-                    <th className="px-4.5 py-2 font-medium">源 SKU</th>
+                    <th className="px-4.5 py-2 font-medium">
+                      {tx({
+                        "zh-CN": "源 SKU",
+                        "zh-HK": "源 SKU",
+                        en: "Source SKU",
+                      })}
+                    </th>
                     <th className="px-3.5 py-2 font-medium">ERP SKU</th>
                     <th className="px-3.5 py-2 font-medium text-right">
-                      源数量 / 单位
+                      {tx({
+                        "zh-CN": "源数量 / 单位",
+                        "zh-HK": "源數量 / 單位",
+                        en: "Source Qty / UOM",
+                      })}
                     </th>
                     <th className="px-3.5 py-2 font-medium text-right">
-                      ERP 数量 / 单位
+                      {tx({
+                        "zh-CN": "ERP 数量 / 单位",
+                        "zh-HK": "ERP 數量 / 單位",
+                        en: "ERP Qty / UOM",
+                      })}
                     </th>
                     <th className="px-4.5 py-2 font-medium text-right">
-                      行小计 ({salesOrderAfter.currency})
+                      {tx(
+                        {
+                          "zh-CN": "行小计 ({currency})",
+                          "zh-HK": "行小計 ({currency})",
+                          en: "Subtotal ({currency})",
+                        },
+                        { currency: salesOrderAfter.currency },
+                      )}
                     </th>
                   </tr>
                 </thead>
@@ -492,12 +713,24 @@ export function ProposalDiffView({
                       <td className="px-3.5 py-3 font-mono-code font-medium text-[var(--ink-primary)]">
                         {item.sku}
                       </td>
-                      <td className="px-3.5 py-3 font-mono-code tabular-nums text-right text-[var(--ink-muted)]">
-                        {item.source_quantity} {item.source_uom}
+                      <td
+                        title={item.source_uom}
+                        className="px-3.5 py-3 tabular-nums text-right text-[var(--ink-muted)]"
+                      >
+                        <span className="font-mono-code">
+                          {item.source_quantity}
+                        </span>{" "}
+                        {localizeUom(item.source_uom, locale)}
                       </td>
-                      <td className="px-3.5 py-3 font-mono-code tabular-nums text-right">
-                        <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent)]">
-                          {item.erp_quantity} {item.erp_uom}
+                      <td className="px-3.5 py-3 tabular-nums text-right">
+                        <span
+                          title={item.erp_uom}
+                          className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent-ink)]"
+                        >
+                          <span className="font-mono-code">
+                            {item.erp_quantity}
+                          </span>{" "}
+                          {localizeUom(item.erp_uom, locale)}
                         </span>
                       </td>
                       <td className="px-4.5 py-3 font-mono-code tabular-nums text-right font-semibold text-[var(--ink-primary)]">
@@ -516,8 +749,24 @@ export function ProposalDiffView({
       <Modal
         open={fullscreenOpen}
         onOpenChange={setFullscreenOpen}
-        title={`全屏字段差异对比${proposalId ? ` · ${formatShortDigest(proposalId, 6, 4)}` : ""}`}
-        subtitle={`站点：${plan.warehouse} · 目标：${plan.target}`}
+        title={tx(
+          {
+            "zh-CN": "全屏字段差异对比{suffix}",
+            "zh-HK": "全螢幕欄位差異比對{suffix}",
+            en: "Fullscreen Field Comparison{suffix}",
+          },
+          {
+            suffix: proposalId ? ` · ${formatShortDigest(proposalId, 6, 4)}` : "",
+          },
+        )}
+        subtitle={tx(
+          {
+            "zh-CN": "仓库：{warehouse} · 目标：{target}",
+            "zh-HK": "倉庫：{warehouse} · 目標：{target}",
+            en: "Warehouse: {warehouse} · Target: {target}",
+          },
+          { warehouse: plan.warehouse, target: plan.target },
+        )}
         size="xl"
         expandable
       >
@@ -526,11 +775,23 @@ export function ProposalDiffView({
             <table className="w-full border-collapse text-left text-[13px]">
               <thead>
                 <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[12px] text-[var(--ink-secondary)]">
-                  <th className="px-4 py-3 font-medium w-[24%]">字段名称</th>
-                  <th className="px-4 py-3 font-medium w-[35%]">
-                    当前快照 / 原值
+                  <th className="px-4 py-3 font-medium w-[24%]">
+                    {tx({
+                      "zh-CN": "字段名称",
+                      "zh-HK": "欄位名稱",
+                      en: "Field Name",
+                    })}
                   </th>
-                  <th className="px-4 py-3 font-medium w-[41%]">拟写入值</th>
+                  <th className="px-4 py-3 font-medium w-[35%]">
+                    {tx({
+                      "zh-CN": "当前快照 / 原值",
+                      "zh-HK": "目前快照 / 原值",
+                      en: "Current Snapshot / Before",
+                    })}
+                  </th>
+                  <th className="px-4 py-3 font-medium w-[41%]">
+                    {t("proposal.diff.colAfter")}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -540,25 +801,103 @@ export function ProposalDiffView({
                       {row.label}
                     </td>
                     <td
-                      title={row.rawValue}
                       className={[
-                        "px-4 py-3 font-mono-code text-[var(--ink-muted)]",
-                        row.changed ? "line-through" : "",
+                        "px-4 py-3 text-[var(--ink-muted)]",
+                        row.mono ? "font-mono-code" : "tabular-nums",
+                        row.changed && !isPlaceholderBefore(row.before)
+                          ? "line-through"
+                          : "",
                       ].join(" ")}
                     >
-                      {row.before}
+                      {row.rawValue ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span title={row.rawValue}>{row.before}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleCopyRaw(
+                                `${row.key}-modal-before`,
+                                row.rawValue!,
+                              )
+                            }
+                            title={tx(
+                              {
+                                "zh-CN": "复制完整值 {val}",
+                                "zh-HK": "複製完整值 {val}",
+                                en: "Copy full value {val}",
+                              },
+                              { val: row.rawValue },
+                            )}
+                            aria-label={tx(
+                              {
+                                "zh-CN": "复制 {label}",
+                                "zh-HK": "複製 {label}",
+                                en: "Copy {label}",
+                              },
+                              { label: row.label },
+                            )}
+                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
+                          >
+                            {copiedRowKey === `${row.key}-modal-before` ? (
+                              <Check className="h-3 w-3 text-[var(--status-emerald)]" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </button>
+                        </span>
+                      ) : (
+                        row.before
+                      )}
                     </td>
-                    <td className="px-4 py-3 font-mono-code">
+                    <td
+                      className={[
+                        "px-4 py-3",
+                        row.mono ? "font-mono-code" : "tabular-nums",
+                      ].join(" ")}
+                    >
                       {row.changed ? (
-                        <span className="inline-block rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent)]">
+                        <span className="inline-block rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent-ink)]">
                           {row.after}
                         </span>
                       ) : (
-                        <span
-                          title={row.rawValue ?? row.after}
-                          className="text-[var(--ink-primary)]"
-                        >
-                          {row.after}
+                        <span className="inline-flex items-center gap-1.5 text-[var(--ink-primary)]">
+                          <span title={row.rawValue ?? row.after}>
+                            {row.after}
+                          </span>
+                          {row.rawValue && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleCopyRaw(
+                                  `${row.key}-modal-after`,
+                                  row.rawValue!,
+                                )
+                              }
+                              title={tx(
+                                {
+                                  "zh-CN": "复制完整值 {val}",
+                                  "zh-HK": "複製完整值 {val}",
+                                  en: "Copy full value {val}",
+                                },
+                                { val: row.rawValue },
+                              )}
+                              aria-label={tx(
+                                {
+                                  "zh-CN": "复制 {label}",
+                                  "zh-HK": "複製 {label}",
+                                  en: "Copy {label}",
+                                },
+                                { label: row.label },
+                              )}
+                              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
+                            >
+                              {copiedRowKey === `${row.key}-modal-after` ? (
+                                <Check className="h-3 w-3 text-[var(--status-emerald)]" />
+                              ) : (
+                                <Copy className="h-3 w-3" />
+                              )}
+                            </button>
+                          )}
                         </span>
                       )}
                     </td>
@@ -571,27 +910,64 @@ export function ProposalDiffView({
           {salesOrderAfter && salesOrderAfter.items.length > 0 && (
             <div className="rounded-tile bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)] overflow-hidden">
               <div className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] px-4 py-2.5 text-[12.5px] font-semibold text-[var(--ink-secondary)]">
-                完整订单明细行换算表（共 {salesOrderAfter.items.length} 行 ·
-                合计{" "}
+                {tp(
+                  {
+                    "zh-CN": "完整订单明细行换算表（共 {count} 行 · 合计 ",
+                    "zh-HK": "完整訂單明細行換算表（共 {count} 行 · 合計 ",
+                    en: {
+                      one: "Full Line-Item UOM Conversion Table ({count} line · Total ",
+                      other:
+                        "Full Line-Item UOM Conversion Table ({count} lines · Total ",
+                    },
+                  },
+                  salesOrderAfter.items.length,
+                )}
                 <span className="font-mono-code tabular-nums text-[var(--ink-primary)]">
                   {salesOrderAfter.currency} {salesOrderAfter.total}
                 </span>
-                ）
+                {tx({ "zh-CN": "）", "zh-HK": "）", en: ")" })}
               </div>
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)]/60 text-[11.5px] text-[var(--ink-muted)]">
                     <th className="px-4 py-2.5 font-medium">#</th>
-                    <th className="px-4 py-2.5 font-medium">源商品编码</th>
-                    <th className="px-4 py-2.5 font-medium">ERP 商品编码</th>
-                    <th className="px-4 py-2.5 font-medium text-right">
-                      源数量与单位
+                    <th className="px-4 py-2.5 font-medium">
+                      {tx({
+                        "zh-CN": "源商品编码",
+                        "zh-HK": "源商品編碼",
+                        en: "Source SKU",
+                      })}
+                    </th>
+                    <th className="px-4 py-2.5 font-medium">
+                      {tx({
+                        "zh-CN": "ERP 商品编码",
+                        "zh-HK": "ERP 商品編碼",
+                        en: "ERP SKU",
+                      })}
                     </th>
                     <th className="px-4 py-2.5 font-medium text-right">
-                      ERP 标准数量与单位
+                      {tx({
+                        "zh-CN": "源数量与单位",
+                        "zh-HK": "源數量與單位",
+                        en: "Source Qty & UOM",
+                      })}
                     </th>
                     <th className="px-4 py-2.5 font-medium text-right">
-                      行金额 ({salesOrderAfter.currency})
+                      {tx({
+                        "zh-CN": "ERP 标准数量与单位",
+                        "zh-HK": "ERP 標準數量與單位",
+                        en: "ERP Standard Qty & UOM",
+                      })}
+                    </th>
+                    <th className="px-4 py-2.5 font-medium text-right">
+                      {tx(
+                        {
+                          "zh-CN": "行金额 ({currency})",
+                          "zh-HK": "行金額 ({currency})",
+                          en: "Line Total ({currency})",
+                        },
+                        { currency: salesOrderAfter.currency },
+                      )}
                     </th>
                   </tr>
                 </thead>
@@ -607,12 +983,24 @@ export function ProposalDiffView({
                       <td className="px-4 py-2.5 font-mono-code font-semibold text-[var(--ink-primary)]">
                         {item.sku}
                       </td>
-                      <td className="px-4 py-2.5 font-mono-code tabular-nums text-right text-[var(--ink-muted)]">
-                        {item.source_quantity} {item.source_uom}
+                      <td
+                        title={item.source_uom}
+                        className="px-4 py-2.5 tabular-nums text-right text-[var(--ink-muted)]"
+                      >
+                        <span className="font-mono-code">
+                          {item.source_quantity}
+                        </span>{" "}
+                        {localizeUom(item.source_uom, locale)}
                       </td>
-                      <td className="px-4 py-2.5 font-mono-code tabular-nums text-right">
-                        <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent)]">
-                          {item.erp_quantity} {item.erp_uom}
+                      <td className="px-4 py-2.5 tabular-nums text-right">
+                        <span
+                          title={item.erp_uom}
+                          className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-semibold text-[var(--accent-ink)]"
+                        >
+                          <span className="font-mono-code">
+                            {item.erp_quantity}
+                          </span>{" "}
+                          {localizeUom(item.erp_uom, locale)}
                         </span>
                       </td>
                       <td className="px-4 py-2.5 font-mono-code tabular-nums text-right font-semibold text-[var(--ink-primary)]">

@@ -30,10 +30,11 @@ export function computeBubbleGroupPos<
 }
 
 /**
- * Native macOS Sequoia bubble curvature:
- * - Bubbles WITH an SVG tail (`single`, `last`) keep full 18px (`rounded-lg`) bottom corner
- *   so the SVG tail integrates seamlessly without double-corner pinching.
- * - Intermediate bubbles pinch only the stacked seam to 6px (`rounded-xs`).
+ * Native macOS Sequoia iMessage bubble curvature:
+ * - Tail-bearing bubbles (`single`, `last`) tighten the tail-side bottom corner to
+ *   `rounded-br-sm` / `rounded-bl-sm` (10px) so the overlapping SVG tail meets both the
+ *   vertical wall and bottom edge with C1 continuity and zero dark notch.
+ * - Intermediate stacked bubbles pinch only the shared seam to `rounded-xs` (6px).
  */
 export function getBubbleRadiusClass(
   side: "sent" | "received",
@@ -42,24 +43,24 @@ export function getBubbleRadiusClass(
   if (side === "sent") {
     switch (pos) {
       case "single":
-        return "rounded-lg";
+        return "rounded-lg rounded-br-sm";
       case "first":
         return "rounded-lg rounded-br-xs";
       case "middle":
         return "rounded-lg rounded-tr-xs rounded-br-xs";
       case "last":
-        return "rounded-lg rounded-tr-xs";
+        return "rounded-lg rounded-tr-xs rounded-br-sm";
     }
   }
   switch (pos) {
     case "single":
-      return "rounded-lg";
+      return "rounded-lg rounded-bl-sm";
     case "first":
       return "rounded-lg rounded-bl-xs";
     case "middle":
       return "rounded-lg rounded-tl-xs rounded-bl-xs";
     case "last":
-      return "rounded-lg rounded-tl-xs";
+      return "rounded-lg rounded-tl-xs rounded-bl-sm";
   }
 }
 
@@ -67,6 +68,12 @@ export function shouldShowBubbleTail(pos: BubbleGroupPos): boolean {
   return pos === "single" || pos === "last";
 }
 
+/**
+ * Overlapping Apple iMessage tail (16×18):
+ * - x=0..10 sits inside the bubble's 10px bottom corner radius (`rounded-br-sm` / `rounded-bl-sm`),
+ *   completely bridging the arc so zero background notch ever shows in light or dark mode.
+ * - x=10..16 flares cleanly 6px beyond the bubble wall into a crisp curved tail tip.
+ */
 export function IMessageBubbleTail({
   side,
   className = "",
@@ -76,20 +83,20 @@ export function IMessageBubbleTail({
 }) {
   return (
     <svg
-      width="11"
-      height="16"
-      viewBox="0 0 11 16"
+      width="16"
+      height="18"
+      viewBox="0 0 16 18"
       aria-hidden="true"
       className={[
         "imessage-tail",
         side === "sent"
-          ? "-right-[5px] text-[var(--accent)]"
-          : "-left-[5px] -scale-x-100 text-[var(--agent-bubble-bg)]",
+          ? "-right-[6px] text-[var(--bubble-sent-bg)]"
+          : "-left-[6px] -scale-x-100 text-[var(--bubble-received-bg)]",
         className,
       ].join(" ")}
     >
       <path
-        d="M0 0C0 8.5 3.5 14 11 16C5.5 16 1.5 14.5 0 12.5V0Z"
+        d="M0 18 L0 8 L10 8 C10 13 12 16.2 16 18 C12 18 9.2 17 7.4 15.4 C5.6 17.3 3 18 0 18 Z"
         fill="currentColor"
       />
     </svg>

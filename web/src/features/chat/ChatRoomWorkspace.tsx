@@ -17,7 +17,12 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import { formatUnixTime } from "@/lib/format";
+import {
+  PERSONA_LOCALIZATIONS,
+  formatChatMessageBody,
+  formatChatRoomTitle,
+  useLocale,
+} from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
@@ -51,14 +56,6 @@ interface PendingFailedMessage {
 
 const POLL_INTERVAL_MS = 5000;
 
-function cleanRoomTitle(title: string): string {
-  const withoutPrefix = title.replace(/^私聊\s*[·•]\s*/, "").trim();
-  const withoutAccountSuffix = withoutPrefix
-    .replace(/\s*\([A-Za-z0-9._-]+\)\s*$/, "")
-    .trim();
-  return withoutAccountSuffix || withoutPrefix || title;
-}
-
 export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
   const {
     status,
@@ -78,6 +75,8 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     setDraft,
     clearDraft,
   } = useWorkbench();
+  const { locale, tp, tx, formatDateTime, localizePersona, localizeError } =
+    useLocale();
 
   const [roomMeta, setRoomMeta] = useState<ChatRoom | null>(null);
   const [members, setMembers] = useState<string[]>([]);
@@ -105,6 +104,28 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
   const feedEndRef = useRef<HTMLDivElement | null>(null);
 
   const chatAvailable = Boolean(capabilities?.chat_available);
+
+  const resolveMemberDisplayName = useCallback(
+    (subject: string, prof?: Profile | null) => {
+      const raw = prof?.display_name?.trim();
+      const known =
+        PERSONA_LOCALIZATIONS[subject as keyof typeof PERSONA_LOCALIZATIONS];
+      if (
+        raw &&
+        (!known ||
+          (raw !== known["zh-CN"].displayName &&
+            raw !== known["zh-HK"].displayName &&
+            raw !== known.en.displayName))
+      ) {
+        return raw;
+      }
+      if (known) {
+        return localizePersona(subject).displayName;
+      }
+      return raw || subject;
+    },
+    [localizePersona],
+  );
 
   const autoResizeTextarea = useCallback((el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -486,7 +507,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                 ? {
                     ...p,
                     status: "failed",
-                    errorMessage: err.message,
+                    errorMessage: localizeError(err),
                     conflictMismatch: err.status === 409,
                   }
                 : p,
@@ -500,14 +521,18 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
               ? {
                   ...p,
                   status: "failed",
-                  errorMessage: "网络异常，消息未送达，请点击重试。",
+                  errorMessage: tx({
+                    "zh-CN": "网络异常，消息未送达，请点击重试。",
+                    "zh-HK": "網路異常，訊息未送達，請點擊重試。",
+                    en: "Network error. Message not delivered — tap retry.",
+                  }),
                 }
               : p,
           ),
         );
       }
     },
-    [roomId, handleFatalRoomError],
+    [roomId, handleFatalRoomError, localizeError, tx],
   );
 
   const handleSend = () => {
@@ -539,12 +564,19 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     const prof = memberProfiles[other];
     return {
       subject: other,
-      name: prof?.display_name || other,
+      name: resolveMemberDisplayName(other, prof),
       avatarSrc: prof?.has_avatar
         ? getRoomMemberAvatarUrl(roomId, other, prof.version, authGeneration)
         : null,
     };
-  }, [actor, members, memberProfiles, roomId, authGeneration]);
+  }, [
+    actor,
+    members,
+    memberProfiles,
+    roomId,
+    authGeneration,
+    resolveMemberDisplayName,
+  ]);
 
   if (capabilities && !chatAvailable) {
     return (
@@ -552,10 +584,22 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
         <div className="w-full max-w-[460px]">
           <AccessNoticeCard
             variant="ACCESS_RESTRICTED"
-            title="协作会话未启用"
-            message="当前账号未获授员工协作会话权限，无法访问此会话。"
+            title={tx({
+              "zh-CN": "协作会话未启用",
+              "zh-HK": "協作對話未啟用",
+              en: "Team Chat Disabled",
+            })}
+            message={tx({
+              "zh-CN": "当前账号未获授员工协作会话权限，无法访问此会话。",
+              "zh-HK": "目前帳號未獲授員工協作對話權限，無法存取此對話。",
+              en: "Your account does not have permission to access team chat rooms.",
+            })}
             backHref="/inbox/assistant"
-            backLabel="返回个人业务助手"
+            backLabel={tx({
+              "zh-CN": "返回个人业务助手",
+              "zh-HK": "返回個人業務助手",
+              en: "Back to Personal Agent",
+            })}
           />
         </div>
       </div>
@@ -572,7 +616,11 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
           <AccessNoticeCard
             error={accessError}
             backHref="/inbox"
-            backLabel="返回会话列表"
+            backLabel={tx({
+              "zh-CN": "返回会话列表",
+              "zh-HK": "返回對話清單",
+              en: "Back to Messages",
+            })}
           />
         </div>
       </div>
@@ -580,26 +628,39 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
   }
 
   const displayRoomTitle = roomMeta?.title
-    ? cleanRoomTitle(roomMeta.title)
-    : `协作会话 ${roomId.slice(0, 8)}`;
+    ? formatChatRoomTitle(roomMeta.title, locale)
+    : tx(
+        {
+          "zh-CN": "协作会话 {id}",
+          "zh-HK": "協作對話 {id}",
+          en: "Team Chat {id}",
+        },
+        { id: roomId.slice(0, 8) },
+      );
 
   return (
     <div
       data-testid="chat-room-workspace"
       data-room-id={roomId}
-      className="flex h-full min-h-0 flex-col bg-[var(--bg-surface)]"
+      className="flex h-full min-h-0 flex-col bg-[var(--bg-sheet)]"
     >
       {/* 60px Frosted macOS Messages Header */}
       <header className="aios-topbar-glass sticky top-0 z-20 flex h-[var(--header-h)] shrink-0 items-center justify-between gap-3 border-b border-[var(--hairline)] px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
           <Link
             href="/inbox"
-            aria-label="返回会话列表"
+            aria-label={tx({
+              "zh-CN": "返回会话列表",
+              "zh-HK": "返回對話清單",
+              en: "Back to conversations",
+            })}
             data-testid="room-mobile-back"
             className="inline-flex h-8 items-center gap-0.5 rounded-full pr-2.5 pl-1.5 text-[13.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors lg:hidden"
           >
             <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
-            <span>返回</span>
+            <span>
+              {tx({ "zh-CN": "返回", "zh-HK": "返回", en: "Back" })}
+            </span>
           </Link>
 
           <Avatar
@@ -617,7 +678,23 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
               {displayRoomTitle}
             </h2>
             <p className="truncate text-[11.5px] text-[var(--ink-muted)]">
-              {otherPeer ? "1:1 同事会话" : `${members.length} 位成员`} · 租户内隔离协作
+              {otherPeer
+                ? tx({
+                    "zh-CN": "1:1 同事会话 · 租户内隔离协作",
+                    "zh-HK": "1:1 同事對話 · 租戶內隔離協作",
+                    en: "1:1 Direct Chat · Tenant-Isolated",
+                  })
+                : tp(
+                    {
+                      "zh-CN": "{count} 位成员 · 租户内隔离协作",
+                      "zh-HK": "{count} 位成員 · 租戶內隔離協作",
+                      en: {
+                        one: "{count} member · Tenant-Isolated",
+                        other: "{count} members · Tenant-Isolated",
+                      },
+                    },
+                    members.length,
+                  )}
             </p>
           </div>
         </div>
@@ -629,14 +706,24 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
             data-testid="room-schedule-meeting-btn"
             disabled={initialLoading}
             onClick={() => setMeetingModalOpen(true)}
-            title="预约 Zoom / 房间会议"
+            title={tx({
+              "zh-CN": "预约 Zoom / 房间会议",
+              "zh-HK": "預約 Zoom / 對話會議",
+              en: "Schedule Zoom or room meeting",
+            })}
             className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:text-[var(--accent)] transition-all duration-[150ms] cursor-pointer disabled:opacity-50"
           >
             <CalendarPlus
               className="h-3.5 w-3.5 text-[var(--accent)]"
               strokeWidth={1.9}
             />
-            <span className="hidden sm:inline">Zoom / 日历预约</span>
+            <span className="hidden sm:inline">
+              {tx({
+                "zh-CN": "Zoom / 日历预约",
+                "zh-HK": "Zoom / 日曆預約",
+                en: "Zoom / Schedule",
+              })}
+            </span>
           </button>
 
           <button
@@ -647,16 +734,24 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                 {
                   kind: "room-members",
                   id: roomId,
-                  title: "会话成员管理",
+                  title: tx({
+                    "zh-CN": "会话成员管理",
+                    "zh-HK": "對話成員管理",
+                    en: "Room Members",
+                  }),
                 },
                 { tab: "current", trigger: e.currentTarget },
               )
             }
-            title="查看或管理成员"
+            title={tx({
+              "zh-CN": "查看或管理成员",
+              "zh-HK": "檢視或管理成員",
+              en: "View or manage members",
+            })}
             className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
           >
             <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
-            <span className="font-mono-code tabular-nums">{members.length}</span>
+            <span className="tabular-nums">{members.length}</span>
           </button>
         </div>
       </header>
@@ -664,12 +759,16 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
       {/* Fluid iMessage Stream */}
       <div
         data-testid="room-message-feed"
-        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-surface)] px-4 py-6 sm:px-8"
+        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)] px-4 py-6 sm:px-8"
       >
         <div className="mx-auto max-w-[740px]">
           {initialLoading ? (
             <div className="py-16 text-center text-[13px] text-[var(--ink-muted)]">
-              正在加载会话消息…
+              {tx({
+                "zh-CN": "正在加载会话消息…",
+                "zh-HK": "正在載入對話訊息…",
+                en: "Loading messages…",
+              })}
             </div>
           ) : messages.length === 0 && pendingOutbound.length === 0 ? (
             <div
@@ -686,8 +785,12 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
               <h3 className="mt-4 text-[17px] font-semibold text-[var(--ink-primary)]">
                 {displayRoomTitle}
               </h3>
-              <p className="mt-1.5 max-w-[380px] text-[13px] text-[var(--ink-muted)] leading-relaxed">
-                发送第一条协作消息，或点击右上角“Zoom / 日历预约”直接发起会议日程。
+              <p className="mt-1.5 max-w-[420px] text-[13px] text-[var(--ink-muted)] leading-relaxed text-balance">
+                {tx({
+                  "zh-CN": "发送第一条协作消息，或点击右上角“Zoom / 日历预约”直接发起会议日程。",
+                  "zh-HK": "傳送第一則協作訊息，或點擊右上角「Zoom / 日曆預約」直接發起會議行程。",
+                  en: "Send the first message, or click Zoom / Schedule above to book a room meeting.",
+                })}
               </p>
             </div>
           ) : (
@@ -695,7 +798,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
               {messages.map((msg, idx) => {
                 const isSelf = actor?.subject === msg.author;
                 const prof = isSelf ? selfProfile : memberProfiles[msg.author];
-                const displayName = prof?.display_name || msg.author;
+                const displayName = resolveMemberDisplayName(msg.author, prof);
                 const avatarSrc = isSelf
                   ? selfProfile?.has_avatar
                     ? `/v1/profile/avatar?v=${avatarVersion}`
@@ -763,7 +866,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                             {displayName}
                           </span>
                           <span className="font-mono-code text-[10.5px] tabular-nums">
-                            {formatUnixTime(msg.created_at)}
+                            {formatDateTime(msg.created_at)}
                           </span>
                         </div>
                       )}
@@ -774,11 +877,11 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                           radiusClass,
                           animateClass,
                           isSelf
-                            ? "bg-[var(--accent)] text-white"
-                            : "bg-[var(--agent-bubble-bg)] text-[var(--ink-primary)]",
+                            ? "bg-[var(--bubble-sent-bg)] text-[var(--bubble-sent-ink)]"
+                            : "bg-[var(--bubble-received-bg)] text-[var(--bubble-received-ink)]",
                         ].join(" ")}
                       >
-                        {msg.text}
+                        {formatChatMessageBody(msg.text, locale)}
                         {showTail && (
                           <IMessageBubbleTail
                             side={isSelf ? "sent" : "received"}
@@ -787,8 +890,8 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                       </div>
 
                       {showTail && isSelf && (
-                        <span className="mt-1 mr-1 font-mono-code text-[10.5px] text-[var(--ink-faint)] tabular-nums">
-                          {formatUnixTime(msg.created_at)}
+                        <span className="mt-1 mr-1 font-mono-code text-[10.5px] text-[var(--ink-muted)] tabular-nums">
+                          {formatDateTime(msg.created_at)}
                         </span>
                       )}
                     </div>
@@ -803,17 +906,28 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                   data-testid={`room-pending-message-${item.clientId}`}
                   className="mt-3 flex flex-col items-end gap-1.5 pr-1.5"
                 >
-                  <div className="imessage-bubble-sent relative max-w-[78%] rounded-lg bg-[var(--accent)]/75 px-4 py-2.5 text-[14.5px] leading-[1.45] text-white whitespace-pre-wrap break-words">
+                  <div className="imessage-bubble-sent relative max-w-[78%] rounded-lg bg-[var(--bubble-sent-bg)]/75 px-4 py-2.5 text-[14.5px] leading-[1.45] text-[var(--bubble-sent-ink)] whitespace-pre-wrap break-words">
                     {item.text}
                   </div>
                   {item.status === "sending" ? (
-                    <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                      正在发送…
+                    <span className="text-[11px] text-[var(--ink-muted)]">
+                      {tx({
+                        "zh-CN": "正在发送…",
+                        "zh-HK": "正在傳送…",
+                        en: "Sending…",
+                      })}
                     </span>
                   ) : (
                     <div className="flex flex-wrap items-center justify-end gap-2 rounded-sm bg-[var(--status-amber-wash)] px-3 py-2 text-[12px] text-[var(--status-amber-ink)]">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                      <span>{item.errorMessage || "发送失败"}</span>
+                      <span>
+                        {item.errorMessage ||
+                          tx({
+                            "zh-CN": "发送失败",
+                            "zh-HK": "傳送失敗",
+                            en: "Failed to send",
+                          })}
+                      </span>
                       {item.conflictMismatch ? (
                         <Button
                           size="sm"
@@ -827,7 +941,11 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                             void sendWithClientId(item.text, freshId, false);
                           }}
                         >
-                          以新消息重发
+                          {tx({
+                            "zh-CN": "以新消息重发",
+                            "zh-HK": "以新訊息重送",
+                            en: "Send as New",
+                          })}
                         </Button>
                       ) : (
                         <Button
@@ -844,7 +962,13 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                           }
                         >
                           <RefreshCw className="h-3 w-3" />
-                          <span>重试发送</span>
+                          <span>
+                            {tx({
+                              "zh-CN": "重试发送",
+                              "zh-HK": "重試傳送",
+                              en: "Retry",
+                            })}
+                          </span>
                         </Button>
                       )}
                     </div>
@@ -859,7 +983,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
       </div>
 
       {/* Minimal Floating Capsule Composer */}
-      <footer className="shrink-0 bg-gradient-to-t from-[var(--bg-surface)] via-[var(--bg-surface)] to-transparent px-4 pt-2 pb-4 sm:px-8 sm:pb-5">
+      <footer className="shrink-0 bg-gradient-to-t from-[var(--bg-sheet)] via-[var(--bg-sheet)] to-transparent px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8 sm:pb-5">
         <div className="mx-auto max-w-[740px]">
           <div className="flex items-end gap-2 rounded-xl bg-[var(--bg-surface)] py-2 pl-4 pr-2.5 shadow-[var(--shadow-composer)] focus-within:shadow-[var(--shadow-composer-focus)] transition-shadow duration-[200ms]">
             <textarea
@@ -871,19 +995,31 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
               value={composerText}
               onChange={(e) => updateComposer(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`向 ${displayRoomTitle} 发送消息…`}
-              className="my-1 block max-h-[150px] min-h-[26px] flex-1 resize-none bg-transparent text-[14.5px] leading-[1.45] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none"
+              placeholder={tx(
+                {
+                  "zh-CN": "向 {room} 发送消息…",
+                  "zh-HK": "向 {room} 傳送訊息…",
+                  en: "Message {room}…",
+                },
+                { room: displayRoomTitle },
+              )}
+              style={{ outline: "none" }}
+              className="my-1 block max-h-[150px] min-h-[26px] flex-1 resize-none border-0 bg-transparent text-[14.5px] leading-[1.45] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
             />
             <button
               type="button"
               data-testid="room-send-btn"
-              aria-label="发送消息"
+              aria-label={tx({
+                "zh-CN": "发送消息",
+                "zh-HK": "傳送訊息",
+                en: "Send message",
+              })}
               disabled={composerText.trim().length === 0}
               onClick={handleSend}
               className={[
                 "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-[150ms]",
                 composerText.trim().length > 0
-                  ? "bg-[var(--accent)] text-white shadow-[0_2px_6px_rgba(22,104,227,0.28)] hover:bg-[var(--accent-hover)] active:scale-[0.92] cursor-pointer"
+                  ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] active:scale-[0.92] cursor-pointer"
                   : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)] cursor-not-allowed",
               ].join(" ")}
             >
@@ -893,7 +1029,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
         </div>
       </footer>
 
-      {/* Upgraded Draft-Then-Confirm Room Meeting Modal (with optional Zoom & MCP Sync + .ics) */}
+      {/* Draft-Then-Confirm Room Meeting Modal (with optional Zoom & MCP Sync + .ics) */}
       <MeetingDraftModal
         open={meetingModalOpen}
         onOpenChange={setMeetingModalOpen}

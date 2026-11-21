@@ -10,6 +10,13 @@ import {
 import { resolveTenantContacts, verifyLiveActor } from "@/lib/bff/directory";
 import { sanitizeErrorPayload } from "@/lib/bff/sanitize";
 import {
+  LOCALE_COOKIE_NAME,
+  encodeMeetingBookedMessage,
+  localizeZoomStatusLabel,
+  normalizeLocale,
+  type Locale,
+} from "@/lib/i18n";
+import {
   createZoomMeeting,
   getMcpConnectorsStatus,
   getZoomPreviewMode,
@@ -219,9 +226,9 @@ async function resolveOrCreateMeetingRoom(params: {
     // Fall through to idempotent room creation
   }
 
-  // Case C: Create a dedicated meeting room idempotently and admit all attendees
+  // Case C: Create a dedicated meeting room idempotently with locale-neutral prefix (P0-2)
   const roomClientId = `zrm_${shortHash(clientId)}`;
-  const roomTitle = `会议 · ${title}`.slice(0, 100);
+  const roomTitle = `Meeting · ${title}`.slice(0, 100);
   const createRes = await fetch(`${apiBase}/v1/chat/rooms`, {
     method: "POST",
     headers: {
@@ -271,6 +278,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   const { actor, cookie } = verified;
+  const locale: Locale = normalizeLocale(
+    req.cookies.get(LOCALE_COOKIE_NAME)?.value,
+  );
 
   let rawBody: unknown;
   try {
@@ -304,9 +314,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       );
     }
 
+    // Include self so parser strips self-mentions from English/Chinese titles cleanly (M-3)
     const directory = await resolveTenantContacts(actor, cookie, {
-      includeSelf: false,
+      includeSelf: true,
       limit: 50,
+      locale,
     });
 
     const parsedMeeting = parseNaturalLanguageMeeting(
@@ -318,6 +330,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         tzOffsetMinutes: parsed.data.tz_offset_minutes,
         roomId: parsed.data.room_id ?? null,
         defaultCalendarTargets: parsed.data.default_calendar_targets,
+        locale,
+        selfSubject: actor.subject,
       },
     );
 
@@ -325,9 +339,10 @@ export async function POST(req: NextRequest): Promise<Response> {
       phase: "preview",
       draft: parsedMeeting.draft,
       warnings: parsedMeeting.warnings,
+      warning_items: parsedMeeting.warningItems,
       zoom_configured: isZoomConfigured(),
       zoom_mode_preview: getZoomPreviewMode(),
-      connectors: getMcpConnectorsStatus(),
+      connectors: getMcpConnectorsStatus(locale),
     };
 
     return jsonResponse(responsePayload, 200);
@@ -397,6 +412,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     const directory = await resolveTenantContacts(actor, cookie, {
       includeSelf: true,
       limit: 50,
+      locale,
     });
     const tenantContactMap = new Map(directory.items.map((c) => [c.subject, c]));
 
@@ -510,45 +526,58 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     // Step 3: Zoom provisioning (MCP -> S2S OAuth -> transparent sandbox_preview)
     const durationMinutes = Math.max(15, Math.round(durationMs / 60_000));
-    const timezone = data.timezone || "Asia/Shanghai";
+    const timezone = data.timezone || "Asia/Hong_Kong";
     const wantsZoom = data.create_zoom !== false;
 
+    const agendaText =
+      locale === "en"
+        ? `AIOS Enterprise Meeting · Organizer ${actor.subject}`
+        : locale === "zh-HK"
+          ? `AIOS 企業會議 · 組織者 ${actor.subject}`
+          : `AIOS 企业会议 · 组织者 ${actor.subject}`;
+
     const zoomResult: ZoomMeetingResult = wantsZoom
-      ? await createZoomMeeting({
-          topic: data.title,
-          startsAtIso: data.starts_at,
-          durationMinutes,
-          timezone,
-          agenda: `AIOS 企业会议 · 组织者 ${actor.subject}`,
-        })
+      ? await createZoomMeeting(
+          {
+            topic: data.title,
+            startsAtIso: data.starts_at,
+            durationMinutes,
+            timezone,
+            agenda: agendaText,
+          },
+          locale,
+        )
       : {
           requested: false,
           mode: "skipped",
           sync_mode: "skipped",
-          status_label: "已仅创建站内日程（未请求 Zoom 会议）",
+          status_code: "SKIPPED",
+          status_label: localizeZoomStatusLabel(
+            {
+              mode: "skipped",
+              join_url: null,
+              status_label: "",
+              status_code: "SKIPPED",
+            },
+            locale,
+          ),
           join_url: null,
           meeting_id: null,
           passcode: null,
         };
 
-    // Step 4: Best-effort persistent room message carrying Zoom/schedule summary
+    // Step 4: Best-effort persistent locale-neutral structured system message (P0-2)
     let roomNotified = false;
     if (resolvedRoomId && data.notify_room !== false) {
-      const msgLines = [
-        `已预约会议「${data.title}」（${data.starts_at.slice(0, 16).replace("T", " ")} – ${data.ends_at.slice(11, 16)}）`,
-      ];
-      if (zoomResult.join_url) {
-        msgLines.push(`Zoom 链接：${zoomResult.join_url}`);
-        if (zoomResult.meeting_id) {
-          msgLines.push(
-            `会议号：${zoomResult.meeting_id}${zoomResult.passcode ? ` · 密码：${zoomResult.passcode}` : ""}`,
-          );
-        }
-      } else if (wantsZoom) {
-        msgLines.push(
-          "Zoom MCP 尚未配置真实凭证，站内日程已入库，参会人可在日历页查看并导出 .ics。",
-        );
-      }
+      const structuredMsg = encodeMeetingBookedMessage({
+        title: data.title,
+        startsAtIso: data.starts_at,
+        endsAtIso: data.ends_at,
+        zoomMode: zoomResult.mode,
+        joinUrl: zoomResult.join_url,
+        meetingId: zoomResult.meeting_id,
+        passcode: zoomResult.passcode,
+      });
 
       try {
         const msgRes = await fetch(
@@ -564,7 +593,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             },
             body: JSON.stringify({
               client_id: `zmsg_${shortHash(data.client_id)}`,
-              text: msgLines.join("\n").slice(0, 1000),
+              text: structuredMsg,
             }),
             cache: "no-store",
             signal: AbortSignal.timeout(2500),
@@ -582,29 +611,58 @@ export async function POST(req: NextRequest): Promise<Response> {
         ? data.calendar_targets
         : ["google", "icloud", "outlook"];
 
-    const externalDescriptionParts = [`AIOS 站内会议同步 · 组织者: ${actor.subject}`];
+    const externalDescriptionParts = [
+      locale === "en"
+        ? `AIOS Internal Calendar Sync · Organizer: ${actor.subject}`
+        : locale === "zh-HK"
+          ? `AIOS 站內會議同步 · 組織者: ${actor.subject}`
+          : `AIOS 站内会议同步 · 组织者: ${actor.subject}`,
+    ];
     if (zoomResult.join_url) {
-      externalDescriptionParts.push(`Zoom 链接: ${zoomResult.join_url}`);
+      externalDescriptionParts.push(
+        locale === "en"
+          ? `Zoom Join URL: ${zoomResult.join_url}`
+          : locale === "zh-HK"
+            ? `Zoom 連結: ${zoomResult.join_url}`
+            : `Zoom 链接: ${zoomResult.join_url}`,
+      );
       if (zoomResult.meeting_id) {
-        externalDescriptionParts.push(`会议号: ${zoomResult.meeting_id}`);
+        externalDescriptionParts.push(
+          locale === "en"
+            ? `Meeting ID: ${zoomResult.meeting_id}`
+            : locale === "zh-HK"
+              ? `會議編號: ${zoomResult.meeting_id}`
+              : `会议号: ${zoomResult.meeting_id}`,
+        );
       }
     }
 
-    const externalSyncResults = await syncExternalCalendars(calendarTargets, {
-      title: data.title,
-      startsAtIso: data.starts_at,
-      endsAtIso: data.ends_at,
-      timezone,
-      location: zoomResult.join_url || "AIOS 站内协作日历",
-      description: externalDescriptionParts.join("\n"),
-      attendees: otherAttendees.map((sub) => {
-        const contact = tenantContactMap.get(sub);
-        return {
-          email: contact?.email || `${sub}@${actor.tenant}.local`,
-          displayName: contact?.display_name || sub,
-        };
-      }),
-    });
+    const defaultCalLocation =
+      locale === "en"
+        ? "AIOS Internal Calendar"
+        : locale === "zh-HK"
+          ? "AIOS 站內協作日曆"
+          : "AIOS 站内协作日历";
+
+    const externalSyncResults = await syncExternalCalendars(
+      calendarTargets,
+      {
+        title: data.title,
+        startsAtIso: data.starts_at,
+        endsAtIso: data.ends_at,
+        timezone,
+        location: zoomResult.join_url || defaultCalLocation,
+        description: externalDescriptionParts.join("\n"),
+        attendees: otherAttendees.map((sub) => {
+          const contact = tenantContactMap.get(sub);
+          return {
+            email: contact?.email || `${sub}@${actor.tenant}.local`,
+            displayName: contact?.display_name || sub,
+          };
+        }),
+      },
+      locale,
+    );
 
     // Step 6: Build .ics download link & unified 201 response
     const icsParams = new URLSearchParams({ event_id: bookedEvent.id });
@@ -625,10 +683,22 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     const statusBadge =
       topMode === "live_mcp" || topMode === "live_api"
-        ? "已同步 Zoom 真实会议与站内日历"
+        ? locale === "en"
+          ? "Synced to Zoom & internal calendar"
+          : locale === "zh-HK"
+            ? "已同步 Zoom 真實會議與站內日曆"
+            : "已同步 Zoom 真实会议与站内日历"
         : topMode === "error_fallback"
-          ? "Zoom 暂不可用（站内日历已真实入库）"
-          : "MCP 待接入真实凭证（站内日历已真实入库）";
+          ? locale === "en"
+            ? "Zoom unavailable (saved to internal calendar)"
+            : locale === "zh-HK"
+              ? "Zoom 暫時無法使用（站內日曆已真實入庫）"
+              : "Zoom 暂不可用（站内日历已真实入库）"
+          : locale === "en"
+            ? "MCP credentials pending (saved to internal calendar)"
+            : locale === "zh-HK"
+              ? "MCP 待接入真實憑證（站內日曆已真實入庫）"
+              : "MCP 待接入真实凭证（站内日历已真实入库）";
 
     const payload: ZoomBookingConfirmResponse = {
       phase: "confirmed",

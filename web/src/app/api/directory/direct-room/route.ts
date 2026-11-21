@@ -9,7 +9,12 @@ import {
 } from "@/lib/bff/config";
 import { resolveTenantContacts, verifyLiveActor } from "@/lib/bff/directory";
 import { sanitizeErrorPayload } from "@/lib/bff/sanitize";
-import type { ChatRoom } from "@/lib/types";
+import {
+  LOCALE_COOKIE_NAME,
+  PERSONA_LOCALIZATIONS,
+  normalizeLocale,
+} from "@/lib/i18n";
+import type { ChatRoom, DemoPersonaId } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -93,10 +98,13 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
+  const locale = normalizeLocale(req.cookies.get(LOCALE_COOKIE_NAME)?.value);
+
   // Strictly verify target belongs to caller's tenant and check existing 1:1 room
   const directory = await resolveTenantContacts(actor, cookie, {
     includeSelf: false,
     limit: 50,
+    locale,
   });
   const target = directory.items.find((c) => c.subject === targetSubject);
   if (!target) {
@@ -109,12 +117,28 @@ export async function POST(req: NextRequest): Promise<Response> {
   const apiBase = getApiBaseUrl();
   const browserOrigin = getBrowserOrigin();
 
+  const knownPersona = PERSONA_LOCALIZATIONS[targetSubject as DemoPersonaId];
+  const rawDisplayLabel =
+    parsed.data.target_display_name || target.display_name || targetSubject;
+  const isDefaultSeededName =
+    Boolean(knownPersona) &&
+    (rawDisplayLabel.trim().toLowerCase() === targetSubject.toLowerCase() ||
+      rawDisplayLabel.trim() === knownPersona!["zh-CN"].displayName ||
+      rawDisplayLabel.trim() === knownPersona!["zh-HK"].displayName ||
+      rawDisplayLabel.trim().toLowerCase() ===
+        knownPersona!.en.displayName.toLowerCase());
+
+  // Locale-neutral persisted DM title so every viewer renders in their own active locale (P0-2)
+  const dmTitle = isDefaultSeededName
+    ? `DM · ${targetSubject}`.slice(0, 100)
+    : `DM · ${rawDisplayLabel} (${targetSubject})`.slice(0, 100);
+
   if (target.direct_room_id) {
     return jsonResponse(
       {
         room: {
           id: target.direct_room_id,
-          title: `私聊 · ${target.display_name}`,
+          title: dmTitle,
           owner: actor.subject,
         } satisfies ChatRoom,
         created: false,
@@ -123,8 +147,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
-  const displayLabel = parsed.data.target_display_name || target.display_name || targetSubject;
-  const dmTitle = `私聊 · ${displayLabel} (${targetSubject})`.slice(0, 100);
   const stableClientId = `dm_${actor.subject}_${targetSubject}`
     .replace(/[^A-Za-z0-9_-]/g, "_")
     .slice(0, 64);

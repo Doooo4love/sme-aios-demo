@@ -52,14 +52,13 @@ const SIZE_MAP: Record<
 };
 
 /**
- * 4 restrained editorial identity hues (<= 8% wash), harmonized with Frosted Porcelain:
- * Cobalt slate, botanical sage, desaturated slate-teal, and warm sand.
+ * 4 restrained theme-aware identity hues harmonized with both Light Porcelain & Dark Obsidian.
  */
 const USER_TONES = [
-  "bg-[rgba(22,104,227,0.08)] text-[#1D5BC4]",
-  "bg-[rgba(18,122,70,0.08)] text-[#127A46]",
-  "bg-[rgba(34,104,120,0.08)] text-[#1E5C6B]",
-  "bg-[rgba(154,108,52,0.08)] text-[#855920]",
+  "bg-[var(--avatar-tone-0-bg)] text-[var(--avatar-tone-0-ink)]",
+  "bg-[var(--avatar-tone-1-bg)] text-[var(--avatar-tone-1-ink)]",
+  "bg-[var(--avatar-tone-2-bg)] text-[var(--avatar-tone-2-ink)]",
+  "bg-[var(--avatar-tone-3-bg)] text-[var(--avatar-tone-3-ink)]",
 ] as const;
 
 function pickUserTone(seed: string): string {
@@ -71,9 +70,9 @@ function pickUserTone(seed: string): string {
 }
 
 const STATUS_DOT_COLOR: Record<AvatarStatus, string> = {
-  online: "bg-[#19A957]",
-  busy: "bg-[#D98218]",
-  offline: "bg-[#98A2B3]",
+  online: "bg-[var(--status-emerald)]",
+  busy: "bg-[var(--status-amber)]",
+  offline: "bg-[var(--ink-faint)]",
   verified: "bg-[var(--accent)]",
 };
 
@@ -111,7 +110,7 @@ export function Avatar({
       ].join(" ")}
     >
       {src && !failed ? (
-        <span className="inline-flex h-full w-full overflow-hidden rounded-full bg-[var(--bg-surface-subtle)] ring-1 ring-black/[0.06]">
+        <span className="inline-flex h-full w-full overflow-hidden rounded-full bg-[var(--bg-surface-subtle)] ring-1 ring-[var(--hairline)]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={src}
@@ -127,8 +126,8 @@ export function Avatar({
           className={[
             "inline-flex h-full w-full items-center justify-center overflow-hidden rounded-full whitespace-nowrap leading-none font-semibold ring-1",
             kind === "agent"
-              ? "bg-[image:var(--agent-surface)] text-[var(--accent)] ring-[var(--agent-ring)]"
-              : `${userTone} ring-black/[0.05]`,
+              ? "bg-[image:var(--agent-surface)] text-[var(--accent-ink)] ring-[var(--agent-ring)]"
+              : `${userTone} ring-[var(--hairline)]`,
             dims.text,
           ].join(" ")}
         >
@@ -166,7 +165,7 @@ export function Avatar({
         <span
           aria-hidden="true"
           className={[
-            "absolute rounded-full ring-white",
+            "absolute rounded-full ring-[var(--bg-surface)]",
             dims.dot,
             STATUS_DOT_COLOR[status],
           ].join(" ")}

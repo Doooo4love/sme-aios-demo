@@ -1,17 +1,9 @@
 "use client";
 
 import React from "react";
+import { useLocale } from "@/lib/i18n";
 
-const SOURCE_LABELS: Record<string, { label: string; emphasis: boolean }> = {
-  erp: { label: "ERP", emphasis: true },
-  synthetic: { label: "合成数据", emphasis: false },
-  finance: { label: "财务系统", emphasis: false },
-  mail: { label: "企业邮箱", emphasis: false },
-  decision: { label: "经营汇总", emphasis: false },
-  internal: { label: "站内记录", emphasis: false },
-  mcp: { label: "MCP 实时", emphasis: true },
-  unconfigured: { label: "未配置", emphasis: false },
-};
+const EMPHASIZED_SOURCES = new Set(["erp", "mcp"]);
 
 export interface SourceTagProps {
   source: string;
@@ -19,23 +11,22 @@ export interface SourceTagProps {
 }
 
 export function SourceTag({ source, className = "" }: SourceTagProps) {
+  const { localizeSource } = useLocale();
   const normalized = source.toLowerCase();
-  const mapped = SOURCE_LABELS[normalized] ?? {
-    label: source,
-    emphasis: false,
-  };
+  const emphasis = EMPHASIZED_SOURCES.has(normalized);
+  const label = localizeSource(normalized);
 
   return (
     <span
       className={[
-        "inline-flex items-center rounded-full px-2 py-0.5 font-mono-code text-[11px] font-medium tracking-[0.02em] leading-none",
-        mapped.emphasis
-          ? "bg-[var(--accent-wash)] text-[var(--accent)]"
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium leading-none",
+        emphasis
+          ? "bg-[var(--accent-wash)] text-[var(--accent-ink)]"
           : "bg-[var(--bg-surface-subtle)] text-[var(--ink-muted)]",
         className,
       ].join(" ")}
     >
-      {mapped.label}
+      {label}
     </span>
   );
 }

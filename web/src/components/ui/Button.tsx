@@ -21,17 +21,17 @@ export interface ButtonProps
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    "bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_12px_-2px_rgba(22,104,227,0.32)] active:bg-[var(--accent-active)] disabled:bg-[var(--bg-surface-subtle)] disabled:text-[var(--ink-muted)] disabled:shadow-none disabled:opacity-75",
+    "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-solid-hover)] hover:shadow-[0_4px_12px_-2px_rgba(22,104,227,0.32)] active:bg-[var(--accent-solid-active)] disabled:bg-[var(--bg-surface-subtle)] disabled:text-[var(--ink-muted)] disabled:shadow-none disabled:opacity-75",
   secondary:
     "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface-tint)] hover:shadow-[var(--shadow-card)] disabled:opacity-45",
   ghost:
     "bg-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] disabled:opacity-45",
   quiet:
-    "bg-transparent text-[var(--accent)] hover:bg-[var(--accent-wash)] active:bg-[var(--accent-wash-strong)] disabled:opacity-45",
+    "bg-transparent text-[var(--accent-ink)] hover:bg-[var(--accent-wash)] active:bg-[var(--accent-wash-strong)] disabled:opacity-45",
   danger:
-    "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)] hover:bg-[rgba(201,42,55,0.14)] disabled:opacity-45",
+    "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)] hover:bg-[var(--status-crimson-border)] disabled:opacity-45",
   "danger-solid":
-    "bg-[var(--status-crimson)] text-white shadow-[0_1px_2px_rgba(201,42,55,0.24)] hover:opacity-92 disabled:opacity-45",
+    "bg-[var(--status-crimson-solid)] text-white shadow-[0_1px_2px_rgba(201,42,55,0.28)] hover:opacity-92 disabled:opacity-45",
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {

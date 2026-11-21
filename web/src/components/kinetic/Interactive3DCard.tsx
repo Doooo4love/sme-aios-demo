@@ -24,6 +24,12 @@ const SHEEN_ALPHA: Record<SheenIntensity, number> = {
   medium: 0.6,
 };
 
+const SHEEN_ALPHA_DARK: Record<SheenIntensity, number> = {
+  none: 0,
+  subtle: 0.08,
+  medium: 0.11,
+};
+
 const SETTLE_DURATION_MS = 260;
 
 /** Approximates cubic-bezier(0.22, 1, 0.36, 1) cleanly for mid-settle re-entry continuity */
@@ -194,6 +200,10 @@ export const Interactive3DCard = React.forwardRef<
       el.style.setProperty("--sheen-x", `${(relX * 100).toFixed(1)}%`);
       el.style.setProperty("--sheen-y", `${(relY * 100).toFixed(1)}%`);
       el.style.setProperty("--sheen-alpha", String(SHEEN_ALPHA[sheenIntensity]));
+      el.style.setProperty(
+        "--sheen-alpha-dark",
+        String(SHEEN_ALPHA_DARK[sheenIntensity]),
+      );
       el.style.setProperty("--sheen-opacity", "1");
     }
   };

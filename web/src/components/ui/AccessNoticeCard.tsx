@@ -11,6 +11,8 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import type { ApiError } from "@/lib/api-client";
+import { sortWarehouses } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
 
 export interface AccessNoticeCardProps {
@@ -66,9 +68,10 @@ export function AccessNoticeCard({
   viewProposalId,
   onRetry,
   backHref,
-  backLabel = "返回工作台",
+  backLabel,
   className = "",
 }: AccessNoticeCardProps) {
+  const { t, localizeError } = useLocale();
   const variant = inferVariant(error, explicitVariant);
   const initialSeconds = retryAfter ?? error?.retryAfter ?? null;
   const [countdown, setCountdown] = useState<number>(initialSeconds ?? 0);
@@ -88,7 +91,9 @@ export function AccessNoticeCard({
   const effectiveRequestId = requestId ?? error?.requestId ?? null;
   const effectiveRunId = runId ?? error?.runId ?? null;
   const effectiveProposalId = viewProposalId ?? error?.viewProposalId ?? null;
-  const warehouses = authorizedWarehouses ?? error?.warehouses ?? [];
+  const warehouses = sortWarehouses(
+    authorizedWarehouses ?? error?.warehouses ?? [],
+  );
 
   const config = (() => {
     switch (variant) {
@@ -98,8 +103,8 @@ export function AccessNoticeCard({
           iconBox:
             "bg-[var(--bg-surface-subtle)] text-[var(--ink-secondary)]",
           Icon: Lock,
-          defaultTitle: "记录不可访问",
-          defaultMessage: "当前账号无法访问这条记录。",
+          defaultTitle: t("notice.recordUnavailable.title"),
+          defaultMessage: t("notice.recordUnavailable.message"),
         };
       case "ACCESS_RESTRICTED":
         return {
@@ -107,58 +112,58 @@ export function AccessNoticeCard({
           iconBox:
             "bg-[var(--bg-surface)] text-[var(--status-crimson)] shadow-[var(--shadow-subtle)]",
           Icon: ShieldAlert,
-          defaultTitle: "访问范围受限",
-          defaultMessage: "当前账号无权执行此操作或访问该站点范围。",
+          defaultTitle: t("notice.accessRestricted.title"),
+          defaultMessage: t("notice.accessRestricted.message"),
         };
       case "ACTION_NOT_ALLOWED":
         return {
           tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
           Icon: ShieldAlert,
-          defaultTitle: "当前账号不可执行该动作",
-          defaultMessage:
-            "该操作需要独立审批授权或更高级别范围，您可以只读查看单据详情。",
+          defaultTitle: t("notice.actionNotAllowed.title"),
+          defaultMessage: t("notice.actionNotAllowed.message"),
         };
       case "ACCESS_CHANGED":
         return {
           tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
           Icon: AlertTriangle,
-          defaultTitle: "访问权限已变更",
-          defaultMessage: "访问权限已变更，已清除旧视图并同步刷新可用能力。",
+          defaultTitle: t("notice.accessChanged.title"),
+          defaultMessage: t("notice.accessChanged.message"),
         };
       case "CONFLICT":
         return {
           tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
           Icon: RefreshCw,
-          defaultTitle: "数据快照已更新",
-          defaultMessage: "数据已更新，请刷新并核对最新快照后再确认。",
+          defaultTitle: t("notice.conflict.title"),
+          defaultMessage: t("notice.conflict.message"),
         };
       case "RETRY_LATER":
         return {
           tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
           Icon: Clock,
-          defaultTitle: "服务繁忙或上游连接暂不可用",
+          defaultTitle: t("notice.retryLater.title"),
           defaultMessage:
             countdown > 0
-              ? `服务繁忙或连接器暂不可用，请在 ${countdown} 秒后重试。`
-              : "服务繁忙或连接器暂不可用，请保留当前输入后点击重试。",
+              ? t("notice.retryLater.countdown", { seconds: countdown })
+              : t("notice.retryLater.ready"),
         };
     }
   })();
 
   const Icon = config.Icon;
   const displayTitle = title ?? config.defaultTitle;
+  const localizedErrorMessage = error ? localizeError(error) : undefined;
   const displayMessage =
     variant === "RECORD_UNAVAILABLE"
-      ? "当前账号无法访问这条记录。"
-      : (message ?? error?.message ?? config.defaultMessage);
+      ? t("notice.recordUnavailable.message")
+      : (message ?? localizedErrorMessage ?? config.defaultMessage);
 
   return (
     <div
@@ -183,15 +188,16 @@ export function AccessNoticeCard({
           </p>
 
           {variant === "RETRY_LATER" && countdown > 0 && (
-            <p className="mt-1.5 font-mono-code text-[12px] text-[var(--status-amber-ink)]">
-              Retry-After: {countdown}s
+            <p className="mt-1.5 tabular-nums text-[12px] text-[var(--status-amber-ink)]">
+              Retry-After:{" "}
+              <span className="font-mono-code">{countdown}s</span>
             </p>
           )}
 
           {warehouses.length > 0 && onSelectWarehouse && (
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <span className="text-[12px] text-[var(--ink-muted)] mr-1">
-                当前已授权仓库：
+                {t("notice.authorizedWarehouses")}
               </span>
               {warehouses.map((wh) => (
                 <Button
@@ -200,9 +206,8 @@ export function AccessNoticeCard({
                   pill
                   variant="secondary"
                   onClick={() => onSelectWarehouse(wh)}
-                  className="font-mono-code"
                 >
-                  切换至 {wh}
+                  {t("notice.switchWarehouse", { warehouse: wh })}
                 </Button>
               ))}
             </div>
@@ -215,7 +220,7 @@ export function AccessNoticeCard({
                   href={`/proposals/${encodeURIComponent(effectiveProposalId)}`}
                   className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-shadow"
                 >
-                  <span>查看单据详情</span>
+                  <span>{t("notice.viewProposalDetail")}</span>
                   <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.8} />
                 </Link>
               )}
@@ -231,10 +236,10 @@ export function AccessNoticeCard({
                   <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.8} />
                   <span>
                     {variant === "RETRY_LATER" && countdown > 0
-                      ? `请等待 ${countdown}s`
+                      ? t("notice.waitSeconds", { seconds: countdown })
                       : variant === "CONFLICT"
-                        ? "刷新最新快照"
-                        : "重新尝试"}
+                        ? t("notice.refreshSnapshot")
+                        : t("common.retry")}
                   </span>
                 </Button>
               )}
@@ -244,18 +249,26 @@ export function AccessNoticeCard({
                   href={backHref}
                   className="inline-flex h-8 items-center rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-shadow"
                 >
-                  {backLabel}
+                  {backLabel ?? t("common.backToWorkbench")}
                 </Link>
               )}
             </div>
           )}
 
           {(effectiveRequestId || effectiveRunId) && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--hairline-subtle)] pt-2 font-mono-code text-[11px] text-[var(--ink-muted)]">
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--hairline-subtle)] pt-2 text-[11px] text-[var(--ink-muted)]">
               {effectiveRequestId && (
-                <span>跟踪编号: {effectiveRequestId}</span>
+                <span>
+                  {t("common.requestId")}:{" "}
+                  <span className="font-mono-code">{effectiveRequestId}</span>
+                </span>
               )}
-              {effectiveRunId && <span>运行编号: {effectiveRunId}</span>}
+              {effectiveRunId && (
+                <span>
+                  {t("common.runId")}:{" "}
+                  <span className="font-mono-code">{effectiveRunId}</span>
+                </span>
+              )}
             </div>
           )}
         </div>

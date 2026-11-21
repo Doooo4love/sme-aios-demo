@@ -27,13 +27,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import {
-  formatProposalAction,
-  formatProposalStateLabel,
-  formatRelativeCountdown,
-  formatShortDigest,
-  formatUnixTime,
-} from "@/lib/format";
+import { formatShortDigest } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import {
   BriefProgressChain,
@@ -85,86 +80,23 @@ const POLLABLE_PROPOSAL_STATES: ReadonlySet<ProposalState> = new Set([
   "CHECKING",
 ]);
 
-const EVENT_LABELS: Record<
-  string,
-  { label: string; tone: "neutral" | "emerald" | "amber" | "crimson" }
-> = {
-  PROPOSED: { label: "已提交提案", tone: "neutral" },
-  APPROVAL_DENIED: { label: "自审批已拦截", tone: "amber" },
-  SELF_APPROVAL_DENIED: { label: "自审批已拦截", tone: "amber" },
-  APPROVED_AND_QUEUED: { label: "独立主管已批准并入队", tone: "neutral" },
-  APPROVED: { label: "独立主管已批准", tone: "neutral" },
-  QUEUED: { label: "已进入出站队列", tone: "neutral" },
-  SENDING: { label: "正在写入 ERP", tone: "neutral" },
-  VERIFYING: { label: "正在核验回执", tone: "neutral" },
-  CHECKING: { label: "回执复核中", tone: "amber" },
-  OUTCOME_UNKNOWN: { label: "传输结果待确认", tone: "amber" },
-  VERIFIED: { label: "已核验入账", tone: "emerald" },
-  REVIEW_ASSIGNED: { label: "已分派审批人", tone: "neutral" },
-  REVIEW_RELEASED: { label: "已释放审批分派", tone: "neutral" },
-  REVIEW_RETURNED: { label: "已退回修改", tone: "amber" },
-  RETURNED: { label: "已退回修改", tone: "amber" },
-  REVIEW_REJECTED: { label: "已拒绝", tone: "crimson" },
-  REJECTED: { label: "已拒绝", tone: "crimson" },
-  WRITES_PAUSED_BEFORE_SEND: { label: "ERP 写入暂停，保持排队", tone: "amber" },
-  LEASE_EXPIRED_VERIFY_ONLY: { label: "租约超时，切换为只读核验", tone: "amber" },
-  REOPEN_VERIFICATION: { label: "运维重新发起回执核验", tone: "amber" },
-  NEEDS_OPERATOR: { label: "需运维人工核查", tone: "crimson" },
-  ACCESS_SUSPENDED_BEFORE_SEND: { label: "账号已停权，阻断出站", tone: "crimson" },
-  APPROVAL_EXPIRED_BEFORE_SEND: { label: "审批已过期，阻断出站", tone: "crimson" },
-  MODULE_ACCESS_REVOKED_BEFORE_SEND: {
-    label: "模块权限已撤销，阻断出站",
-    tone: "crimson",
-  },
-  ERP_PRE_WRITE_REJECTION: { label: "ERP 写入前拒绝", tone: "crimson" },
-  ERP_RECEIPT_MISMATCH: { label: "ERP 回执摘要不一致", tone: "crimson" },
-  READBACK_LIMIT_REACHED: { label: "达到回查次数上限", tone: "crimson" },
-  INVALID_STORED_PLAN: { label: "提案计划校验失败", tone: "crimson" },
-  PLAN_DIGEST_OR_TENANT_MISMATCH: { label: "摘要或租户边界不匹配", tone: "crimson" },
-};
-
-function resolveAuditEventMeta(rawEvent: string): {
-  label: string;
-  tone: "neutral" | "emerald" | "amber" | "crimson";
-} {
-  const exact = EVENT_LABELS[rawEvent];
-  if (exact) return exact;
-  const upper = rawEvent.toUpperCase();
-  if (upper.includes("DENIED")) {
-    return { label: "操作已被权限闸门拦截", tone: "amber" };
-  }
-  if (upper.includes("RETURN")) {
-    return { label: "已退回修改", tone: "amber" };
-  }
-  if (upper.includes("REJECT")) {
-    return { label: "已拒绝", tone: "crimson" };
-  }
-  if (upper.includes("VERIF")) {
-    return { label: "已核验入账", tone: "emerald" };
-  }
-  if (upper.includes("APPROV")) {
-    return { label: "独立主管已批准", tone: "neutral" };
-  }
-  return { label: "系统状态变更", tone: "neutral" };
-}
-
-function deriveProposalHeading(proposal: Proposal): string {
-  const actionLabel = formatProposalAction(proposal.plan.action);
-  if (proposal.plan.action === "sales_order.create_draft") {
-    const after = extractSalesOrderAfter(proposal.plan);
-    if (after?.po && after.po !== "—") {
-      return `${actionLabel} · ${after.po}`;
-    }
-  }
-  if (proposal.plan.target) {
-    return `${actionLabel} · ${proposal.plan.target}`;
-  }
-  return actionLabel;
-}
-
 const DEMO_APPROVER_SUGGESTIONS: Record<string, string[]> = {
   harbour: ["manager", "admin", "access-admin", "other-manager"],
   island: ["island-manager"],
+};
+
+const KNOWN_SUBJECT_ROLES: Readonly<Record<string, string>> = {
+  operator: "operator",
+  manager: "manager",
+  finance: "operator",
+  "access-admin": "admin",
+  admin: "admin",
+  quality: "operator",
+  legal: "operator",
+  executive: "viewer",
+  viewer: "viewer",
+  "other-manager": "manager",
+  "island-manager": "manager",
 };
 
 type ActiveDialog =
@@ -188,6 +120,20 @@ export function ProposalInspectorPanel({
   mode,
   onProposalUpdated,
 }: ProposalInspectorPanelProps) {
+  const {
+    locale,
+    t,
+    tx,
+    tp,
+    formatDateTime,
+    formatCountdown,
+    localizeAction,
+    localizeStatus,
+    localizeTimelineEvent,
+    localizePersona,
+    localizeRole,
+    localizeError,
+  } = useLocale();
   const {
     actor,
     capabilities,
@@ -303,7 +249,7 @@ export function ProposalInspectorPanel({
           }
           if (
             options?.silent &&
-            (error.status === 429 || error.status === 503)
+            (error.status === 429 || error.status >= 500)
           ) {
             const waitSec = error.retryAfter ?? 5;
             setRetryWaitSeconds(waitSec);
@@ -385,6 +331,34 @@ export function ProposalInspectorPanel({
     };
   }, [proposalId, isPollableState, pollExhausted, authGeneration, loadProposal]);
 
+  const formatAuditActor = useCallback(
+    (subject: string): string => {
+      const normalized = subject.trim().toLowerCase();
+      if (normalized === "worker") {
+        return tx({
+          "zh-CN": "系统执行器",
+          "zh-HK": "系統執行器",
+          en: "System worker",
+        });
+      }
+      if (normalized === "system") {
+        return tx({
+          "zh-CN": "系统",
+          "zh-HK": "系統",
+          en: "System",
+        });
+      }
+      const meta = demoConfig?.personas.find((p) => p.subject === subject);
+      const info = localizePersona(subject, meta);
+      const roleKey = meta?.role ?? KNOWN_SUBJECT_ROLES[subject];
+      if (roleKey) {
+        return `${info.displayName} · ${localizeRole(roleKey)}`;
+      }
+      return info.displayName;
+    },
+    [demoConfig, localizePersona, localizeRole, tx],
+  );
+
   const intakeId = useMemo(() => {
     if (!proposal) return null;
     const before = extractSalesOrderBefore(proposal.plan);
@@ -392,7 +366,6 @@ export function ProposalInspectorPanel({
   }, [proposal]);
 
   // Real-state truthful checkpoints folded inline into ExecutionTopologyRibbon headerRight
-  // (No conflicting fractions against the 5-step stepper or verification-round chip!)
   const progressChain = useMemo<{
     phase: "done" | "error";
     summary: string;
@@ -418,52 +391,146 @@ export function ProposalInspectorPanel({
     const steps: BriefProgressStep[] = [
       {
         id: "propose-lock",
-        label: `提案已由 ${proposal.requester} 发起并锁定摘要（${proposal.warehouse}）`,
+        label: tx(
+          {
+            "zh-CN": "提案已由 {requester} 发起并锁定摘要（{wh}）",
+            "zh-HK": "提案已由 {requester} 發起並鎖定摘要（{wh}）",
+            en: "Proposed by {requester} with digest lock ({wh})",
+          },
+          { requester: proposal.requester, wh: proposal.warehouse },
+        ),
         status: "done",
         meta: formatShortDigest(proposal.digest),
       },
       {
         id: "independent-approval",
         label: proposal.approver
-          ? `独立主管 ${proposal.approver} 已批准并进入出站队列`
+          ? tx(
+              {
+                "zh-CN": "独立主管 {approver} 已批准并进入出站队列",
+                "zh-HK": "獨立主管 {approver} 已批准並進入出站佇列",
+                en: "Approved & queued by independent manager {approver}",
+              },
+              { approver: proposal.approver },
+            )
           : isRejected
             ? proposal.review?.decision === "returned"
-              ? `提案已由 ${proposal.review.decided_by ?? "主管"} 退回修改`
-              : "提案已被拒绝并终止"
+              ? tx(
+                  {
+                    "zh-CN": "提案已由 {actor} 退回修改",
+                    "zh-HK": "提案已由 {actor} 退回修改",
+                    en: "Returned for revision by {actor}",
+                  },
+                  {
+                    actor:
+                      proposal.review.decided_by ??
+                      tx({
+                        "zh-CN": "主管",
+                        "zh-HK": "主管",
+                        en: "manager",
+                      }),
+                  },
+                )
+              : tx({
+                  "zh-CN": "提案已被拒绝并终止",
+                  "zh-HK": "提案已被拒絕並終止",
+                  en: "Proposal rejected & terminated",
+                })
             : proposal.review?.assigned_to
-              ? `等待指定主管 ${proposal.review.assigned_to} 确认`
-              : "等待授权站点独立主管审批",
+              ? tx(
+                  {
+                    "zh-CN": "等待指定主管 {assignee} 确认",
+                    "zh-HK": "等待指定主管 {assignee} 確認",
+                    en: "Awaiting assigned manager {assignee}",
+                  },
+                  { assignee: proposal.review.assigned_to },
+                )
+              : tx({
+                  "zh-CN": "等待授权仓库独立主管审批",
+                  "zh-HK": "等待授權倉庫獨立主管審批",
+                  en: "Awaiting independent warehouse manager approval",
+                }),
         status: approvalStatus,
-        meta: proposal.approver ?? proposal.review?.assigned_to ?? "待独立审批",
+        meta:
+          proposal.approver ??
+          proposal.review?.assigned_to ??
+          tx({
+            "zh-CN": "待独立审批",
+            "zh-HK": "待獨立審批",
+            en: "Pending",
+          }),
       },
       {
         id: "erp-verify",
         label: isVerified
-          ? "ERP 已完成幂等写入且回执摘要一致"
+          ? tx({
+              "zh-CN": "ERP 已完成幂等写入且回执摘要一致",
+              "zh-HK": "ERP 已完成冪等寫入且回執摘要一致",
+              en: "Idempotent ERP write completed with matching receipt digest",
+            })
           : isNeedsOp
-            ? `已达回查上限（${proposal.checks}/3），需运维核查回执`
+            ? tx(
+                {
+                  "zh-CN": "已达回查上限（{checks}/3），需运维核查回执",
+                  "zh-HK": "已達回查上限（{checks}/3），須維運核查回執",
+                  en: "Readback limit reached ({checks}/3); operator check needed",
+                },
+                { checks: proposal.checks },
+              )
             : isRejected
-              ? "未执行 ERP 写入（提案已终止）"
-              : `当前流转阶段：${formatProposalStateLabel(proposal.state)}`,
+              ? tx({
+                  "zh-CN": "未执行 ERP 写入（提案已终止）",
+                  "zh-HK": "未執行 ERP 寫入（提案已終止）",
+                  en: "No ERP write performed (proposal terminated)",
+                })
+              : tx(
+                  {
+                    "zh-CN": "当前流转阶段：{state}",
+                    "zh-HK": "目前流轉階段：{state}",
+                    en: "Current stage: {state}",
+                  },
+                  { state: localizeStatus(proposal.state) },
+                ),
         status: executionStatus,
         meta:
           proposal.receipt?.remote_id ??
-          (proposal.checks > 0 ? `核验 ${proposal.checks}/3` : proposal.state),
+          (proposal.checks > 0
+            ? tx(
+                {
+                  "zh-CN": "核验 {checks}/3",
+                  "zh-HK": "核驗 {checks}/3",
+                  en: "Check {checks}/3",
+                },
+                { checks: proposal.checks },
+              )
+            : localizeStatus(proposal.state, { compact: true })),
       },
     ];
 
     const summary = isNeedsOp
-      ? "异常核验明细"
+      ? tx({
+          "zh-CN": "异常核验明细",
+          "zh-HK": "異常核驗明細",
+          en: "Exception Details",
+        })
       : isRejected
-        ? "终止记录明细"
-        : "核验明细";
+        ? tx({
+            "zh-CN": "终止记录明细",
+            "zh-HK": "終止紀錄明細",
+            en: "Termination Details",
+          })
+        : tx({
+            "zh-CN": "核验明细",
+            "zh-HK": "核驗明細",
+            en: "Verification Details",
+          });
 
     return {
       phase: isNeedsOp || isRejected ? "error" : "done",
       summary,
       steps,
     };
-  }, [proposal]);
+  }, [proposal, tx, localizeStatus]);
 
   const handleToggleIntake = async () => {
     if (!intakeId) return;
@@ -564,7 +631,11 @@ export function ProposalInspectorPanel({
       if (isStaleAuthError(error)) return;
       if (!isApiError(error)) {
         setActionError({
-          message: "操作未能完成，请刷新后重试。",
+          message: tx({
+            "zh-CN": "操作未能完成，请刷新后重试。",
+            "zh-HK": "操作未能完成，請重新整理後重試。",
+            en: "Action could not be completed. Refresh and try again.",
+          }),
         });
         return;
       }
@@ -595,11 +666,23 @@ export function ProposalInspectorPanel({
           error,
           variant: "ACTION_NOT_ALLOWED",
           title: isSelfOrIndependent
-            ? "无法审批本人提交的提案"
-            : "当前账号无权执行该审批操作",
+            ? tx({
+                "zh-CN": "无法审批本人提交的提案",
+                "zh-HK": "無法審批本人提交的提案",
+                en: "Self-Approval Blocked",
+              })
+            : tx({
+                "zh-CN": "当前账号无权执行该审批操作",
+                "zh-HK": "目前帳號無權執行該審批操作",
+                en: "Approval Action Not Permitted",
+              }),
           message: isSelfOrIndependent
-            ? "不能审批本人提交的提案，请由独立主管审批。"
-            : error.message,
+            ? tx({
+                "zh-CN": "不能审批本人提交的提案，请由独立主管审批。",
+                "zh-HK": "不能審批本人提交的提案，請由獨立主管審批。",
+                en: "You cannot approve your own proposal. An independent manager must approve it.",
+              })
+            : localizeError(error),
         });
         setActiveDialog(null);
         return;
@@ -615,15 +698,36 @@ export function ProposalInspectorPanel({
           previousAssignedTo: priorProposal.review?.assigned_to ?? null,
           message:
             refreshed && refreshed.digest !== priorProposal.digest
-              ? "提案摘要已变更，已加载最新快照，请核对差异后再重新确认。"
-              : "提案状态或分派归属已变更，已刷新最新快照，请核对后再操作。",
+              ? tx({
+                  "zh-CN":
+                    "提案摘要已变更，已加载最新快照，请核对差异后再重新确认。",
+                  "zh-HK":
+                    "提案摘要已變更，已載入最新快照，請核對差異後再重新確認。",
+                  en: "Proposal digest changed. Latest snapshot loaded — review the diff before confirming again.",
+                })
+              : tx({
+                  "zh-CN":
+                    "提案状态或分派归属已变更，已刷新最新快照，请核对后再操作。",
+                  "zh-HK":
+                    "提案狀態或分派歸屬已變更，已重新整理最新快照，請核對後再操作。",
+                  en: "Proposal state or assignment changed. Reloaded the latest snapshot for review.",
+                }),
         });
         setActionError({
           error,
           variant: "CONFLICT",
-          title: "乐观锁冲突（409）· 已刷新最新快照",
-          message:
-            "提案摘要、状态或分派已发生变化，请核对下方最新差异后重新确认提交。",
+          title: tx({
+            "zh-CN": "乐观锁冲突（409）· 已刷新最新快照",
+            "zh-HK": "樂觀鎖衝突（409）· 已重新整理最新快照",
+            en: "Optimistic Lock Conflict (409) · Reloaded",
+          }),
+          message: tx({
+            "zh-CN":
+              "提案摘要、状态或分派已发生变化，请核对下方最新差异后重新确认提交。",
+            "zh-HK":
+              "提案摘要、狀態或分派已發生變化，請核對下方最新差異後重新確認提交。",
+            en: "The proposal digest, state, or assignment changed. Verify the updated diff below before retrying.",
+          }),
         });
         return;
       }
@@ -632,7 +736,7 @@ export function ProposalInspectorPanel({
         setActionError({
           error,
           variant: "RETRY_LATER",
-          message: error.message,
+          message: localizeError(error),
         });
         setActiveDialog(null);
         return;
@@ -640,11 +744,11 @@ export function ProposalInspectorPanel({
 
       setActionError({
         error,
-        message: error.message,
+        message: localizeError(error),
       });
       setActiveDialog(null);
     },
-    [actor, handleAccessChanged, loadProposal],
+    [actor, handleAccessChanged, loadProposal, tx, localizeError],
   );
 
   const executeApprove = async () => {
@@ -660,7 +764,13 @@ export function ProposalInspectorPanel({
       setActiveDialog(null);
       setPollCount(0);
       setPollExhausted(false);
-      setActionSuccess("已批准并进入执行队列（QUEUED · 等待执行）。");
+      setActionSuccess(
+        tx({
+          "zh-CN": "已批准并进入执行队列，等待派发执行。",
+          "zh-HK": "已批准並進入執行佇列，等待派發執行。",
+          en: "Approved and queued for ERP dispatch.",
+        }),
+      );
       onProposalUpdatedRef.current?.(updated);
     } catch (error) {
       await handleMutationError(error, snapshot);
@@ -676,11 +786,23 @@ export function ProposalInspectorPanel({
     if (action === "return" || action === "reject") {
       const trimmed = reasonInput.trim();
       if (!trimmed) {
-        setReasonError("请填写必填原因（1–240 字符）。");
+        setReasonError(
+          tx({
+            "zh-CN": "请填写必填原因（1–240 字符）。",
+            "zh-HK": "請填寫必填原因（1–240 字元）。",
+            en: "Please enter a required reason (1–240 characters).",
+          }),
+        );
         return;
       }
       if (trimmed.length > 240) {
-        setReasonError("原因不能超过 240 字符。");
+        setReasonError(
+          tx({
+            "zh-CN": "原因不能超过 240 字符。",
+            "zh-HK": "原因不可超過 240 字元。",
+            en: "Reason cannot exceed 240 characters.",
+          }),
+        );
         return;
       }
       setReasonError(null);
@@ -688,7 +810,13 @@ export function ProposalInspectorPanel({
     if (action === "assign") {
       const trimmed = assigneeInput.trim();
       if (!trimmed || !/^[A-Za-z0-9._:@-]+$/.test(trimmed)) {
-        setAssigneeError("请输入有效的同事账号（例如 manager）。");
+        setAssigneeError(
+          tx({
+            "zh-CN": "请输入有效的同事账号（例如 manager）。",
+            "zh-HK": "請輸入有效的同事帳號（例如 manager）。",
+            en: "Enter a valid colleague subject ID (e.g. manager).",
+          }),
+        );
         return;
       }
       setAssigneeError(null);
@@ -714,10 +842,37 @@ export function ProposalInspectorPanel({
       setReasonInput("");
       setAssigneeInput("");
       const successText: Record<typeof action, string> = {
-        return: "提案已退回发起人（当前提案已终止，需重新进件）。",
-        reject: "提案已正式拒绝（终止）。",
-        assign: `提案已分派给 ${updated.review?.assigned_to ?? "指定审批人"}。`,
-        release: "已释放当前审批分派，同站点独立主管均可认领。",
+        return: tx({
+          "zh-CN": "提案已退回发起人（当前提案已终止，需重新进件）。",
+          "zh-HK": "提案已退回發起人（目前提案已終止，須重新進件）。",
+          en: "Proposal returned to requester (this proposal is now closed; a fresh intake is required).",
+        }),
+        reject: tx({
+          "zh-CN": "提案已正式拒绝（终止）。",
+          "zh-HK": "提案已正式拒絕（終止）。",
+          en: "Proposal permanently rejected.",
+        }),
+        assign: tx(
+          {
+            "zh-CN": "提案已分派给 {assignee}。",
+            "zh-HK": "提案已分派予 {assignee}。",
+            en: "Proposal assigned to {assignee}.",
+          },
+          {
+            assignee:
+              updated.review?.assigned_to ??
+              tx({
+                "zh-CN": "指定审批人",
+                "zh-HK": "指定審批人",
+                en: "designated approver",
+              }),
+          },
+        ),
+        release: tx({
+          "zh-CN": "已释放当前审批分派，同仓库独立主管均可认领。",
+          "zh-HK": "已釋放目前審批分派，同倉庫獨立主管均可認領。",
+          en: "Assignment released; any independent warehouse manager may now claim or approve.",
+        }),
       };
       setActionSuccess(successText[action]);
       onProposalUpdatedRef.current?.(updated);
@@ -740,7 +895,13 @@ export function ProposalInspectorPanel({
       setActiveDialog(null);
       setPollCount(0);
       setPollExhausted(false);
-      setActionSuccess("已重新发起只读回执核验（OUTCOME_UNKNOWN）。");
+      setActionSuccess(
+        tx({
+          "zh-CN": "已重新发起只读回执核验（结果待确认）。",
+          "zh-HK": "已重新發起唯讀回執核驗（結果待確認）。",
+          en: "Reopened read-only ERP receipt verification.",
+        }),
+      );
       onProposalUpdatedRef.current?.(updated);
     } catch (error) {
       await handleMutationError(error, snapshot);
@@ -758,12 +919,20 @@ export function ProposalInspectorPanel({
       await loadProposal({ silent: true });
       setActionSuccess(
         res.worked
-          ? "Worker 已推进 1 步执行，已同步最新提案状态。"
-          : "当前无待推进的队列任务，已刷新状态。",
+          ? tx({
+              "zh-CN": "Worker 已推进 1 步执行，已同步最新提案状态。",
+              "zh-HK": "Worker 已推進 1 步執行，已同步最新提案狀態。",
+              en: "Worker advanced 1 step and synced the latest proposal state.",
+            })
+          : tx({
+              "zh-CN": "当前无待推进的队列任务，已刷新状态。",
+              "zh-HK": "目前無待推進的佇列任務，已重新整理狀態。",
+              en: "No queued jobs ready to advance; state refreshed.",
+            }),
       );
     } catch (error) {
       if (!isStaleAuthError(error) && isApiError(error)) {
-        setActionError({ error, message: error.message });
+        setActionError({ error, message: localizeError(error) });
       }
     } finally {
       setWorkerTickLoading(false);
@@ -797,7 +966,11 @@ export function ProposalInspectorPanel({
         data-testid="proposal-loading"
       >
         <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-8 text-center text-[13px] text-[var(--ink-muted)]">
-          正在实时校验权限并加载提案详情…
+          {tx({
+            "zh-CN": "正在实时校验权限并加载提案详情…",
+            "zh-HK": "正在即時校驗權限並載入提案詳情…",
+            en: "Verifying permissions and loading proposal…",
+          })}
         </div>
       </div>
     );
@@ -829,9 +1002,22 @@ export function ProposalInspectorPanel({
   const beaconState = isPollableState
     ? proposalStateToBeacon(proposal.state)
     : null;
-  const expiryInfo = formatRelativeCountdown(proposal.expires);
-  const changeSummary = summarizePlanChange(proposal.plan);
-  const proposalHeading = deriveProposalHeading(proposal);
+  const expiryInfo = formatCountdown(proposal.expires);
+  const changeSummary = summarizePlanChange(proposal.plan, locale);
+  const actionLabel = localizeAction(proposal.plan.action);
+  const proposalHeading = (() => {
+    if (proposal.plan.action === "sales_order.create_draft") {
+      const after = extractSalesOrderAfter(proposal.plan);
+      if (after?.po && after.po !== "—") {
+        return `${actionLabel} · ${after.po}`;
+      }
+    }
+    if (proposal.plan.target) {
+      return `${actionLabel} · ${proposal.plan.target}`;
+    }
+    return actionLabel;
+  })();
+
   const canDemoTick =
     Boolean(demoConfig?.enabled) &&
     actor?.role === "admin" &&
@@ -839,12 +1025,58 @@ export function ProposalInspectorPanel({
     isNonTerminal;
 
   const confirmMetadata = [
-    { label: "提案编号", value: proposal.id, mono: true },
-    { label: "仓库站点", value: proposal.warehouse, mono: true },
-    { label: "动作类型", value: formatProposalAction(proposal.plan.action) },
-    { label: "目标对象", value: proposal.plan.target, mono: true },
-    { label: "拟变更内容", value: changeSummary },
-    { label: "摘要锁", value: formatShortDigest(proposal.digest), mono: true },
+    {
+      label: tx({
+        "zh-CN": "提案编号",
+        "zh-HK": "提案編號",
+        en: "Proposal ID",
+      }),
+      value: proposal.id,
+      mono: true,
+    },
+    {
+      label: tx({
+        "zh-CN": "仓库",
+        "zh-HK": "倉庫",
+        en: "Warehouse",
+      }),
+      value: proposal.warehouse,
+      mono: true,
+    },
+    {
+      label: tx({
+        "zh-CN": "动作类型",
+        "zh-HK": "動作類型",
+        en: "Action",
+      }),
+      value: actionLabel,
+    },
+    {
+      label: tx({
+        "zh-CN": "目标对象",
+        "zh-HK": "目標物件",
+        en: "Target",
+      }),
+      value: proposal.plan.target,
+      mono: true,
+    },
+    {
+      label: tx({
+        "zh-CN": "拟变更内容",
+        "zh-HK": "擬變更內容",
+        en: "Proposed Change",
+      }),
+      value: changeSummary,
+    },
+    {
+      label: tx({
+        "zh-CN": "摘要锁",
+        "zh-HK": "摘要鎖",
+        en: "Digest Lock",
+      }),
+      value: formatShortDigest(proposal.digest),
+      mono: true,
+    },
   ];
 
   const approverSuggestions =
@@ -872,7 +1104,13 @@ export function ProposalInspectorPanel({
                   className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.85} />
-                  <span>工作台</span>
+                  <span>
+                    {tx({
+                      "zh-CN": "工作台",
+                      "zh-HK": "工作台",
+                      en: "Workbench",
+                    })}
+                  </span>
                 </Link>
               )}
               <h1
@@ -899,7 +1137,9 @@ export function ProposalInspectorPanel({
 
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-[var(--ink-muted)]">
               <span className="inline-flex items-center gap-1 rounded-full bg-[var(--bg-surface-tint)] pl-2.5 pr-1 py-0.5">
-                <span className="text-[11px] text-[var(--ink-muted)]">单号</span>
+                <span className="text-[11px] text-[var(--ink-muted)]">
+                  {tx({ "zh-CN": "单号", "zh-HK": "單號", en: "ID" })}
+                </span>
                 <span
                   title={proposal.id}
                   data-testid="proposal-id-value"
@@ -910,8 +1150,19 @@ export function ProposalInspectorPanel({
                 <button
                   type="button"
                   onClick={() => void handleCopy("id", proposal.id)}
-                  title={`复制完整提案编号 ${proposal.id}`}
-                  aria-label="复制提案编号"
+                  title={tx(
+                    {
+                      "zh-CN": "复制完整提案编号 {id}",
+                      "zh-HK": "複製完整提案編號 {id}",
+                      en: "Copy full proposal ID {id}",
+                    },
+                    { id: proposal.id },
+                  )}
+                  aria-label={tx({
+                    "zh-CN": "复制提案编号",
+                    "zh-HK": "複製提案編號",
+                    en: "Copy proposal ID",
+                  })}
                   className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                 >
                   {copiedKey === "id" ? (
@@ -951,7 +1202,7 @@ export function ProposalInspectorPanel({
               data-testid="proposal-refresh-btn"
             >
               <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>刷新</span>
+              <span>{t("common.refresh")}</span>
             </Button>
 
             {isDrawer && (
@@ -960,7 +1211,13 @@ export function ProposalInspectorPanel({
                 data-testid="drawer-open-proposal-page-link"
                 className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent)] transition-colors"
               >
-                <span>打开独立页面</span>
+                <span>
+                  {tx({
+                    "zh-CN": "打开独立页面",
+                    "zh-HK": "開啟獨立頁面",
+                    en: "Open Full Page",
+                  })}
+                </span>
                 <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.85} />
               </Link>
             )}
@@ -975,7 +1232,13 @@ export function ProposalInspectorPanel({
                 data-testid="proposal-worker-tick-btn"
               >
                 <Play className="h-3.5 w-3.5" strokeWidth={1.85} />
-                <span>推进 Worker</span>
+                <span>
+                  {tx({
+                    "zh-CN": "推进 Worker",
+                    "zh-HK": "推進 Worker",
+                    en: "Tick Worker",
+                  })}
+                </span>
               </Button>
             )}
           </div>
@@ -986,11 +1249,30 @@ export function ProposalInspectorPanel({
           <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2 text-[12px] text-[var(--ink-muted)]">
             <span>
               {pollExhausted
-                ? "已达到自动轮询上限，可点击右上角「刷新」手动获取最新状态。"
-                : "正在对当前执行中单据进行有界状态轮询，进入终态或离开页面后自动停止。"}
+                ? tx({
+                    "zh-CN":
+                      "已达到自动轮询上限，可点击右上角「刷新」手动获取最新状态。",
+                    "zh-HK":
+                      "已達到自動輪詢上限，可點擊右上角「重新整理」手動取得最新狀態。",
+                    en: "Automatic polling cap reached. Click Refresh above to check the latest state.",
+                  })
+                : tx({
+                    "zh-CN":
+                      "正在对当前执行中单据进行有界状态轮询，进入终态或离开页面后自动停止。",
+                    "zh-HK":
+                      "正在對目前執行中單據進行有界狀態輪詢，進入終態或離開頁面後自動停止。",
+                    en: "Bounded live polling active; stops automatically upon reaching a terminal state or leaving.",
+                  })}
             </span>
-            <span className="font-mono-code tabular-nums">
-              轮询 {pollCount}/{MAX_POLL_CYCLES}
+            <span className="tabular-nums">
+              {tx(
+                {
+                  "zh-CN": "轮询 {count}/{max}",
+                  "zh-HK": "輪詢 {count}/{max}",
+                  en: "Poll {count}/{max}",
+                },
+                { count: pollCount, max: MAX_POLL_CYCLES },
+              )}
             </span>
           </div>
         )}
@@ -1015,7 +1297,13 @@ export function ProposalInspectorPanel({
                 data-testid="proposal-approve-btn"
               >
                 <ShieldCheck className="h-4 w-4" strokeWidth={1.85} />
-                <span>批准并入队</span>
+                <span>
+                  {tx({
+                    "zh-CN": "批准并入队",
+                    "zh-HK": "批准並入隊",
+                    en: "Approve & Queue",
+                  })}
+                </span>
               </Button>
             )}
 
@@ -1033,7 +1321,9 @@ export function ProposalInspectorPanel({
                   data-testid="proposal-return-btn"
                 >
                   <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.85} />
-                  <span>退回</span>
+                  <span>
+                    {tx({ "zh-CN": "退回", "zh-HK": "退回", en: "Return" })}
+                  </span>
                 </Button>
 
                 <Button
@@ -1048,7 +1338,9 @@ export function ProposalInspectorPanel({
                   data-testid="proposal-reject-btn"
                 >
                   <XCircle className="h-3.5 w-3.5" strokeWidth={1.85} />
-                  <span>拒绝</span>
+                  <span>
+                    {tx({ "zh-CN": "拒绝", "zh-HK": "拒絕", en: "Reject" })}
+                  </span>
                 </Button>
               </>
             )}
@@ -1066,7 +1358,13 @@ export function ProposalInspectorPanel({
                 data-testid="proposal-assign-btn"
               >
                 <UserCheck className="h-3.5 w-3.5" strokeWidth={1.85} />
-                <span>分派审批人</span>
+                <span>
+                  {tx({
+                    "zh-CN": "分派审批人",
+                    "zh-HK": "分派審批人",
+                    en: "Assign Approver",
+                  })}
+                </span>
               </Button>
             )}
 
@@ -1079,7 +1377,13 @@ export function ProposalInspectorPanel({
                 data-testid="proposal-release-btn"
               >
                 <UserMinus className="h-3.5 w-3.5" strokeWidth={1.85} />
-                <span>释放分派</span>
+                <span>
+                  {tx({
+                    "zh-CN": "释放分派",
+                    "zh-HK": "釋放分派",
+                    en: "Release Assignment",
+                  })}
+                </span>
               </Button>
             )}
 
@@ -1092,7 +1396,13 @@ export function ProposalInspectorPanel({
                 data-testid="proposal-reconcile-btn"
               >
                 <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
-                <span>重新核验 ERP 回执</span>
+                <span>
+                  {tx({
+                    "zh-CN": "重新核验 ERP 回执",
+                    "zh-HK": "重新核驗 ERP 回執",
+                    en: "Re-Verify ERP Receipt",
+                  })}
+                </span>
               </Button>
             )}
           </div>
@@ -1105,10 +1415,23 @@ export function ProposalInspectorPanel({
             data-testid="proposal-self-approval-notice"
             className="mt-3.5 flex items-start gap-2.5 rounded-tile bg-[var(--status-amber-wash)] px-4 py-3 text-[12.5px] text-[var(--status-amber-ink)]"
           >
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.85} />
+            <ShieldAlert
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={1.85}
+            />
             <div>
-              <span className="font-semibold">只读核对模式：</span>
-              不能审批本人提交的提案，请由独立主管审批。
+              <span className="font-semibold">
+                {tx({
+                  "zh-CN": "只读核对模式：",
+                  "zh-HK": "唯讀核對模式：",
+                  en: "Read-only inspection: ",
+                })}
+              </span>
+              {tx({
+                "zh-CN": "不能审批本人提交的提案，请由独立主管审批。",
+                "zh-HK": "不能審批本人提交的提案，請由獨立主管審批。",
+                en: "You cannot approve a proposal you submitted. An independent manager must approve it.",
+              })}
             </div>
           </div>
         )}
@@ -1126,14 +1449,30 @@ export function ProposalInspectorPanel({
                 strokeWidth={1.85}
               />
               <div>
-                该提案当前已分派给{" "}
+                {tx({
+                  "zh-CN": "该提案当前已分派给 ",
+                  "zh-HK": "該提案目前已分派予 ",
+                  en: "This proposal is currently assigned to ",
+                })}
                 <span className="font-mono-code font-semibold">
                   {permissions.assignedTo}
-                </span>{" "}
-                审批。
+                </span>
+                {tx({
+                  "zh-CN": " 审批。",
+                  "zh-HK": " 審批。",
+                  en: ". ",
+                })}
                 {actor?.role === "admin"
-                  ? "管理员可使用「释放分派」解除锁定。"
-                  : "如需接手，请由原分派人或管理员释放分派。"}
+                  ? tx({
+                      "zh-CN": "管理员可使用「释放分派」解除锁定。",
+                      "zh-HK": "管理員可使用「釋放分派」解除鎖定。",
+                      en: "As an admin, you can click Release Assignment to unlock it.",
+                    })
+                  : tx({
+                      "zh-CN": "如需接手，请由原分派人或管理员释放分派。",
+                      "zh-HK": "如需接手，請由原分派人或管理員釋放分派。",
+                      en: "Ask the current assignee or an admin to release it before taking over.",
+                    })}
               </div>
             </div>
           )}
@@ -1161,13 +1500,30 @@ export function ProposalInspectorPanel({
             <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.85} />
             <span>{conflictHighlight.message}</span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 font-mono-code text-[11.5px]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11.5px]">
             <div>
-              原状态：{conflictHighlight.previousState} → 当前：{proposal.state}
+              {tx(
+                {
+                  "zh-CN": "原状态：{prev} → 当前：{curr}",
+                  "zh-HK": "原狀態：{prev} → 目前：{curr}",
+                  en: "Before: {prev} → Now: {curr}",
+                },
+                {
+                  prev: localizeStatus(conflictHighlight.previousState),
+                  curr: localizeStatus(proposal.state),
+                },
+              )}
             </div>
             <div>
-              原摘要：{formatShortDigest(conflictHighlight.previousDigest)} →
-              当前：{formatShortDigest(proposal.digest)}
+              {tx({
+                "zh-CN": "摘要：",
+                "zh-HK": "摘要：",
+                en: "Digest: ",
+              })}
+              <span className="font-mono-code">
+                {formatShortDigest(conflictHighlight.previousDigest)} →{" "}
+                {formatShortDigest(proposal.digest)}
+              </span>
             </div>
           </div>
         </div>
@@ -1229,13 +1585,21 @@ export function ProposalInspectorPanel({
           <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
             <div className="border-b border-[var(--hairline)] px-4.5 py-3">
               <h3 className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-                摘要锁与审批责任
+                {tx({
+                  "zh-CN": "摘要锁与审批责任",
+                  "zh-HK": "摘要鎖與審批責任",
+                  en: "Digest Lock & Governance",
+                })}
               </h3>
             </div>
             <dl className="divide-y divide-[var(--hairline-subtle)] text-[12.5px]">
               <div className="flex items-center justify-between gap-3 px-4.5 py-3">
                 <dt className="shrink-0 text-[var(--ink-muted)]">
-                  摘要锁
+                  {tx({
+                    "zh-CN": "摘要锁",
+                    "zh-HK": "摘要鎖",
+                    en: "Digest Lock",
+                  })}
                 </dt>
                 <dd className="min-w-0 flex items-center gap-1.5 text-right">
                   <span
@@ -1248,8 +1612,19 @@ export function ProposalInspectorPanel({
                   <button
                     type="button"
                     onClick={() => void handleCopy("digest", proposal.digest)}
-                    title={`复制完整摘要 ${proposal.digest}`}
-                    aria-label="复制完整摘要"
+                    title={tx(
+                      {
+                        "zh-CN": "复制完整摘要 {digest}",
+                        "zh-HK": "複製完整摘要 {digest}",
+                        en: "Copy full digest {digest}",
+                      },
+                      { digest: proposal.digest },
+                    )}
+                    aria-label={tx({
+                      "zh-CN": "复制完整摘要",
+                      "zh-HK": "複製完整摘要",
+                      en: "Copy full digest",
+                    })}
                     className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                   >
                     {copiedKey === "digest" ? (
@@ -1261,46 +1636,116 @@ export function ProposalInspectorPanel({
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3 px-4.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">发起人</dt>
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "发起人",
+                    "zh-HK": "發起人",
+                    en: "Requester",
+                  })}
+                </dt>
                 <dd className="font-mono-code text-[var(--ink-primary)]">
                   {proposal.requester}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3 px-4.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">独立批准人</dt>
-                <dd className="font-mono-code text-[var(--ink-primary)]">
-                  {proposal.approver ?? "待独立审批"}
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "独立批准人",
+                    "zh-HK": "獨立批准人",
+                    en: "Independent Approver",
+                  })}
+                </dt>
+                <dd
+                  className={
+                    proposal.approver
+                      ? "font-mono-code text-[var(--ink-primary)]"
+                      : "text-[var(--ink-muted)]"
+                  }
+                >
+                  {proposal.approver ??
+                    tx({
+                      "zh-CN": "待独立审批",
+                      "zh-HK": "待獨立審批",
+                      en: "Pending approval",
+                    })}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3 px-4.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">审核分派</dt>
-                <dd className="font-mono-code text-[var(--ink-primary)]">
-                  {proposal.review?.assigned_to ?? "未指定（站点主管池）"}
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "审核分派",
+                    "zh-HK": "審核分派",
+                    en: "Assigned Reviewer",
+                  })}
+                </dt>
+                <dd
+                  className={
+                    proposal.review?.assigned_to
+                      ? "font-mono-code text-[var(--ink-primary)]"
+                      : "text-[var(--ink-muted)]"
+                  }
+                >
+                  {proposal.review?.assigned_to ??
+                    tx({
+                      "zh-CN": "未指定（仓库主管池）",
+                      "zh-HK": "未指定（倉庫主管池）",
+                      en: "Unassigned (warehouse manager pool)",
+                    })}
                 </dd>
               </div>
               {proposal.review?.decision && (
                 <div className="px-4.5 py-3 space-y-1 bg-[var(--bg-surface-tint)]">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[var(--ink-muted)]">审核结论</span>
-                    <span className="font-mono-code text-[var(--ink-primary)]">
+                    <span className="text-[var(--ink-muted)]">
+                      {tx({
+                        "zh-CN": "审核结论",
+                        "zh-HK": "審核結論",
+                        en: "Review Decision",
+                      })}
+                    </span>
+                    <span className="text-[var(--ink-primary)]">
                       {proposal.review.decision === "returned"
-                        ? "退回（终态）"
-                        : "拒绝（终态）"}{" "}
-                      · {proposal.review.decided_by}
+                        ? tx({
+                            "zh-CN": "退回（终态）",
+                            "zh-HK": "退回（終態）",
+                            en: "Returned (Final)",
+                          })
+                        : tx({
+                            "zh-CN": "拒绝（终态）",
+                            "zh-HK": "拒絕（終態）",
+                            en: "Rejected (Final)",
+                          })}{" "}
+                      ·{" "}
+                      <span className="font-mono-code">
+                        {proposal.review.decided_by}
+                      </span>
                     </span>
                   </div>
                   {proposal.review.reason && (
                     <p className="text-[12px] text-[var(--ink-secondary)] break-words">
-                      理由：{proposal.review.reason}
+                      {tx(
+                        {
+                          "zh-CN": "理由：{reason}",
+                          "zh-HK": "理由：{reason}",
+                          en: "Reason: {reason}",
+                        },
+                        { reason: proposal.review.reason },
+                      )}
                     </p>
                   )}
                 </div>
               )}
               <div className="flex items-center justify-between gap-3 px-4.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">计划执行 / 到期时间</dt>
-                <dd className="flex items-center gap-2 font-mono-code tabular-nums">
-                  <span className="text-[var(--ink-primary)]">
-                    {formatUnixTime(proposal.due, { withSeconds: true })}
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "计划执行 / 到期时间",
+                    "zh-HK": "計劃執行 / 到期時間",
+                    en: "Scheduled / Expires",
+                  })}
+                </dt>
+                <dd className="flex items-center gap-2 tabular-nums">
+                  <span className="font-mono-code text-[var(--ink-primary)]">
+                    {formatDateTime(proposal.due, { withSeconds: true })}
                   </span>
                   {proposal.state === "PROPOSED" && (
                     <span
@@ -1316,7 +1761,13 @@ export function ProposalInspectorPanel({
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3 px-4.5 py-2.5">
-                <dt className="text-[var(--ink-muted)]">归属租户</dt>
+                <dt className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "归属租户",
+                    "zh-HK": "歸屬租戶",
+                    en: "Tenant",
+                  })}
+                </dt>
                 <dd className="font-mono-code text-[var(--ink-primary)]">
                   {proposal.tenant}
                 </dd>
@@ -1348,7 +1799,11 @@ export function ProposalInspectorPanel({
                     strokeWidth={1.85}
                   />
                   <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-                    来源进件证据
+                    {tx({
+                      "zh-CN": "来源进件证据",
+                      "zh-HK": "來源進件憑證",
+                      en: "Source Intake Evidence",
+                    })}
                   </span>
                   <span
                     title={intakeId}
@@ -1357,8 +1812,18 @@ export function ProposalInspectorPanel({
                     {formatShortDigest(intakeId, 6, 4)}
                   </span>
                 </div>
-                <span className="rounded-full bg-[var(--accent-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--accent)] shrink-0">
-                  {intakeOpen ? "收起" : "点击展开核验"}
+                <span className="rounded-full bg-[var(--accent-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--accent-ink)] shrink-0">
+                  {intakeOpen
+                    ? tx({
+                        "zh-CN": "收起",
+                        "zh-HK": "收合",
+                        en: "Collapse",
+                      })
+                    : tx({
+                        "zh-CN": "点击展开核验",
+                        "zh-HK": "點擊展開核驗",
+                        en: "Expand Evidence",
+                      })}
                 </span>
               </button>
 
@@ -1366,38 +1831,78 @@ export function ProposalInspectorPanel({
                 <div className="border-t border-[var(--hairline-subtle)] p-4.5 space-y-3">
                   {intakeLoading && (
                     <p className="text-[12.5px] text-[var(--ink-muted)]">
-                      正在读取进件证据…
+                      {tx({
+                        "zh-CN": "正在读取进件证据…",
+                        "zh-HK": "正在讀取進件憑證…",
+                        en: "Loading intake evidence…",
+                      })}
                     </p>
                   )}
                   {intakeError && <AccessNoticeCard error={intakeError} />}
                   {!intakeLoading && !intakeError && intakeDetail && (
                     <div className="space-y-2.5 text-[12px]">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)]">
+                        <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--ink-secondary)]">
                           {intakeDetail.evidence.kind === "structured"
-                            ? "结构化进件"
-                            : "图片 OCR 进件"}{" "}
-                          · {intakeDetail.warehouse}
+                            ? tx({
+                                "zh-CN": "结构化进件",
+                                "zh-HK": "結構化進件",
+                                en: "Structured PO",
+                              })
+                            : tx({
+                                "zh-CN": "图片 OCR 进件",
+                                "zh-HK": "圖片 OCR 進件",
+                                en: "Image OCR",
+                              })}{" "}
+                          ·{" "}
+                          <span className="font-mono-code">
+                            {intakeDetail.warehouse}
+                          </span>
                         </span>
-                        <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                          摘要{" "}
-                          {formatShortDigest(
-                            intakeDetail.evidence.artifact_sha256,
-                          )}
+                        <span className="text-[11px] text-[var(--ink-muted)]">
+                          {tx({
+                            "zh-CN": "摘要 ",
+                            "zh-HK": "摘要 ",
+                            en: "SHA ",
+                          })}
+                          <span className="font-mono-code text-[var(--ink-secondary)]">
+                            {formatShortDigest(
+                              intakeDetail.evidence.artifact_sha256,
+                            )}
+                          </span>
                         </span>
                       </div>
 
                       {intakeDetail.evidence.kind === "structured" ? (
                         <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5 space-y-2">
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono-code text-[11.5px]">
-                            <span>PO: {intakeDetail.evidence.order.po}</span>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]">
                             <span>
-                              买方: {intakeDetail.evidence.order.buyer}
+                              PO:{" "}
+                              <span className="font-mono-code">
+                                {intakeDetail.evidence.order.po}
+                              </span>
                             </span>
                             <span>
-                              交期: {intakeDetail.evidence.order.delivery}
+                              {tx({
+                                "zh-CN": "买方：",
+                                "zh-HK": "買方：",
+                                en: "Buyer: ",
+                              })}
+                              <span className="font-mono-code">
+                                {intakeDetail.evidence.order.buyer}
+                              </span>
                             </span>
-                            <span className="font-semibold text-[var(--ink-primary)]">
+                            <span>
+                              {tx({
+                                "zh-CN": "交期：",
+                                "zh-HK": "交期：",
+                                en: "Delivery: ",
+                              })}
+                              <span className="font-mono-code tabular-nums">
+                                {intakeDetail.evidence.order.delivery}
+                              </span>
+                            </span>
+                            <span className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
                               {intakeDetail.evidence.order.currency}{" "}
                               {intakeDetail.evidence.order.total}
                             </span>
@@ -1423,12 +1928,27 @@ export function ProposalInspectorPanel({
                         </div>
                       ) : (
                         <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5 space-y-2">
-                          <div className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                            {intakeDetail.evidence.reader_mode} ·{" "}
-                            {intakeDetail.evidence.image_width}×
-                            {intakeDetail.evidence.image_height}px ·{" "}
-                            {Object.keys(intakeDetail.evidence.fields).length}{" "}
-                            提取字段
+                          <div className="text-[11px] tabular-nums text-[var(--ink-muted)]">
+                            <span className="font-mono-code">
+                              {intakeDetail.evidence.reader_mode}
+                            </span>
+                            {" · "}
+                            <span className="font-mono-code">
+                              {intakeDetail.evidence.image_width}×
+                              {intakeDetail.evidence.image_height}px
+                            </span>
+                            {" · "}
+                            {tp(
+                              {
+                                "zh-CN": "{count} 提取字段",
+                                "zh-HK": "{count} 擷取欄位",
+                                en: {
+                                  one: "{count} extracted field",
+                                  other: "{count} extracted fields",
+                                },
+                              },
+                              Object.keys(intakeDetail.evidence.fields).length,
+                            )}
                           </div>
                           <div className="max-h-44 overflow-auto divide-y divide-[var(--hairline-subtle)]">
                             {Object.entries(intakeDetail.evidence.fields).map(
@@ -1454,7 +1974,13 @@ export function ProposalInspectorPanel({
                         href={`/orders/new?intake=${encodeURIComponent(intakeId)}`}
                         className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--accent)] hover:underline"
                       >
-                        <span>在订单进件页查看完整证据</span>
+                        <span>
+                          {tx({
+                            "zh-CN": "在订单进件页查看完整证据",
+                            "zh-HK": "在訂單進件頁檢視完整憑證",
+                            en: "View Full Evidence in Order Intake",
+                          })}
+                        </span>
                         <ArrowUpRight className="h-3.5 w-3.5" />
                       </Link>
                     </div>
@@ -1467,7 +1993,7 @@ export function ProposalInspectorPanel({
 
         {/* Right Column: Crisp Verified ERP Receipt Hero Card & Audit Event Timeline */}
         <div className="space-y-4 min-w-0">
-          {/* Verified ERP Receipt Hero Card — Zero Redundant Pill or Duplicate Target Row */}
+          {/* Verified ERP Receipt Hero Card */}
           {proposal.receipt && (
             <Interactive3DCard
               maxTilt={2}
@@ -1477,14 +2003,27 @@ export function ProposalInspectorPanel({
               className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
             >
               <div className="flex items-center gap-2 bg-[var(--status-emerald-wash)] px-4.5 py-3.5 text-[13.5px] font-semibold text-[var(--status-emerald)]">
-                <CheckCircle2 className="h-4.5 w-4.5 shrink-0" strokeWidth={1.9} />
-                <span>已写入 · 已核对 ERP 回执</span>
+                <CheckCircle2
+                  className="h-4.5 w-4.5 shrink-0"
+                  strokeWidth={1.9}
+                />
+                <span>
+                  {tx({
+                    "zh-CN": "已写入 · 已核对 ERP 回执",
+                    "zh-HK": "已寫入 · 已核對 ERP 回執",
+                    en: "Written · Verified ERP Receipt",
+                  })}
+                </span>
               </div>
 
               <dl className="divide-y divide-[var(--hairline-subtle)] text-[12.5px]">
                 <div className="flex items-center justify-between gap-3 px-4.5 py-3">
                   <dt className="shrink-0 text-[var(--ink-muted)]">
-                    ERP 远端单号
+                    {tx({
+                      "zh-CN": "ERP 远端单号",
+                      "zh-HK": "ERP 遠端單號",
+                      en: "ERP Remote ID",
+                    })}
                   </dt>
                   <dd
                     className="font-mono-code font-semibold text-[var(--ink-primary)] text-right break-all"
@@ -1495,7 +2034,11 @@ export function ProposalInspectorPanel({
                 </div>
                 <div className="flex items-center justify-between gap-3 px-4.5 py-2.5">
                   <dt className="shrink-0 text-[var(--ink-muted)]">
-                    操作流水号
+                    {tx({
+                      "zh-CN": "操作流水号",
+                      "zh-HK": "操作流水號",
+                      en: "Operation ID",
+                    })}
                   </dt>
                   <dd
                     title={proposal.receipt.operation_id}
@@ -1506,12 +2049,35 @@ export function ProposalInspectorPanel({
                 </div>
                 <div className="flex items-center justify-between gap-3 px-4.5 py-2.5">
                   <dt className="shrink-0 text-[var(--ink-muted)]">
-                    回执摘要比对
+                    {tx({
+                      "zh-CN": "回执摘要比对",
+                      "zh-HK": "回執摘要比對",
+                      en: "Receipt Digest",
+                    })}
                   </dt>
-                  <dd className="font-mono-code font-medium text-[var(--status-emerald)] text-right">
-                    {proposal.receipt.plan_digest === proposal.digest
-                      ? `一致 (${formatShortDigest(proposal.receipt.plan_digest, 6, 4)})`
-                      : formatShortDigest(proposal.receipt.plan_digest, 6, 4)}
+                  <dd className="font-medium text-[var(--status-emerald)] text-right">
+                    {proposal.receipt.plan_digest === proposal.digest ? (
+                      <>
+                        {tx({
+                          "zh-CN": "一致 ",
+                          "zh-HK": "一致 ",
+                          en: "Matched ",
+                        })}
+                        <span className="font-mono-code">
+                          (
+                          {formatShortDigest(
+                            proposal.receipt.plan_digest,
+                            6,
+                            4,
+                          )}
+                          )
+                        </span>
+                      </>
+                    ) : (
+                      <span className="font-mono-code">
+                        {formatShortDigest(proposal.receipt.plan_digest, 6, 4)}
+                      </span>
+                    )}
                   </dd>
                 </div>
               </dl>
@@ -1531,38 +2097,75 @@ export function ProposalInspectorPanel({
                 ].join(" ")}
               >
                 <div className="flex items-center gap-2 font-semibold">
-                  <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.85} />
+                  <AlertTriangle
+                    className="h-4 w-4 shrink-0"
+                    strokeWidth={1.85}
+                  />
                   <span>
                     {proposal.state === "OUTCOME_UNKNOWN"
-                      ? "ERP 写入结果待确认（自动只读回查中）"
-                      : "达到核验上限 · 需人工核查回执"}
+                      ? tx({
+                          "zh-CN": "ERP 写入结果待确认（自动只读回查中）",
+                          "zh-HK": "ERP 寫入結果待確認（自動唯讀回查中）",
+                          en: "ERP Write Outcome Pending (Auto Readback Active)",
+                        })
+                      : tx({
+                          "zh-CN": "达到核验上限 · 需人工核查回执",
+                          "zh-HK": "達到核驗上限 · 須人工核查回執",
+                          en: "Verification Cap Reached · Operator Review Needed",
+                        })}
                   </span>
                 </div>
                 <p className="text-[12.5px] leading-relaxed text-[var(--ink-secondary)]">
                   {proposal.state === "OUTCOME_UNKNOWN"
-                    ? `系统正在按指数退避策略执行只读回执核查（当前轮次 ${proposal.checks}/3），请勿重复创建相同业务单据。`
-                    : "请运维或仓库主管核对 ERP 侧是否已生成对应单据后，点击「重新核验 ERP 回执」触发只读回查（不会重复写入 ERP）。"}
+                    ? tx(
+                        {
+                          "zh-CN":
+                            "系统正在按指数退避策略执行只读回执核查（当前轮次 {checks}/3），请勿重复创建相同业务单据。",
+                          "zh-HK":
+                            "系統正在按指數退避策略執行唯讀回執核查（目前輪次 {checks}/3），請勿重複建立相同業務單據。",
+                          en: "Read-only receipt readback is retrying with backoff (attempt {checks}/3). Do not create a duplicate order.",
+                        },
+                        { checks: proposal.checks },
+                      )
+                    : tx({
+                        "zh-CN":
+                          "请运维或仓库主管核对 ERP 侧是否已生成对应单据后，点击「重新核验 ERP 回执」触发只读回查（不会重复写入 ERP）。",
+                        "zh-HK":
+                          "請維運或倉庫主管核對 ERP 側是否已產生對應單據後，點擊「重新核驗 ERP 回執」觸發唯讀回查（不會重複寫入 ERP）。",
+                        en: "Verify in ERP whether the document exists, then click Re-Verify ERP Receipt to run a read-only check (no duplicate write).",
+                      })}
                 </p>
               </div>
             )}
 
-          {/* Ordered Audit Event Timeline with Localized Chinese Labels & 1px Vertical Rail */}
+          {/* Ordered Audit Event Timeline with Localized Labels & 1px Vertical Rail */}
           <div
             className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
             data-testid="proposal-events-timeline"
           >
             <div className="flex items-center justify-between border-b border-[var(--hairline)] px-4.5 py-3">
               <h3 className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-                审计事件时间线
+                {t("proposal.timeline.title")}
               </h3>
-              <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
-                {proposal.events.length} 条记录
+              <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 tabular-nums text-[11px] text-[var(--ink-muted)]">
+                {tp(
+                  {
+                    "zh-CN": "{count} 条记录",
+                    "zh-HK": "{count} 筆紀錄",
+                    en: { one: "{count} event", other: "{count} events" },
+                  },
+                  proposal.events.length,
+                )}
               </span>
             </div>
 
             {proposal.events.length === 0 ? (
               <div className="px-4 py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-                暂无审计事件明细
+                {tx({
+                  "zh-CN": "暂无审计事件明细",
+                  "zh-HK": "暫無稽核事件明細",
+                  en: "No audit events recorded yet",
+                })}
               </div>
             ) : (
               <ol className="relative px-4.5 py-3 space-y-3">
@@ -1573,7 +2176,8 @@ export function ProposalInspectorPanel({
                   />
                 )}
                 {proposal.events.map((ev, idx) => {
-                  const meta = resolveAuditEventMeta(ev.event);
+                  const meta = localizeTimelineEvent(ev.event);
+                  const actorDisplay = formatAuditActor(ev.subject);
                   const dotTone =
                     meta.tone === "emerald"
                       ? "bg-[var(--status-emerald)] ring-4 ring-[var(--bg-surface)]"
@@ -1593,6 +2197,7 @@ export function ProposalInspectorPanel({
                   return (
                     <li
                       key={`${ev.event}-${ev.at}-${idx}`}
+                      title={`${ev.event} · ${ev.subject}`}
                       className="relative z-10 flex items-start justify-between gap-3 text-[12.5px]"
                     >
                       <div className="flex items-start gap-3 min-w-0">
@@ -1604,17 +2209,13 @@ export function ProposalInspectorPanel({
                           <div className={`font-medium ${textTone}`}>
                             {meta.label}
                           </div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                            <span>{ev.subject}</span>
-                            <span aria-hidden="true">·</span>
-                            <span className="text-[var(--ink-faint)]">
-                              {ev.event}
-                            </span>
+                          <div className="mt-0.5 text-[11.5px] text-[var(--ink-muted)]">
+                            {actorDisplay}
                           </div>
                         </div>
                       </div>
                       <span className="shrink-0 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
-                        {formatUnixTime(ev.at, { withSeconds: true })}
+                        {formatDateTime(ev.at, { withSeconds: true })}
                       </span>
                     </li>
                   );
@@ -1629,11 +2230,25 @@ export function ProposalInspectorPanel({
       <ConfirmDialog
         open={activeDialog === "approve"}
         onOpenChange={(open) => !open && setActiveDialog(null)}
-        title="确认批准并进入 ERP 执行队列"
-        description="批准后将锁定当前提案摘要，并由后台可靠队列向 ERP 执行幂等写入与回执核验。重复提交不会造成重复入账。"
+        title={tx({
+          "zh-CN": "确认批准并进入 ERP 执行队列",
+          "zh-HK": "確認批准並進入 ERP 執行佇列",
+          en: "Confirm Approval & Queue for ERP",
+        })}
+        description={tx({
+          "zh-CN":
+            "批准后将锁定当前提案摘要，并由后台可靠队列向 ERP 执行幂等写入与回执核验。重复提交不会造成重复入账。",
+          "zh-HK":
+            "批准後將鎖定目前提案摘要，並由背景可靠佇列向 ERP 執行冪等寫入與回執核驗。重複提交不會造成重複入帳。",
+          en: "Approving locks the current digest and queues an idempotent ERP write with receipt verification. Retries will never duplicate postings.",
+        })}
         scopeSummary={`${proposal.warehouse} · ${changeSummary}`}
         metadata={confirmMetadata}
-        confirmLabel="确认批准并入队"
+        confirmLabel={tx({
+          "zh-CN": "确认批准并入队",
+          "zh-HK": "確認批准並入隊",
+          en: "Confirm Approve & Queue",
+        })}
         loading={actionLoading}
         onConfirm={executeApprove}
       >
@@ -1641,25 +2256,55 @@ export function ProposalInspectorPanel({
           data-testid="proposal-approve-dialog"
           className="text-[12px] text-[var(--ink-muted)]"
         >
-          请确认数量、单位换算及总额无误后再执行批准。
+          {tx({
+            "zh-CN": "请确认数量、单位换算及总额无误后再执行批准。",
+            "zh-HK": "請確認數量、單位換算及總額無誤後再執行批准。",
+            en: "Verify quantities, UOM conversions, and totals before confirming.",
+          })}
         </div>
       </ConfirmDialog>
 
       <ConfirmDialog
         open={activeDialog === "return"}
         onOpenChange={(open) => !open && setActiveDialog(null)}
-        title="确认退回提案"
-        description="退回后本条提案将进入终态，发起人需根据退回理由重新提交新的进件或改期提案。"
+        title={tx({
+          "zh-CN": "确认退回提案",
+          "zh-HK": "確認退回提案",
+          en: "Return Proposal for Revision",
+        })}
+        description={tx({
+          "zh-CN":
+            "退回后本条提案将进入终态，发起人需根据退回理由重新提交新的进件或改期提案。",
+          "zh-HK":
+            "退回後本筆提案將進入終態，發起人須根據退回理由重新提交新的進件或改期提案。",
+          en: "Returning closes this proposal permanently; the requester must submit a new intake or reschedule with your feedback.",
+        })}
         scopeSummary={`${formatShortDigest(proposal.id, 6, 4)} · ${proposal.warehouse}`}
         metadata={[
-          { label: "提案编号", value: proposal.id, mono: true },
           {
-            label: "摘要锁",
+            label: tx({
+              "zh-CN": "提案编号",
+              "zh-HK": "提案編號",
+              en: "Proposal ID",
+            }),
+            value: proposal.id,
+            mono: true,
+          },
+          {
+            label: tx({
+              "zh-CN": "摘要锁",
+              "zh-HK": "摘要鎖",
+              en: "Digest Lock",
+            }),
             value: formatShortDigest(proposal.digest),
             mono: true,
           },
         ]}
-        confirmLabel="确认退回"
+        confirmLabel={tx({
+          "zh-CN": "确认退回",
+          "zh-HK": "確認退回",
+          en: "Confirm Return",
+        })}
         destructive
         loading={actionLoading}
         onConfirm={() => executeReview("return")}
@@ -1669,7 +2314,11 @@ export function ProposalInspectorPanel({
             htmlFor={`return-reason-${proposal.id}`}
             className="block text-[12px] font-medium text-[var(--ink-primary)]"
           >
-            退回理由（必填）
+            {tx({
+              "zh-CN": "退回理由（必填）",
+              "zh-HK": "退回理由（必填）",
+              en: "Return Reason (Required)",
+            })}
           </label>
           <textarea
             id={`return-reason-${proposal.id}`}
@@ -1681,7 +2330,11 @@ export function ProposalInspectorPanel({
               setReasonError(null);
             }}
             aria-invalid={reasonError ? "true" : undefined}
-            placeholder="例如：交付日期需与客户重新确认，请更新后重新提交"
+            placeholder={tx({
+              "zh-CN": "例如：交付日期需与客户重新确认，请更新后重新提交",
+              "zh-HK": "例如：交付日期須與客戶重新確認，請更新後重新提交",
+              en: "e.g. Please reconfirm the delivery date with the buyer and resubmit",
+            })}
             data-testid="proposal-review-reason-input"
             className="w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 py-2 text-[13px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
           />
@@ -1696,18 +2349,42 @@ export function ProposalInspectorPanel({
       <ConfirmDialog
         open={activeDialog === "reject"}
         onOpenChange={(open) => !open && setActiveDialog(null)}
-        title="确认拒绝该提案"
-        description="拒绝后本条提案将永久终止，不可再进入执行队列。"
+        title={tx({
+          "zh-CN": "确认拒绝该提案",
+          "zh-HK": "確認拒絕該提案",
+          en: "Confirm Proposal Rejection",
+        })}
+        description={tx({
+          "zh-CN": "拒绝后本条提案将永久终止，不可再进入执行队列。",
+          "zh-HK": "拒絕後本筆提案將永久終止，不可再進入執行佇列。",
+          en: "Rejecting permanently terminates this proposal so it can never enter the ERP execution queue.",
+        })}
         scopeSummary={`${formatShortDigest(proposal.id, 6, 4)} · ${proposal.warehouse}`}
         metadata={[
-          { label: "提案编号", value: proposal.id, mono: true },
           {
-            label: "摘要锁",
+            label: tx({
+              "zh-CN": "提案编号",
+              "zh-HK": "提案編號",
+              en: "Proposal ID",
+            }),
+            value: proposal.id,
+            mono: true,
+          },
+          {
+            label: tx({
+              "zh-CN": "摘要锁",
+              "zh-HK": "摘要鎖",
+              en: "Digest Lock",
+            }),
             value: formatShortDigest(proposal.digest),
             mono: true,
           },
         ]}
-        confirmLabel="确认拒绝"
+        confirmLabel={tx({
+          "zh-CN": "确认拒绝",
+          "zh-HK": "確認拒絕",
+          en: "Confirm Reject",
+        })}
         destructive
         loading={actionLoading}
         onConfirm={() => executeReview("reject")}
@@ -1717,7 +2394,11 @@ export function ProposalInspectorPanel({
             htmlFor={`reject-reason-${proposal.id}`}
             className="block text-[12px] font-medium text-[var(--ink-primary)]"
           >
-            拒绝理由（必填）
+            {tx({
+              "zh-CN": "拒绝理由（必填）",
+              "zh-HK": "拒絕理由（必填）",
+              en: "Rejection Reason (Required)",
+            })}
           </label>
           <textarea
             id={`reject-reason-${proposal.id}`}
@@ -1729,7 +2410,11 @@ export function ProposalInspectorPanel({
               setReasonError(null);
             }}
             aria-invalid={reasonError ? "true" : undefined}
-            placeholder="例如：超出站点额度或客户单据已作废"
+            placeholder={tx({
+              "zh-CN": "例如：超出仓库额度或客户单据已作废",
+              "zh-HK": "例如：超出倉庫額度或客戶單據已作廢",
+              en: "e.g. Exceeds warehouse limit or buyer PO has been voided",
+            })}
             data-testid="proposal-review-reason-input"
             className="w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 py-2 text-[13px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
           />
@@ -1744,10 +2429,24 @@ export function ProposalInspectorPanel({
       <ConfirmDialog
         open={activeDialog === "assign"}
         onOpenChange={(open) => !open && setActiveDialog(null)}
-        title="分派审批人"
-        description="将本提案明确指派给同租户内具备该站点审批权限的独立主管，系统将同步发送站内通知。"
+        title={tx({
+          "zh-CN": "分派审批人",
+          "zh-HK": "分派審批人",
+          en: "Assign Approver",
+        })}
+        description={tx({
+          "zh-CN":
+            "将本提案明确指派给同租户内具备该仓库审批权限的独立主管，系统将同步发送站内通知。",
+          "zh-HK":
+            "將本提案明確指派予同租戶內具備該倉庫審批權限的獨立主管，系統將同步發送站內通知。",
+          en: "Assign this proposal to an independent manager authorized for this warehouse. An in-app notice will be sent.",
+        })}
         scopeSummary={`${formatShortDigest(proposal.id, 6, 4)} · ${proposal.warehouse}`}
-        confirmLabel="确认分派"
+        confirmLabel={tx({
+          "zh-CN": "确认分派",
+          "zh-HK": "確認分派",
+          en: "Confirm Assignment",
+        })}
         loading={actionLoading}
         onConfirm={() => executeReview("assign")}
       >
@@ -1756,7 +2455,11 @@ export function ProposalInspectorPanel({
             htmlFor={`assign-subject-${proposal.id}`}
             className="block text-[12px] font-medium text-[var(--ink-primary)]"
           >
-            审批人账号
+            {tx({
+              "zh-CN": "审批人账号",
+              "zh-HK": "審批人帳號",
+              en: "Approver Subject ID",
+            })}
           </label>
           <input
             id={`assign-subject-${proposal.id}`}
@@ -1767,14 +2470,22 @@ export function ProposalInspectorPanel({
               setAssigneeError(null);
             }}
             aria-invalid={assigneeError ? "true" : undefined}
-            placeholder="例如 manager"
+            placeholder={tx({
+              "zh-CN": "例如 manager",
+              "zh-HK": "例如 manager",
+              en: "e.g. manager",
+            })}
             data-testid="proposal-assign-input"
             className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[13px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
           />
           {demoConfig?.enabled && approverSuggestions.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11.5px] text-[var(--ink-muted)]">
-                常用候选：
+                {tx({
+                  "zh-CN": "常用候选：",
+                  "zh-HK": "常用候選：",
+                  en: "Suggested:",
+                })}
               </span>
               {approverSuggestions
                 .filter((s) => s !== proposal.requester)
@@ -1786,7 +2497,7 @@ export function ProposalInspectorPanel({
                       setAssigneeInput(s);
                       setAssigneeError(null);
                     }}
-                    className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 font-mono-code text-[11px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent)] transition-colors cursor-pointer"
+                    className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 font-mono-code text-[11px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
                   >
                     {s}
                   </button>
@@ -1804,10 +2515,34 @@ export function ProposalInspectorPanel({
       <ConfirmDialog
         open={activeDialog === "release"}
         onOpenChange={(open) => !open && setActiveDialog(null)}
-        title="确认释放审批分派"
-        description="释放后该提案将回到站点待审批池，任何具备该仓库审批权限的独立主管均可认领或审批。"
-        scopeSummary={`${formatShortDigest(proposal.id, 6, 4)} · 当前指派人：${proposal.review?.assigned_to ?? "—"}`}
-        confirmLabel="确认释放"
+        title={tx({
+          "zh-CN": "确认释放审批分派",
+          "zh-HK": "確認釋放審批分派",
+          en: "Release Approval Assignment",
+        })}
+        description={tx({
+          "zh-CN":
+            "释放后该提案将回到仓库待审批池，任何具备该仓库审批权限的独立主管均可认领或审批。",
+          "zh-HK":
+            "釋放後該提案將回到倉庫待審批池，任何具備該倉庫審批權限的獨立主管均可認領或審批。",
+          en: "Releasing returns this proposal to the warehouse approval pool so any authorized independent manager can approve it.",
+        })}
+        scopeSummary={tx(
+          {
+            "zh-CN": "{id} · 当前指派人：{assignee}",
+            "zh-HK": "{id} · 目前指派人：{assignee}",
+            en: "{id} · Currently assigned to: {assignee}",
+          },
+          {
+            id: formatShortDigest(proposal.id, 6, 4),
+            assignee: proposal.review?.assigned_to ?? "—",
+          },
+        )}
+        confirmLabel={tx({
+          "zh-CN": "确认释放",
+          "zh-HK": "確認釋放",
+          en: "Confirm Release",
+        })}
         loading={actionLoading}
         onConfirm={() => executeReview("release")}
       />
@@ -1815,10 +2550,24 @@ export function ProposalInspectorPanel({
       <ConfirmDialog
         open={activeDialog === "reconcile"}
         onOpenChange={(open) => !open && setActiveDialog(null)}
-        title="重新核验 ERP 回执（只读回查）"
-        description="该操作将把单据状态重置为结果待确认并清零核验计数，由后台 Worker 执行只读回执查询，不会向 ERP 重复写入新记录。"
+        title={tx({
+          "zh-CN": "重新核验 ERP 回执（只读回查）",
+          "zh-HK": "重新核驗 ERP 回執（唯讀回查）",
+          en: "Re-Verify ERP Receipt (Read-Only)",
+        })}
+        description={tx({
+          "zh-CN":
+            "该操作将把单据状态重置为结果待确认并清零核验计数，由后台执行器执行只读回执查询，不会向 ERP 重复写入新记录。",
+          "zh-HK":
+            "該操作將把單據狀態重設為結果待確認並清零核驗計數，由背景執行器執行唯讀回執查詢，不會向 ERP 重複寫入新紀錄。",
+          en: "Resets state to Outcome Unknown with check count 0 so the background worker runs read-only receipt checks without duplicating ERP writes.",
+        })}
         scopeSummary={`${formatShortDigest(proposal.id, 6, 4)} · ${proposal.warehouse} · ${proposal.plan.target}`}
-        confirmLabel="发起只读核验"
+        confirmLabel={tx({
+          "zh-CN": "发起只读核验",
+          "zh-HK": "發起唯讀核驗",
+          en: "Start Read-Only Check",
+        })}
         loading={actionLoading}
         onConfirm={executeReconcile}
       />

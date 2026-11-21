@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { resolveTenantContacts, verifyLiveActor } from "@/lib/bff/directory";
+import { LOCALE_COOKIE_NAME, normalizeLocale } from "@/lib/i18n/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,18 +11,22 @@ export async function GET(req: NextRequest): Promise<Response> {
     return verified.response;
   }
 
+  const locale = normalizeLocale(req.cookies.get(LOCALE_COOKIE_NAME)?.value);
   const sp = req.nextUrl.searchParams;
   const q = (sp.get("q") || "").trim().slice(0, 80);
   const includeSelf = sp.get("include_self") === "1";
   const warehouse = (sp.get("warehouse") || "").trim().slice(0, 24) || undefined;
   const rawLimit = Number.parseInt(sp.get("limit") || "30", 10);
-  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, rawLimit)) : 30;
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(50, rawLimit))
+    : 30;
 
   const result = await resolveTenantContacts(verified.actor, verified.cookie, {
     q: q || undefined,
     includeSelf,
     warehouse,
     limit,
+    locale,
   });
 
   return new Response(JSON.stringify(result), {

@@ -16,7 +16,13 @@ import {
   X,
 } from "lucide-react";
 import { isApiError, isStaleAuthError, type ApiError } from "@/lib/api-client";
-import { formatUnixTime } from "@/lib/format";
+import { sortWarehouses } from "@/lib/format";
+import {
+  LOCALE_META,
+  useLocale,
+  type LocaleVars,
+  type TrilingualText,
+} from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import {
   AccessNoticeCard,
@@ -34,13 +40,14 @@ import {
   classifyModuleAssignment,
   formatOffsetDaysLocalInput,
   getDependentWriteGrants,
+  getGrantLabel,
   getLocalTimezoneLabel,
   getModuleMeta,
-  GRANT_META,
   GRANT_PREREQUISITES,
   localInputToUnixSeconds,
   MAX_EXPIRES_AT_UNIX,
   sortCatalogModuleIds,
+  sortGrantsByDependency,
   unixSecondsToLocalInput,
 } from "@/features/people/module-meta";
 import type {
@@ -57,8 +64,11 @@ interface ModuleDraft {
 
 interface ModuleFeedback {
   kind: "success" | "conflict" | "error" | "info";
-  message: string;
+  text?: TrilingualText;
+  vars?: LocaleVars;
+  apiError?: ApiError;
   requestId?: string | null;
+  field?: "expiry";
 }
 
 function buildDraftFromAssignment(
@@ -107,6 +117,15 @@ export function EmployeeAccessDetailView({
     authGeneration,
     handleAccessChanged,
   } = useSession();
+  const {
+    locale,
+    t,
+    tx,
+    formatDateTime,
+    formatTimeOnly,
+    localizePersona,
+    localizeError,
+  } = useLocale();
 
   const [catalog, setCatalog] = useState<ModuleAccessCatalog | null>(null);
   const [assignments, setAssignments] = useState<
@@ -126,17 +145,31 @@ export function EmployeeAccessDetailView({
   const [nowUnix, setNowUnix] = useState<number>(() =>
     Math.floor(Date.now() / 1000),
   );
-  const [localTzLabel, setLocalTzLabel] = useState<string>("本地时间");
+  const [mounted, setMounted] = useState(false);
 
   const isSelf = actor?.subject === subject;
+  const persona = useMemo(
+    () => localizePersona(subject),
+    [localizePersona, subject],
+  );
+  const hasDistinctName =
+    persona.displayName.trim() !== "" && persona.displayName !== subject;
 
   useEffect(() => {
-    setLocalTzLabel(getLocalTimezoneLabel());
+    setMounted(true);
     const timer = window.setInterval(() => {
       setNowUnix(Math.floor(Date.now() / 1000));
     }, 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const localTzLabel = useMemo(
+    () =>
+      mounted
+        ? getLocalTimezoneLabel(locale)
+        : tx({ "zh-CN": "本地时间", "zh-HK": "本地時間", en: "Local time" }),
+    [mounted, locale, tx],
+  );
 
   const syncDraftsFromServer = useCallback(
     (
@@ -210,6 +243,11 @@ export function EmployeeAccessDetailView({
     return sortCatalogModuleIds(Object.keys(catalog.modules));
   }, [catalog]);
 
+  const sortedCatalogWarehouses = useMemo(
+    () => (catalog?.warehouses.length ? sortWarehouses(catalog.warehouses) : []),
+    [catalog],
+  );
+
   const setModuleFeedback = useCallback(
     (moduleId: string, feedback: ModuleFeedback | null) => {
       setFeedbackByModule((prev) => ({ ...prev, [moduleId]: feedback }));
@@ -226,30 +264,35 @@ export function EmployeeAccessDetailView({
         expiresAtInput: "",
       };
       const nextSet = new Set<Grant>(current.grants);
-      let infoNote: string | null = null;
+      let infoText: TrilingualText | null = null;
 
       if (checked) {
         nextSet.add(grant);
         const requiredRead = GRANT_PREREQUISITES[grant];
         if (requiredRead && !nextSet.has(requiredRead)) {
           nextSet.add(requiredRead);
-          const reqLabel = GRANT_META[requiredRead]?.label ?? requiredRead;
-          const grantLabel = GRANT_META[grant]?.label ?? grant;
-          infoNote = `已自动勾选前置读取权限「${reqLabel}」（「${grantLabel}」依赖对应读取权限）。`;
+          infoText = {
+            "zh-CN": `已自动勾选前置读取权限「${getGrantLabel(requiredRead, "zh-CN")}」（「${getGrantLabel(grant, "zh-CN")}」依赖对应读取权限）。`,
+            "zh-HK": `已自動勾選前置讀取權限「${getGrantLabel(requiredRead, "zh-HK")}」（「${getGrantLabel(grant, "zh-HK")}」依賴對應讀取權限）。`,
+            en: `Automatically selected required read permission “${getGrantLabel(requiredRead, "en")}” (“${getGrantLabel(grant, "en")}” requires read access).`,
+          };
         }
       } else {
         nextSet.delete(grant);
         const dependents = getDependentWriteGrants(grant);
-        const removed: string[] = [];
+        const removed: Grant[] = [];
         for (const dep of dependents) {
           if (nextSet.has(dep)) {
             nextSet.delete(dep);
-            removed.push(GRANT_META[dep]?.label ?? dep);
+            removed.push(dep);
           }
         }
         if (removed.length > 0) {
-          const grantLabel = GRANT_META[grant]?.label ?? grant;
-          infoNote = `取消「${grantLabel}」后已同步取消依赖它的写入权限（${removed.join("、")}）。`;
+          infoText = {
+            "zh-CN": `取消「${getGrantLabel(grant, "zh-CN")}」后已同步取消依赖它的写入权限（${removed.map((g) => getGrantLabel(g, "zh-CN")).join("、")}）。`,
+            "zh-HK": `取消「${getGrantLabel(grant, "zh-HK")}」後已同步取消依賴它的寫入權限（${removed.map((g) => getGrantLabel(g, "zh-HK")).join("、")}）。`,
+            en: `Unchecking “${getGrantLabel(grant, "en")}” also removed dependent write permissions (${removed.map((g) => getGrantLabel(g, "en")).join(", ")}).`,
+          };
         }
       }
 
@@ -261,8 +304,8 @@ export function EmployeeAccessDetailView({
           grants: nextGrants,
         },
       }));
-      if (infoNote) {
-        setModuleFeedback(moduleId, { kind: "info", message: infoNote });
+      if (infoText) {
+        setModuleFeedback(moduleId, { kind: "info", text: infoText });
       } else {
         setModuleFeedback(moduleId, null);
       }
@@ -357,7 +400,13 @@ export function EmployeeAccessDetailView({
       }
       setModuleFeedback(moduleId, {
         kind: "conflict",
-        message: "配置已被其他管理员更新，已刷新最新状态，请核对后重新提交。",
+        text: {
+          "zh-CN":
+            "配置已被其他管理员更新，已刷新最新状态，请核对后重新提交。",
+          "zh-HK":
+            "設定已被其他管理員更新，已重新整理最新狀態，請核對後重新提交。",
+          en: "Assignment was updated by another administrator. Latest state reloaded — review and submit again.",
+        },
         requestId,
       });
     },
@@ -379,16 +428,26 @@ export function EmployeeAccessDetailView({
       if (draft.grants.length === 0 && draft.warehouses.length === 0) {
         setModuleFeedback(moduleId, {
           kind: "error",
-          message:
-            "授予权限时必须至少选择一项动作与一个仓库；如需撤销此模块权限，请点击「撤销该模块权限」。",
+          text: {
+            "zh-CN":
+              "授予权限时必须至少选择一项动作与一个仓库；如需撤销此模块权限，请点击「撤销该模块权限」。",
+            "zh-HK":
+              "授予權限時必須至少選擇一項操作與一個倉庫；如需撤銷此模組權限，請點擊「撤銷該模組權限」。",
+            en: "Select at least one action and one warehouse to grant access; to revoke this module, click “Revoke Module”.",
+          },
         });
         return;
       }
       if (draft.grants.length === 0 || draft.warehouses.length === 0) {
         setModuleFeedback(moduleId, {
           kind: "error",
-          message:
-            "授予模块权限时，必须同时选择至少一项动作权限与至少一个仓库站点。",
+          text: {
+            "zh-CN":
+              "授予模块权限时，必须同时选择至少一项动作权限与至少一个仓库。",
+            "zh-HK":
+              "授予模組權限時，必須同時選擇至少一項操作權限與至少一個倉庫。",
+            en: "Select at least one action grant and at least one warehouse together.",
+          },
         });
         return;
       }
@@ -398,7 +457,11 @@ export function EmployeeAccessDetailView({
         if (req && !draft.grants.includes(req)) {
           setModuleFeedback(moduleId, {
             kind: "error",
-            message: `「${GRANT_META[g]?.label ?? g}」依赖前置读取权限「${GRANT_META[req]?.label ?? req}」，请同时勾选后再保存。`,
+            text: {
+              "zh-CN": `「${getGrantLabel(g, "zh-CN")}」依赖前置读取权限「${getGrantLabel(req, "zh-CN")}」，请同时勾选后再保存。`,
+              "zh-HK": `「${getGrantLabel(g, "zh-HK")}」依賴前置讀取權限「${getGrantLabel(req, "zh-HK")}」，請同時勾選後再儲存。`,
+              en: `“${getGrantLabel(g, "en")}” requires read permission “${getGrantLabel(req, "en")}”. Select both before saving.`,
+            },
           });
           return;
         }
@@ -415,8 +478,14 @@ export function EmployeeAccessDetailView({
         ) {
           setModuleFeedback(moduleId, {
             kind: "error",
-            message:
-              "到期时间格式需为 YYYY-MM-DD HH:MM，且必须晚于当前本地时间（不超过 2100 年）。",
+            field: "expiry",
+            text: {
+              "zh-CN":
+                "到期时间格式需为 YYYY-MM-DD HH:MM，且必须晚于当前本地时间（不超过 2100 年）。",
+              "zh-HK":
+                "到期時間格式須為 YYYY-MM-DD HH:MM，且必須晚於目前本地時間（不超過 2100 年）。",
+              en: "Expiration must use YYYY-MM-DD HH:MM in local time and be in the future (up to year 2100).",
+            },
           });
           return;
         }
@@ -442,7 +511,12 @@ export function EmployeeAccessDetailView({
         setNowUnix(savedNow);
         setModuleFeedback(moduleId, {
           kind: "success",
-          message: `已保存模块授权（第 ${saved.version} 版配置）。`,
+          text: {
+            "zh-CN": "已保存模块授权（第 {version} 版配置）。",
+            "zh-HK": "已儲存模組授權（第 {version} 版設定）。",
+            en: "Module access saved (Rev {version}).",
+          },
+          vars: { version: saved.version },
         });
       } catch (err) {
         if (isStaleAuthError(err)) return;
@@ -458,7 +532,7 @@ export function EmployeeAccessDetailView({
           } else {
             setModuleFeedback(moduleId, {
               kind: "error",
-              message: err.message,
+              apiError: err,
               requestId: err.requestId,
             });
           }
@@ -506,7 +580,14 @@ export function EmployeeAccessDetailView({
       setRevokeTargetModule(null);
       setModuleFeedback(moduleId, {
         kind: "success",
-        message: `已撤销此模块权限（第 ${saved.version} 版配置），相关查询与待派发提案已阻断。`,
+        text: {
+          "zh-CN":
+            "已撤销此模块权限（第 {version} 版配置），相关查询与待派发提案已阻断。",
+          "zh-HK":
+            "已撤銷此模組權限（第 {version} 版設定），相關查詢與待派發提案已阻斷。",
+          en: "Module access revoked (Rev {version}). Related queries and queued proposals are now blocked.",
+        },
+        vars: { version: saved.version },
       });
     } catch (err) {
       if (isStaleAuthError(err)) return;
@@ -523,7 +604,7 @@ export function EmployeeAccessDetailView({
         } else {
           setModuleFeedback(moduleId, {
             kind: "error",
-            message: err.message,
+            apiError: err,
             requestId: err.requestId,
           });
         }
@@ -551,17 +632,35 @@ export function EmployeeAccessDetailView({
       >
         <AccessNoticeCard
           variant="ACCESS_RESTRICTED"
-          title="需要全站点模块权限管理员权限"
-          message="此区域仅限具备 workbench.access.manage 权限且拥有租户全仓库范围的管理员（如 access-admin）访问。普通运维管理员及业务岗位账号不可管理员工模块授权。"
+          title={tx({
+            "zh-CN": "需要全仓库模块权限管理员权限",
+            "zh-HK": "需要全倉庫模組權限管理員權限",
+            en: "All-Warehouse Access Admin Permission Required",
+          })}
+          message={tx({
+            "zh-CN":
+              "此区域仅限具备 workbench.access.manage 权限且拥有租户全仓库范围的管理员（如 access-admin）访问。普通运维管理员及业务岗位账号不可管理员工模块授权。",
+            "zh-HK":
+              "此區域僅限具備 workbench.access.manage 權限且擁有租戶全倉庫範圍的管理員（如 access-admin）存取。一般維運管理員及業務職位帳號不可管理員工模組授權。",
+            en: "This area is restricted to administrators with workbench.access.manage and all-warehouse tenant scope (e.g. access-admin). Operations admins and business accounts cannot manage employee module access.",
+          })}
           backHref={canAccessAdminOps ? "/admin" : "/inbox"}
-          backLabel={canAccessAdminOps ? "前往运维监控" : "返回工作台"}
+          backLabel={
+            canAccessAdminOps
+              ? tx({
+                  "zh-CN": "前往运维监控",
+                  "zh-HK": "前往維運監控",
+                  en: "Go to Operations",
+                })
+              : t("common.backToWorkbench")
+          }
         />
       </div>
     );
   }
 
   const revokeModuleMeta = revokeTargetModule
-    ? getModuleMeta(revokeTargetModule, 0)
+    ? getModuleMeta(revokeTargetModule, 0, locale)
     : null;
   const revokeCurrentVersion = revokeTargetModule
     ? (assignments[revokeTargetModule]?.version ?? 0)
@@ -579,31 +678,55 @@ export function EmployeeAccessDetailView({
           className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] hover:text-[var(--accent)] hover:shadow-[var(--shadow-card)] transition-all duration-[150ms]"
         >
           <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.85} />
-          <span>返回员工目录</span>
+          <span>
+            {tx({
+              "zh-CN": "返回员工目录",
+              "zh-HK": "返回員工目錄",
+              en: "Back to Directory",
+            })}
+          </span>
         </Link>
       </div>
 
-      {/* Unified Porcelain Employee Header Sheet */}
+      {/* Unified Porcelain / Obsidian Employee Header Sheet */}
       <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4 min-w-0">
             <Avatar
-              fallbackText={subject}
-              name={subject}
+              fallbackText={persona.displayName}
+              name={persona.displayName}
               size="lg"
               kind="user"
             />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
-                <h1
-                  className="font-mono-code text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] break-all"
-                  data-testid="employee-detail-subject"
-                >
-                  {subject}
-                </h1>
+                {hasDistinctName ? (
+                  <>
+                    <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
+                      {persona.displayName}
+                    </h1>
+                    <span
+                      data-testid="employee-detail-subject"
+                      className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[12px] font-medium text-[var(--ink-secondary)]"
+                    >
+                      {subject}
+                    </span>
+                  </>
+                ) : (
+                  <h1
+                    className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] break-all leading-tight"
+                    data-testid="employee-detail-subject"
+                  >
+                    {subject}
+                  </h1>
+                )}
                 {isSelf && (
                   <span className="inline-flex items-center rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--status-amber-ink)]">
-                    本人账号 · 只读
+                    {tx({
+                      "zh-CN": "本人账号 · 只读",
+                      "zh-HK": "本人帳號 · 唯讀",
+                      en: "Your Account · Read-Only",
+                    })}
                   </span>
                 )}
               </div>
@@ -611,9 +734,15 @@ export function EmployeeAccessDetailView({
                 <span className="font-mono-code">{actor?.tenant ?? "—"}</span>
                 <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
                 <span>
-                  可管理仓库{" "}
+                  {tx({
+                    "zh-CN": "可管理仓库",
+                    "zh-HK": "可管理倉庫",
+                    en: "Managed warehouses",
+                  })}{" "}
                   <span className="font-mono-code text-[var(--ink-secondary)]">
-                    {catalog?.warehouses.join(" / ") || "—"}
+                    {sortedCatalogWarehouses.length > 0
+                      ? sortedCatalogWarehouses.join(" / ")
+                      : "—"}
                   </span>
                 </span>
               </p>
@@ -630,7 +759,13 @@ export function EmployeeAccessDetailView({
               onClick={() => void loadEmployeeAccess()}
             >
               <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>刷新最新配置</span>
+              <span>
+                {tx({
+                  "zh-CN": "刷新最新配置",
+                  "zh-HK": "重新整理最新設定",
+                  en: "Refresh Config",
+                })}
+              </span>
             </Button>
           </div>
         </div>
@@ -648,10 +783,20 @@ export function EmployeeAccessDetailView({
             />
             <div className="leading-relaxed">
               <span className="font-semibold">
-                管理员不能修改自己的模块授权。
+                {tx({
+                  "zh-CN": "管理员不能修改自己的模块授权。",
+                  "zh-HK": "管理員不能修改自己的模組授權。",
+                  en: "Administrators cannot modify their own module access.",
+                })}
               </span>
               <span className="ml-1 text-[var(--ink-secondary)]">
-                所有编辑、保存与撤销操作均已禁用，请由其他具备全站点权限的管理员协助调整。
+                {tx({
+                  "zh-CN":
+                    "所有编辑、保存与撤销操作均已禁用，请由其他具备全仓库权限的管理员协助调整。",
+                  "zh-HK":
+                    "所有編輯、儲存與撤銷操作均已停用，請由其他具備全倉庫權限的管理員協助調整。",
+                  en: "All editing, saving, and revocation controls are disabled. Ask another all-warehouse access administrator to make changes.",
+                })}
               </span>
             </div>
           </div>
@@ -662,12 +807,20 @@ export function EmployeeAccessDetailView({
           data-testid="scope-intersection-note"
           className="mt-4 border-t border-[var(--hairline-subtle)] pt-3.5 text-[12px] text-[var(--ink-muted)] leading-relaxed"
         >
-          实际生效范围取「模块显式配置」与「员工身份已验证仓库」的交集，未单独配置的模块沿用默认权限；到期时间留空即永久有效（按
-          {localTzLabel}计算，格式{" "}
+          {tx(
+            {
+              "zh-CN":
+                "实际生效范围取「模块显式配置」与「员工身份已验证仓库」的交集，未单独配置的模块沿用默认权限；到期时间留空即永久有效（按{tz}计算，格式 ",
+              "zh-HK":
+                "實際生效範圍取「模組顯式設定」與「員工身份已驗證倉庫」的交集，未單獨設定的模組沿用預設權限；到期時間留空即永久有效（按{tz}計算，格式 ",
+              en: "Effective access is the intersection of explicit module settings and the employee's verified identity warehouses; unconfigured modules inherit default grants. Leave expiry blank for no expiry (in {tz}, format ",
+            },
+            { tz: localTzLabel },
+          )}
           <span className="font-mono-code text-[var(--ink-secondary)]">
             YYYY-MM-DD HH:MM
           </span>
-          ）。
+          {tx({ "zh-CN": "）。", "zh-HK": "）。", en: ")." })}
         </p>
       </section>
 
@@ -680,24 +833,46 @@ export function EmployeeAccessDetailView({
               : () => void loadEmployeeAccess()
           }
           backHref="/admin/people"
-          backLabel="返回员工目录"
+          backLabel={tx({
+            "zh-CN": "返回员工目录",
+            "zh-HK": "返回員工目錄",
+            en: "Back to Directory",
+          })}
         />
       )}
 
       {loading && !catalog && !loadError && (
         <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] px-6 py-14 text-center text-[13px] text-[var(--ink-muted)]">
-          正在加载员工模块授权快照…
+          {tx({
+            "zh-CN": "正在加载员工模块授权快照…",
+            "zh-HK": "正在載入員工模組授權快照…",
+            en: "Loading employee module assignments…",
+          })}
         </div>
       )}
 
-      {/* 5 Elevated Porcelain Module Sheets (NO 3D tilt on input/checkbox edit cards) */}
+      {/* 5 Elevated Module Sheets (NO 3D tilt on input/checkbox edit cards) */}
       {catalog && !loadError && (
         <div className="space-y-4">
           {moduleIds.map((moduleId, idx) => {
             const spec = catalog.modules[moduleId]!;
-            const meta = getModuleMeta(moduleId, idx);
+            const orderedSpecGrants = sortGrantsByDependency(
+              spec.grants,
+              spec.grants,
+            );
+            const meta = getModuleMeta(moduleId, idx, locale);
             const persisted = assignments[moduleId];
-            const stateInfo = classifyModuleAssignment(persisted, nowUnix);
+            const orderedPersistedGrants = persisted
+              ? sortGrantsByDependency(persisted.grants, spec.grants)
+              : [];
+            const orderedPersistedWarehouses = persisted
+              ? sortWarehouses(persisted.warehouses)
+              : [];
+            const stateInfo = classifyModuleAssignment(
+              persisted,
+              nowUnix,
+              locale,
+            );
             const draft =
               drafts[moduleId] ?? buildDraftFromAssignment(persisted);
             const dirty = isDraftDirty(draft, persisted);
@@ -721,14 +896,25 @@ export function EmployeeAccessDetailView({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2.5">
                       <h2
-                        title={`模块标识：${moduleId}`}
+                        title={tx(
+                          {
+                            "zh-CN": "模块标识：{id}",
+                            "zh-HK": "模組識別碼：{id}",
+                            en: "Module ID: {id}",
+                          },
+                          { id: moduleId },
+                        )}
                         className="text-[16px] font-semibold tracking-[-0.015em] text-[var(--ink-primary)]"
                       >
                         {meta.title}
                       </h2>
                       {dirty && !isSelf && (
                         <span className="inline-flex items-center rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]">
-                          未保存修改
+                          {tx({
+                            "zh-CN": "未保存修改",
+                            "zh-HK": "未儲存修改",
+                            en: "Unsaved",
+                          })}
                         </span>
                       )}
                     </div>
@@ -746,12 +932,36 @@ export function EmployeeAccessDetailView({
                       data-testid={`module-version-${moduleId}`}
                       title={
                         persisted
-                          ? `当前为第 ${persistedVersion} 版配置 (v${persistedVersion})`
-                          : "尚未单独配置 (v0)"
+                          ? tx(
+                              {
+                                "zh-CN": "当前为第 {version} 版配置 (v{version})",
+                                "zh-HK": "目前為第 {version} 版設定 (v{version})",
+                                en: "Revision {version} (v{version})",
+                              },
+                              { version: persistedVersion },
+                            )
+                          : tx({
+                              "zh-CN": "尚未单独配置 (v0)",
+                              "zh-HK": "尚未單獨設定 (v0)",
+                              en: "Not explicitly configured yet (v0)",
+                            })
                       }
                       className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--ink-secondary)] tabular-nums leading-none"
                     >
-                      {persisted ? `第 ${persistedVersion} 版` : "首次配置"}
+                      {persisted
+                        ? tx(
+                            {
+                              "zh-CN": "第 {version} 版",
+                              "zh-HK": "第 {version} 版",
+                              en: "Rev {version}",
+                            },
+                            { version: persistedVersion },
+                          )
+                        : tx({
+                            "zh-CN": "首次配置",
+                            "zh-HK": "首次設定",
+                            en: "Default",
+                          })}
                     </span>
                   </div>
                 </div>
@@ -759,8 +969,20 @@ export function EmployeeAccessDetailView({
                 {/* Role Constraint Notice (e.g., approvals -> manager/admin only) */}
                 {spec.roles && spec.roles.length > 0 && (
                   <div className="mt-4 rounded-tile bg-[var(--status-amber-wash)] px-3.5 py-2.5 text-[12.5px] text-[var(--status-amber-ink)] leading-relaxed">
-                    <span className="font-semibold">角色约束：</span>
-                    仅当员工角色为主管或管理员时此模块授权才会生效；配置审批仓库后可独立于经办写入权限生效。
+                    <span className="font-semibold">
+                      {tx({
+                        "zh-CN": "角色约束：",
+                        "zh-HK": "角色約束：",
+                        en: "Role constraint: ",
+                      })}
+                    </span>
+                    {tx({
+                      "zh-CN":
+                        "仅当员工角色为主管或管理员时此模块授权才会生效；配置审批仓库后可独立于经办写入权限生效。",
+                      "zh-HK":
+                        "僅當員工角色為主管或管理員時此模組授權才會生效；設定審批倉庫後可獨立於經辦寫入權限生效。",
+                      en: "Takes effect only when the employee's role is Manager or Admin. Configured approval warehouses apply independently of operator write permissions.",
+                    })}
                   </div>
                 )}
 
@@ -769,39 +991,95 @@ export function EmployeeAccessDetailView({
                   <dl className="mt-4 grid grid-cols-1 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-4 py-3 text-[12px] sm:grid-cols-3">
                     <div>
                       <dt className="text-[11px] text-[var(--ink-muted)]">
-                        已保存动作
+                        {tx({
+                          "zh-CN": "已保存动作",
+                          "zh-HK": "已儲存操作",
+                          en: "Saved Actions",
+                        })}
                       </dt>
                       <dd
-                        title={persisted.grants.join(", ") || "空"}
+                        title={
+                          orderedPersistedGrants.join(", ") ||
+                          tx({ "zh-CN": "空", "zh-HK": "空", en: "None" })
+                        }
                         className="mt-0.5 font-medium text-[var(--ink-primary)]"
                       >
-                        {persisted.grants.length === 0
-                          ? "已清空（已撤销）"
-                          : persisted.grants
-                              .map((g) => GRANT_META[g]?.label ?? g)
-                              .join("、")}
+                        {orderedPersistedGrants.length === 0
+                          ? tx({
+                              "zh-CN": "已清空（已撤销）",
+                              "zh-HK": "已清空（已撤銷）",
+                              en: "Cleared (Revoked)",
+                            })
+                          : orderedPersistedGrants
+                              .map((g) => getGrantLabel(g, locale))
+                              .join(locale === "en" ? ", " : "、")}
                       </dd>
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--ink-muted)]">
-                        已保存仓库
+                        {tx({
+                          "zh-CN": "已保存仓库",
+                          "zh-HK": "已儲存倉庫",
+                          en: "Saved Warehouses",
+                        })}
                       </dt>
-                      <dd className="mt-0.5 font-mono-code text-[12px] font-medium text-[var(--ink-primary)]">
-                        {persisted.warehouses.length === 0
-                          ? "已清空（已撤销）"
-                          : persisted.warehouses.join(" · ")}
+                      <dd
+                        className={[
+                          "mt-0.5 text-[12px] font-medium text-[var(--ink-primary)]",
+                          orderedPersistedWarehouses.length > 0
+                            ? "font-mono-code"
+                            : "",
+                        ].join(" ")}
+                      >
+                        {orderedPersistedWarehouses.length === 0
+                          ? tx({
+                              "zh-CN": "已清空（已撤销）",
+                              "zh-HK": "已清空（已撤銷）",
+                              en: "Cleared (Revoked)",
+                            })
+                          : orderedPersistedWarehouses.join(" · ")}
                       </dd>
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--ink-muted)]">
-                        到期时间（{localTzLabel}）
+                        {tx(
+                          {
+                            "zh-CN": "到期时间（{tz}）",
+                            "zh-HK": "到期時間（{tz}）",
+                            en: "Expiration ({tz})",
+                          },
+                          { tz: localTzLabel },
+                        )}
                       </dt>
-                      <dd className="mt-0.5 font-mono-code text-[12px] text-[var(--ink-primary)] tabular-nums">
-                        {persisted.expires_at
-                          ? `${formatUnixTime(persisted.expires_at)}${stateInfo.status === "expired" ? "（已到期）" : ""}`
-                          : persisted.grants.length === 0
-                            ? "不适用"
-                            : "永久有效"}
+                      <dd className="mt-0.5 text-[12px] text-[var(--ink-primary)] tabular-nums">
+                        {persisted.expires_at ? (
+                          <>
+                            <span className="font-mono-code">
+                              {formatDateTime(persisted.expires_at)}
+                            </span>
+                            {stateInfo.status === "expired" && (
+                              <span>
+                                {tx({
+                                  "zh-CN": "（已到期）",
+                                  "zh-HK": "（已到期）",
+                                  en: " (Expired)",
+                                })}
+                              </span>
+                            )}
+                          </>
+                        ) : persisted.grants.length === 0 ? (
+                          tx({
+                            "zh-CN": "不适用",
+                            "zh-HK": "不適用",
+                            en: "N/A",
+                          })
+                        ) : (
+                          tx({
+                            "zh-CN": "永久有效",
+                            "zh-HK": "永久有效",
+                            en: "No Expiry",
+                          })
+                        )}
                       </dd>
                     </div>
                   </dl>
@@ -813,26 +1091,47 @@ export function EmployeeAccessDetailView({
                   <div className="lg:col-span-5">
                     <div className="mb-2.5 flex items-center justify-between">
                       <span className="text-[12.5px] font-semibold text-[var(--ink-secondary)]">
-                        动作权限
+                        {tx({
+                          "zh-CN": "动作权限",
+                          "zh-HK": "操作權限",
+                          en: "Action Grants",
+                        })}
                       </span>
                       <span className="text-[11.5px] text-[var(--ink-muted)] tabular-nums">
-                        已选 {draft.grants.length} / {spec.grants.length}
+                        {tx(
+                          {
+                            "zh-CN": "已选 {selected} / {total}",
+                            "zh-HK": "已選 {selected} / {total}",
+                            en: "{selected} / {total} selected",
+                          },
+                          {
+                            selected: draft.grants.length,
+                            total: orderedSpecGrants.length,
+                          },
+                        )}
                       </span>
                     </div>
                     <div className="space-y-2">
-                      {spec.grants.map((grant) => {
+                      {orderedSpecGrants.map((grant) => {
                         const checked = draft.grants.includes(grant);
-                        const grantInfo = GRANT_META[grant];
+                        const grantLabel = getGrantLabel(grant, locale);
                         const reqGrant = GRANT_PREREQUISITES[grant];
                         const reqLabel = reqGrant
-                          ? (GRANT_META[reqGrant]?.label ?? reqGrant)
+                          ? getGrantLabel(reqGrant, locale)
                           : null;
                         const checkboxId = `grant-${moduleId}-${grant}`;
                         return (
                           <label
                             key={grant}
                             htmlFor={checkboxId}
-                            title={`权限编码：${grant}`}
+                            title={tx(
+                              {
+                                "zh-CN": "权限编码：{grant}",
+                                "zh-HK": "權限編碼：{grant}",
+                                en: "Grant code: {grant}",
+                              },
+                              { grant },
+                            )}
                             className={[
                               "flex items-center gap-3 rounded-tile px-3.5 py-2.5 transition-all duration-[150ms] select-none",
                               isSelf
@@ -840,7 +1139,7 @@ export function EmployeeAccessDetailView({
                                 : "cursor-pointer",
                               checked
                                 ? "bg-[var(--accent-wash)] ring-1 ring-[var(--accent-border)]"
-                                : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-subtle)]",
+                                : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)]",
                             ].join(" ")}
                           >
                             <span className="relative flex h-4.5 w-4.5 shrink-0 items-center justify-center">
@@ -862,9 +1161,9 @@ export function EmployeeAccessDetailView({
                               <span
                                 aria-hidden="true"
                                 className={[
-                                  "pointer-events-none flex h-4.5 w-4.5 items-center justify-center rounded-xs transition-all duration-[150ms] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent)] peer-focus-visible:ring-offset-1",
+                                  "pointer-events-none flex h-4.5 w-4.5 items-center justify-center rounded-xs transition-all duration-[150ms] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent)] peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-[var(--bg-surface)]",
                                   checked
-                                    ? "bg-[var(--accent)] text-white shadow-[0_1px_2px_rgba(22,104,227,0.28)]"
+                                    ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[0_1px_2px_var(--accent-ring)]"
                                     : "bg-[var(--bg-surface)] ring-1 ring-[var(--hairline-strong)]",
                                 ].join(" ")}
                               >
@@ -875,11 +1174,18 @@ export function EmployeeAccessDetailView({
                             </span>
                             <div className="min-w-0 flex-1">
                               <div className="text-[13px] font-medium text-[var(--ink-primary)] leading-snug">
-                                {grantInfo?.label ?? grant}
+                                {grantLabel}
                               </div>
                               {reqLabel && (
                                 <div className="mt-0.5 text-[11px] text-[var(--ink-muted)]">
-                                  需先具备「{reqLabel}」
+                                  {tx(
+                                    {
+                                      "zh-CN": "需先具备「{req}」",
+                                      "zh-HK": "須先具備「{req}」",
+                                      en: "Requires “{req}”",
+                                    },
+                                    { req: reqLabel },
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -889,13 +1195,17 @@ export function EmployeeAccessDetailView({
                     </div>
                   </div>
 
-                  {/* Column 2: Warehouses (Pure Tactile Toggle Pills — No Inner Checkbox Chrome) */}
+                  {/* Column 2: Warehouses (Pure Tactile Toggle Pills — Sorted Naturally HK01 -> HK02) */}
                   <div className="lg:col-span-3">
                     <div className="mb-2.5 flex items-center justify-between gap-2">
                       <span className="text-[12.5px] font-semibold text-[var(--ink-secondary)]">
-                        仓库范围
+                        {tx({
+                          "zh-CN": "仓库范围",
+                          "zh-HK": "倉庫範圍",
+                          en: "Warehouse Scope",
+                        })}
                       </span>
-                      {!isSelf && catalog.warehouses.length > 0 && (
+                      {!isSelf && sortedCatalogWarehouses.length > 0 && (
                         <div className="flex items-center gap-2 text-[11.5px]">
                           <button
                             type="button"
@@ -903,12 +1213,16 @@ export function EmployeeAccessDetailView({
                             onClick={() =>
                               handleSetAllWarehouses(
                                 moduleId,
-                                catalog.warehouses,
+                                sortedCatalogWarehouses,
                               )
                             }
                             className="font-medium text-[var(--accent)] hover:underline cursor-pointer disabled:opacity-50"
                           >
-                            全选
+                            {tx({
+                              "zh-CN": "全选",
+                              "zh-HK": "全選",
+                              en: "All",
+                            })}
                           </button>
                           <button
                             type="button"
@@ -918,14 +1232,18 @@ export function EmployeeAccessDetailView({
                             }
                             className="text-[var(--ink-muted)] hover:text-[var(--ink-primary)] cursor-pointer disabled:opacity-50"
                           >
-                            清空
+                            {tx({
+                              "zh-CN": "清空",
+                              "zh-HK": "清空",
+                              en: "Clear",
+                            })}
                           </button>
                         </div>
                       )}
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                      {catalog.warehouses.map((wh) => {
+                      {sortedCatalogWarehouses.map((wh) => {
                         const checked = draft.warehouses.includes(wh);
                         const whId = `wh-${moduleId}-${wh}`;
                         return (
@@ -933,13 +1251,13 @@ export function EmployeeAccessDetailView({
                             key={wh}
                             htmlFor={whId}
                             className={[
-                              "relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium transition-all duration-[150ms] select-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--accent)] has-[:focus-visible]:ring-offset-1",
+                              "relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium transition-all duration-[150ms] select-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--accent)] has-[:focus-visible]:ring-offset-1 has-[:focus-visible]:ring-offset-[var(--bg-surface)]",
                               isSelf
                                 ? "cursor-not-allowed opacity-65"
                                 : "cursor-pointer",
                               checked
-                                ? "bg-[var(--accent)] text-white shadow-[0_1px_3px_rgba(22,104,227,0.28)]"
-                                : "bg-[var(--bg-surface-tint)] text-[var(--ink-secondary)] hover:bg-[var(--bg-surface-subtle)] hover:text-[var(--ink-primary)]",
+                                ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[0_1px_3px_var(--accent-ring)] hover:bg-[var(--accent-solid-hover)]"
+                                : "bg-[var(--bg-surface-tint)] text-[var(--ink-secondary)] ring-1 ring-[var(--hairline)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--ink-primary)]",
                             ].join(" ")}
                           >
                             <input
@@ -973,14 +1291,18 @@ export function EmployeeAccessDetailView({
                     </div>
                   </div>
 
-                  {/* Column 3: Localized Chinese Expiry Picker (Zero US mm/dd/yyyy Chrome) */}
+                  {/* Column 3: Localized Expiry Picker (Zero US mm/dd/yyyy Chrome) */}
                   <div className="lg:col-span-4">
                     <div className="mb-2.5 flex items-center justify-between gap-2">
                       <label
                         htmlFor={`expiry-${moduleId}`}
                         className="text-[12.5px] font-semibold text-[var(--ink-secondary)]"
                       >
-                        有效期限
+                        {tx({
+                          "zh-CN": "有效期限",
+                          "zh-HK": "有效期限",
+                          en: "Expiration",
+                        })}
                       </label>
                       {hasExpiry && !isSelf && (
                         <button
@@ -988,16 +1310,22 @@ export function EmployeeAccessDetailView({
                           disabled={isSavingThis}
                           data-testid={`module-expiry-clear-${moduleId}`}
                           onClick={() => handleExpiryChange(moduleId, "")}
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors cursor-pointer disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-[var(--accent-ink)] hover:bg-[var(--accent-wash)] transition-colors cursor-pointer disabled:opacity-50"
                         >
                           <X className="h-3 w-3" strokeWidth={1.85} />
-                          <span>改为永久</span>
+                          <span>
+                            {tx({
+                              "zh-CN": "改为永久",
+                              "zh-HK": "改為永久",
+                              en: "Remove expiry",
+                            })}
+                          </span>
                         </button>
                       )}
                     </div>
 
                     <div className="space-y-2 rounded-tile bg-[var(--bg-surface-tint)] p-3">
-                      {/* Quick Chinese Expiry Presets */}
+                      {/* Quick Expiry Presets */}
                       <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
@@ -1006,11 +1334,15 @@ export function EmployeeAccessDetailView({
                           className={[
                             "rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-55",
                             !hasExpiry
-                              ? "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)]"
-                              : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-surface)]/60",
+                              ? "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--hairline-strong)]"
+                              : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-surface-hover)]",
                           ].join(" ")}
                         >
-                          永久有效
+                          {tx({
+                            "zh-CN": "永久有效",
+                            "zh-HK": "永久有效",
+                            en: "No Expiry",
+                          })}
                         </button>
                         <button
                           type="button"
@@ -1023,7 +1355,11 @@ export function EmployeeAccessDetailView({
                           }
                           className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--accent)] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
                         >
-                          7 天后到期
+                          {tx({
+                            "zh-CN": "7 天后到期",
+                            "zh-HK": "7 天後到期",
+                            en: "+7 Days",
+                          })}
                         </button>
                         <button
                           type="button"
@@ -1036,7 +1372,11 @@ export function EmployeeAccessDetailView({
                           }
                           className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--accent)] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
                         >
-                          30 天后到期
+                          {tx({
+                            "zh-CN": "30 天后到期",
+                            "zh-HK": "30 天後到期",
+                            en: "+30 Days",
+                          })}
                         </button>
                       </div>
 
@@ -1050,13 +1390,17 @@ export function EmployeeAccessDetailView({
                           id={`expiry-${moduleId}`}
                           type="text"
                           inputMode="numeric"
-                          lang="zh-CN"
+                          lang={LOCALE_META[locale].htmlLang}
                           value={draft.expiresAtInput}
                           disabled={isSelf || isSavingThis}
-                          placeholder="留空即永久有效，或填 2026-12-31 18:00"
+                          placeholder={tx({
+                            "zh-CN": "留空即永久有效，或填 2026-12-31 18:00",
+                            "zh-HK": "留空即永久有效，或填 2026-12-31 18:00",
+                            en: "Blank for no expiry, or 2026-12-31 18:00",
+                          })}
                           aria-invalid={
                             (feedback?.kind === "error" &&
-                              feedback.message.includes("到期时间")) ||
+                              feedback.field === "expiry") ||
                             undefined
                           }
                           data-testid={`module-expiry-${moduleId}`}
@@ -1087,7 +1431,7 @@ export function EmployeeAccessDetailView({
                           ? "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
                           : feedback.kind === "error"
                             ? "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
-                            : "bg-[var(--accent-wash)] text-[var(--accent)]",
+                            : "bg-[var(--accent-wash)] text-[var(--accent-ink)]",
                     ].join(" ")}
                   >
                     <div className="flex items-start gap-2 min-w-0">
@@ -1108,10 +1452,19 @@ export function EmployeeAccessDetailView({
                         />
                       )}
                       <div className="min-w-0 leading-relaxed">
-                        <span>{feedback.message}</span>
+                        <span>
+                          {feedback.apiError
+                            ? localizeError(feedback.apiError)
+                            : feedback.text
+                              ? tx(feedback.text, feedback.vars)
+                              : ""}
+                        </span>
                         {feedback.requestId && (
-                          <span className="ml-2 font-mono-code text-[11px] opacity-80">
-                            跟踪编号: {feedback.requestId}
+                          <span className="ml-2 text-[11px] opacity-85">
+                            {t("common.requestId")}:{" "}
+                            <span className="font-mono-code">
+                              {feedback.requestId}
+                            </span>
                           </span>
                         )}
                       </div>
@@ -1119,7 +1472,11 @@ export function EmployeeAccessDetailView({
                     <button
                       type="button"
                       onClick={() => setModuleFeedback(moduleId, null)}
-                      aria-label="关闭提示"
+                      aria-label={tx({
+                        "zh-CN": "关闭提示",
+                        "zh-HK": "關閉提示",
+                        en: "Dismiss notice",
+                      })}
                       className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full opacity-70 hover:opacity-100 cursor-pointer"
                     >
                       <X className="h-3.5 w-3.5" />
@@ -1131,8 +1488,33 @@ export function EmployeeAccessDetailView({
                 <div className="mt-5 flex flex-col gap-3 border-t border-[var(--hairline-subtle)] pt-3.5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-[12px] text-[var(--ink-muted)] tabular-nums">
                     {persisted
-                      ? `第 ${persisted.version} 版配置${savedAt ? ` · 已保存 ${formatUnixTime(savedAt, { withSeconds: true }).slice(11)}` : ""}`
-                      : "尚未单独配置"}
+                      ? savedAt
+                        ? tx(
+                            {
+                              "zh-CN": "第 {version} 版配置 · 已保存 {time}",
+                              "zh-HK": "第 {version} 版設定 · 已儲存 {time}",
+                              en: "Rev {version} · Saved {time}",
+                            },
+                            {
+                              version: persisted.version,
+                              time: formatTimeOnly(savedAt, {
+                                withSeconds: true,
+                              }),
+                            },
+                          )
+                        : tx(
+                            {
+                              "zh-CN": "第 {version} 版配置",
+                              "zh-HK": "第 {version} 版設定",
+                              en: "Rev {version}",
+                            },
+                            { version: persisted.version },
+                          )
+                      : tx({
+                          "zh-CN": "尚未单独配置",
+                          "zh-HK": "尚未單獨設定",
+                          en: "Not configured yet",
+                        })}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -1152,8 +1534,16 @@ export function EmployeeAccessDetailView({
                           />
                           <span>
                             {isAlreadyRevoked
-                              ? "已撤销此模块"
-                              : "撤销该模块权限"}
+                              ? tx({
+                                  "zh-CN": "已撤销此模块",
+                                  "zh-HK": "已撤銷此模組",
+                                  en: "Module Revoked",
+                                })
+                              : tx({
+                                  "zh-CN": "撤销该模块权限",
+                                  "zh-HK": "撤銷該模組權限",
+                                  en: "Revoke Module",
+                                })}
                           </span>
                         </Button>
 
@@ -1169,7 +1559,13 @@ export function EmployeeAccessDetailView({
                           onClick={() => void handleSaveModule(moduleId)}
                         >
                           <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
-                          <span>保存授权</span>
+                          <span>
+                            {tx({
+                              "zh-CN": "保存授权",
+                              "zh-HK": "儲存授權",
+                              en: "Save Access",
+                            })}
+                          </span>
                         </Button>
                       </>
                     ) : (
@@ -1182,7 +1578,13 @@ export function EmployeeAccessDetailView({
                         onClick={() => setRevokeTargetModule(moduleId)}
                       >
                         <ShieldOff className="h-3.5 w-3.5" strokeWidth={1.85} />
-                        <span>停用此模块</span>
+                        <span>
+                          {tx({
+                            "zh-CN": "停用此模块",
+                            "zh-HK": "停用此模組",
+                            en: "Disable Module",
+                          })}
+                        </span>
                       </Button>
                     )}
                   </div>
@@ -1207,27 +1609,87 @@ export function EmployeeAccessDetailView({
         }
         title={
           revokeModuleMeta
-            ? `确认撤销「${revokeModuleMeta.title}」模块权限`
-            : "确认撤销模块权限"
+            ? tx(
+                {
+                  "zh-CN": "确认撤销「{title}」模块权限",
+                  "zh-HK": "確認撤銷「{title}」模組權限",
+                  en: "Confirm Revoking “{title}” Access",
+                },
+                { title: revokeModuleMeta.title },
+              )
+            : tx({
+                "zh-CN": "确认撤销模块权限",
+                "zh-HK": "確認撤銷模組權限",
+                en: "Confirm Module Revocation",
+              })
         }
-        description="撤销后将清空该员工此模块的动作与仓库配置，生效后立即阻断相关查询及待派发提案。"
-        scopeSummary={`租户 ${actor?.tenant ?? "—"} · 目标员工 ${subject} · 模块 ${revokeModuleMeta?.title ?? ""}`}
-        metadata={[
-          { label: "目标员工", value: subject, mono: true },
+        description={tx({
+          "zh-CN":
+            "撤销后将清空该员工此模块的动作与仓库配置，生效后立即阻断相关查询及待派发提案。",
+          "zh-HK":
+            "撤銷後將清空該員工此模組的操作與倉庫設定，生效後立即阻斷相關查詢及待派發提案。",
+          en: "Revoking clears all action grants and warehouse scopes for this module, immediately blocking related queries and queued proposals.",
+        })}
+        scopeSummary={tx(
           {
-            label: "目标模块",
+            "zh-CN": "租户 {tenant} · 目标员工 {subject} · 模块 {module}",
+            "zh-HK": "租戶 {tenant} · 目標員工 {subject} · 模組 {module}",
+            en: "Tenant {tenant} · Employee {subject} · Module {module}",
+          },
+          {
+            tenant: actor?.tenant ?? "—",
+            subject,
+            module: revokeModuleMeta?.title ?? "",
+          },
+        )}
+        metadata={[
+          {
+            label: tx({
+              "zh-CN": "目标员工",
+              "zh-HK": "目標員工",
+              en: "Target Employee",
+            }),
+            value: hasDistinctName
+              ? `${persona.displayName} (${subject})`
+              : subject,
+          },
+          {
+            label: tx({
+              "zh-CN": "目标模块",
+              "zh-HK": "目標模組",
+              en: "Target Module",
+            }),
             value: revokeModuleMeta?.title ?? revokeTargetModule ?? "—",
           },
           {
-            label: "当前配置版本",
+            label: tx({
+              "zh-CN": "当前配置版本",
+              "zh-HK": "目前設定版本",
+              en: "Current Revision",
+            }),
             value:
               revokeCurrentVersion > 0
-                ? `第 ${revokeCurrentVersion} 版`
-                : "首次配置",
+                ? tx(
+                    {
+                      "zh-CN": "第 {version} 版",
+                      "zh-HK": "第 {version} 版",
+                      en: "Rev {version}",
+                    },
+                    { version: revokeCurrentVersion },
+                  )
+                : tx({
+                    "zh-CN": "首次配置",
+                    "zh-HK": "首次設定",
+                    en: "Default",
+                  }),
           },
         ]}
-        confirmLabel="确认撤销权限"
-        cancelLabel="取消"
+        confirmLabel={tx({
+          "zh-CN": "确认撤销权限",
+          "zh-HK": "確認撤銷權限",
+          en: "Confirm Revoke",
+        })}
+        cancelLabel={t("common.cancel")}
         dialogTestId="revoke-confirm-dialog"
         confirmTestId="confirm-dialog-submit"
         onConfirm={handleConfirmRevoke}

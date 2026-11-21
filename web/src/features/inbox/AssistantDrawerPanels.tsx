@@ -17,11 +17,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import {
-  formatProposalAction,
-  formatShortDigest,
-  formatUnixTime,
-} from "@/lib/format";
+import { formatShortDigest } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { ExecutionTopologyRibbon } from "@/components/kinetic/ExecutionTopologyRibbon";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
@@ -42,6 +39,7 @@ import type {
 
 export function AssistantBriefDrawer() {
   const { authGeneration, handleAccessChanged } = useSession();
+  const { tx, t, formatDateTime } = useLocale();
   const [windowDays, setWindowDays] = useState<1 | 7>(1);
   const [brief, setBrief] = useState<BriefResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -92,7 +90,13 @@ export function AssistantBriefDrawer() {
                   : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
               ].join(" ")}
             >
-              {days === 1 ? "今日" : "未来 7 天"}
+              {days === 1
+                ? tx({ "zh-CN": "今日", "zh-HK": "今日", en: "Today" })
+                : tx({
+                    "zh-CN": "未来 7 天",
+                    "zh-HK": "未來 7 天",
+                    en: "Next 7 Days",
+                  })}
             </button>
           ))}
         </div>
@@ -107,13 +111,23 @@ export function AssistantBriefDrawer() {
             className={["h-3.5 w-3.5", loading ? "animate-spin" : ""].join(" ")}
             strokeWidth={1.85}
           />
-          <span>刷新</span>
+          <span>{t("common.refresh")}</span>
         </Button>
       </div>
 
       {loading && !brief && (
         <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-          正在汇总{windowDays === 1 ? "今日" : "近 7 天"}简报…
+          {windowDays === 1
+            ? tx({
+                "zh-CN": "正在汇总今日简报…",
+                "zh-HK": "正在彙整今日簡報…",
+                en: "Loading today's brief…",
+              })
+            : tx({
+                "zh-CN": "正在汇总近 7 天简报…",
+                "zh-HK": "正在彙整近 7 天簡報…",
+                en: "Loading 7-day brief…",
+              })}
         </div>
       )}
 
@@ -125,17 +139,29 @@ export function AssistantBriefDrawer() {
         <>
           <div className="grid grid-cols-2 gap-2.5">
             <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
-              <div className="text-[11.5px] text-[var(--ink-muted)]">待我审批</div>
-              <div className="mt-1 font-mono-code text-[24px] font-semibold text-[var(--ink-primary)] tabular-nums">
+              <div className="text-[11.5px] text-[var(--ink-muted)]">
+                {t("assistant.brief.pendingApprovals")}
+              </div>
+              <div className="mt-1 text-[24px] font-semibold text-[var(--ink-primary)] tabular-nums">
                 {brief.pending_approvals}
                 {brief.pending_approvals_capped ? "+" : ""}
               </div>
             </div>
             <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
               <div className="text-[11.5px] text-[var(--ink-muted)]">
-                {windowDays === 1 ? "今日会议" : "7 天内会议"}
+                {windowDays === 1
+                  ? tx({
+                      "zh-CN": "今日会议",
+                      "zh-HK": "今日會議",
+                      en: "Meetings Today",
+                    })
+                  : tx({
+                      "zh-CN": "7 天内会议",
+                      "zh-HK": "7 天內會議",
+                      en: "7-Day Meetings",
+                    })}
               </div>
-              <div className="mt-1 font-mono-code text-[24px] font-semibold text-[var(--ink-primary)] tabular-nums">
+              <div className="mt-1 text-[24px] font-semibold text-[var(--ink-primary)] tabular-nums">
                 {brief.meetings}
               </div>
             </div>
@@ -143,12 +169,20 @@ export function AssistantBriefDrawer() {
 
           <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
             <div className="px-3.5 py-2.5 text-[12px] font-medium text-[var(--ink-secondary)] border-b border-[var(--hairline-subtle)]">
-              我提交的单据状态分布
+              {tx({
+                "zh-CN": "我提交的单据状态分布",
+                "zh-HK": "我提交的單據狀態分佈",
+                en: "Submitted Proposal States",
+              })}
             </div>
             <div className="divide-y divide-[var(--hairline-subtle)]">
               {Object.entries(brief.submitted_current_states).length === 0 ? (
                 <div className="px-3.5 py-5 text-center text-[12px] text-[var(--ink-muted)]">
-                  暂无已提交单据
+                  {tx({
+                    "zh-CN": "暂无已提交单据",
+                    "zh-HK": "暫無已提交單據",
+                    en: "No submitted proposals yet",
+                  })}
                 </div>
               ) : (
                 Object.entries(brief.submitted_current_states).map(
@@ -158,7 +192,7 @@ export function AssistantBriefDrawer() {
                       className="flex items-center justify-between px-3.5 py-2.5 text-[12px]"
                     >
                       <StatusBadge status={stateKey} compact />
-                      <span className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
+                      <span className="font-semibold text-[var(--ink-primary)] tabular-nums">
                         {count}
                       </span>
                     </div>
@@ -168,8 +202,13 @@ export function AssistantBriefDrawer() {
             </div>
           </div>
 
-          <div className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-            快照时间：{formatUnixTime(brief.as_of)}
+          <div className="text-[11px] text-[var(--ink-muted)] tabular-nums">
+            {tx({
+              "zh-CN": "快照时间：",
+              "zh-HK": "快照時間：",
+              en: "Snapshot: ",
+            })}
+            <span className="font-mono-code">{formatDateTime(brief.as_of)}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-2 pt-1">
@@ -177,7 +216,13 @@ export function AssistantBriefDrawer() {
               href="/work"
               className="inline-flex h-9 items-center justify-center gap-1 rounded-full bg-[var(--bg-surface)] px-3 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-all"
             >
-              <span>打开工作台</span>
+              <span>
+                {tx({
+                  "zh-CN": "打开工作台",
+                  "zh-HK": "開啟工作台",
+                  en: "Workbench",
+                })}
+              </span>
               <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.85} />
             </Link>
             <Link
@@ -188,7 +233,13 @@ export function AssistantBriefDrawer() {
                 className="h-3.5 w-3.5 text-[var(--accent)]"
                 strokeWidth={1.85}
               />
-              <span>打开日历</span>
+              <span>
+                {tx({
+                  "zh-CN": "打开日历",
+                  "zh-HK": "開啟日曆",
+                  en: "Calendar",
+                })}
+              </span>
             </Link>
           </div>
         </>
@@ -203,6 +254,13 @@ export function AssistantProposalDrawer({
   proposalId: string;
 }) {
   const { authGeneration, handleAccessChanged } = useSession();
+  const {
+    tx,
+    formatDateTime,
+    localizeAction,
+    localizePersona,
+    localizeTimelineEvent,
+  } = useLocale();
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -238,7 +296,11 @@ export function AssistantProposalDrawer({
   if (loading && !proposal) {
     return (
       <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-        正在实时核验提案单据…
+        {tx({
+          "zh-CN": "正在实时核验提案单据…",
+          "zh-HK": "正在即時核驗提案單據…",
+          en: "Verifying proposal snapshot…",
+        })}
       </div>
     );
   }
@@ -265,7 +327,11 @@ export function AssistantProposalDrawer({
           <button
             type="button"
             onClick={() => void load()}
-            aria-label="刷新提案快照"
+            aria-label={tx({
+              "zh-CN": "刷新提案快照",
+              "zh-HK": "重新整理提案快照",
+              en: "Refresh proposal snapshot",
+            })}
             className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] cursor-pointer"
           >
             <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
@@ -282,25 +348,52 @@ export function AssistantProposalDrawer({
 
       <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-          <dt className="text-[var(--ink-muted)]">动作类型</dt>
+          <dt className="text-[var(--ink-muted)]">
+            {tx({
+              "zh-CN": "动作类型",
+              "zh-HK": "操作類型",
+              en: "Action",
+            })}
+          </dt>
           <dd className="font-medium text-[var(--ink-primary)]">
-            {formatProposalAction(action)}
+            {localizeAction(action)}
           </dd>
         </div>
         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-          <dt className="text-[var(--ink-muted)]">目标对象</dt>
+          <dt className="text-[var(--ink-muted)]">
+            {tx({
+              "zh-CN": "目标对象",
+              "zh-HK": "目標對象",
+              en: "Target",
+            })}
+          </dt>
           <dd className="font-mono-code text-[var(--ink-primary)]">
             {proposal.plan.target}
           </dd>
         </div>
         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-          <dt className="text-[var(--ink-muted)]">发起人 / 审批人</dt>
-          <dd className="font-mono-code text-[var(--ink-primary)]">
-            {proposal.requester} / {proposal.approver || "待定"}
+          <dt className="text-[var(--ink-muted)]">
+            {tx({
+              "zh-CN": "发起人 / 审批人",
+              "zh-HK": "發起人 / 審批人",
+              en: "Requester / Approver",
+            })}
+          </dt>
+          <dd className="text-[var(--ink-primary)]">
+            {localizePersona(proposal.requester).displayName} /{" "}
+            {proposal.approver
+              ? localizePersona(proposal.approver).displayName
+              : tx({ "zh-CN": "待定", "zh-HK": "待定", en: "Pending" })}
           </dd>
         </div>
         <div className="flex justify-between gap-2 px-3.5 py-2.5">
-          <dt className="text-[var(--ink-muted)]">摘要锁</dt>
+          <dt className="text-[var(--ink-muted)]">
+            {tx({
+              "zh-CN": "摘要锁",
+              "zh-HK": "摘要鎖",
+              en: "Digest lock",
+            })}
+          </dt>
           <dd className="font-mono-code text-[var(--ink-primary)]">
             {formatShortDigest(proposal.digest)}
           </dd>
@@ -310,15 +403,25 @@ export function AssistantProposalDrawer({
       {action === "shipment.reschedule" && (
         <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5 text-[12px]">
           <div className="text-[11.5px] font-medium text-[var(--ink-muted)]">
-            字段变更比对
+            {tx({
+              "zh-CN": "字段变更比对",
+              "zh-HK": "欄位變更比對",
+              en: "Field Diff",
+            })}
           </div>
           <div className="mt-2 flex items-center gap-2">
-            <span className="text-[var(--ink-muted)]">交付日期</span>
+            <span className="text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "交付日期",
+                "zh-HK": "交付日期",
+                en: "Delivery Date",
+              })}
+            </span>
             <span className="font-mono-code line-through text-[var(--ink-secondary)]">
               {String(before.delivery_date ?? "—")}
             </span>
-            <ArrowRight className="h-3 w-3 text-[var(--ink-faint)]" />
-            <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent)]">
+            <ArrowRight className="h-3 w-3 text-[var(--ink-muted)]" />
+            <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent-ink)]">
               {String(after.delivery_date ?? "—")}
             </span>
           </div>
@@ -329,11 +432,35 @@ export function AssistantProposalDrawer({
         <div className="rounded-tile bg-[var(--status-emerald-wash)] p-3.5 text-[12px]">
           <div className="flex items-center gap-1.5 font-semibold text-[var(--status-emerald)]">
             <CheckCircle2 className="h-4 w-4" strokeWidth={1.9} />
-            <span>ERP 回执已核对一致</span>
+            <span>
+              {tx({
+                "zh-CN": "ERP 回执已核对一致",
+                "zh-HK": "ERP 回執已核對一致",
+                en: "ERP Receipt Verified",
+              })}
+            </span>
           </div>
-          <div className="mt-1.5 space-y-1 font-mono-code text-[11px] text-[var(--ink-secondary)]">
-            <div>远端回执号：{proposal.receipt.remote_id}</div>
-            <div>操作编号：{proposal.receipt.operation_id}</div>
+          <div className="mt-1.5 space-y-1 text-[11px] text-[var(--ink-secondary)]">
+            <div>
+              {tx({
+                "zh-CN": "远端回执号：",
+                "zh-HK": "遠端回執號：",
+                en: "Remote ID: ",
+              })}
+              <span className="font-mono-code">
+                {proposal.receipt.remote_id}
+              </span>
+            </div>
+            <div>
+              {tx({
+                "zh-CN": "操作编号：",
+                "zh-HK": "操作編號：",
+                en: "Operation ID: ",
+              })}
+              <span className="font-mono-code">
+                {proposal.receipt.operation_id}
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -341,7 +468,14 @@ export function AssistantProposalDrawer({
       {proposal.events.length > 0 && (
         <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
           <div className="px-3.5 py-2 text-[11.5px] font-medium text-[var(--ink-secondary)] border-b border-[var(--hairline-subtle)]">
-            审计事件轨迹 ({proposal.events.length})
+            {tx(
+              {
+                "zh-CN": "审计事件轨迹 ({count})",
+                "zh-HK": "稽核事件軌跡 ({count})",
+                en: "Audit Trail ({count})",
+              },
+              { count: proposal.events.length },
+            )}
           </div>
           <ul className="divide-y divide-[var(--hairline-subtle)] text-[11.5px]">
             {proposal.events.slice(-5).map((ev, idx) => (
@@ -349,11 +483,22 @@ export function AssistantProposalDrawer({
                 key={`${ev.event}-${ev.at}-${idx}`}
                 className="flex items-center justify-between gap-2 px-3.5 py-2"
               >
-                <span className="truncate font-mono-code text-[var(--ink-primary)]">
-                  {ev.event}
+                <span
+                  title={ev.event}
+                  className="truncate font-medium text-[var(--ink-primary)]"
+                >
+                  {localizeTimelineEvent(ev.event).label}
                 </span>
-                <span className="shrink-0 font-mono-code text-[10.5px] text-[var(--ink-muted)] tabular-nums">
-                  {ev.subject} · {formatUnixTime(ev.at)}
+                <span className="shrink-0 text-[10.5px] text-[var(--ink-muted)] tabular-nums">
+                  {ev.subject === "worker"
+                    ? tx({
+                        "zh-CN": "系统执行器",
+                        "zh-HK": "系統執行器",
+                        en: "System worker",
+                      })
+                    : localizePersona(ev.subject).displayName}{" "}
+                  ·{" "}
+                  <span className="font-mono-code">{formatDateTime(ev.at)}</span>
                 </span>
               </li>
             ))}
@@ -364,9 +509,15 @@ export function AssistantProposalDrawer({
       <Link
         href={`/proposals/${encodeURIComponent(proposal.id)}`}
         data-testid="drawer-proposal-open-full"
-        className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-colors"
+        className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-4 text-[13px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] transition-colors"
       >
-        <span>打开完整单据与正式审批页</span>
+        <span>
+          {tx({
+            "zh-CN": "打开完整单据与正式审批页",
+            "zh-HK": "開啟完整單據與正式審批頁",
+            en: "Open Full Proposal & Approval Page",
+          })}
+        </span>
         <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.9} />
       </Link>
     </div>
@@ -383,6 +534,7 @@ export function AssistantResultDrawer({
   onProposalCreated: (proposal: Proposal) => void;
 }) {
   const { handleAccessChanged } = useSession();
+  const { tx, localizeTool } = useLocale();
   const result = selection.meta?.result as
     | Extract<TurnResult, { kind: "result" }>
     | undefined;
@@ -400,7 +552,11 @@ export function AssistantResultDrawer({
   if (!result) {
     return (
       <div className="rounded-tile bg-[var(--bg-surface-tint)] p-4 text-[12.5px] text-[var(--ink-muted)]">
-        请选择具体业务记录查看详情。
+        {tx({
+          "zh-CN": "请选择具体业务记录查看详情。",
+          "zh-HK": "請選擇具體業務紀錄檢視詳情。",
+          en: "Select a business record to inspect its details.",
+        })}
       </div>
     );
   }
@@ -455,8 +611,11 @@ export function AssistantResultDrawer({
   return (
     <div className="space-y-4" data-testid="drawer-result-panel">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono-code text-[12px] text-[var(--ink-muted)]">
-          {result.tool}
+        <span
+          title={result.tool}
+          className="truncate text-[12px] font-medium text-[var(--ink-muted)]"
+        >
+          {localizeTool(result.tool)}
         </span>
         <SourceTag source={result.source} />
       </div>
@@ -465,25 +624,49 @@ export function AssistantResultDrawer({
         <>
           <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">运单编号</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "运单编号",
+                  "zh-HK": "運單編號",
+                  en: "Shipment ID",
+                })}
+              </dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
                 {shipment.shipment_id}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">仓库站点</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "仓库",
+                  "zh-HK": "倉庫",
+                  en: "Warehouse",
+                })}
+              </dt>
               <dd className="font-mono-code text-[var(--ink-primary)]">
                 {shipment.warehouse}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">当前交付日期</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "当前交付日期",
+                  "zh-HK": "目前交付日期",
+                  en: "Current Delivery Date",
+                })}
+              </dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                 {shipment.delivery_date}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">状态 / 版本</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "状态 / 版本",
+                  "zh-HK": "狀態 / 版本",
+                  en: "Status / Version",
+                })}
+              </dt>
               <dd className="flex items-center gap-2">
                 <StatusBadge status={shipment.status} compact />
                 <span className="font-mono-code text-[var(--ink-muted)]">
@@ -499,17 +682,29 @@ export function AssistantResultDrawer({
               className="rounded-card bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)] space-y-3"
             >
               <div className="text-[13px] font-semibold text-[var(--ink-primary)]">
-                发起运单改期提案
+                {tx({
+                  "zh-CN": "发起运单改期提案",
+                  "zh-HK": "發起運單改期提案",
+                  en: "Propose Shipment Reschedule",
+                })}
               </div>
               <p className="text-[12px] text-[var(--ink-muted)] leading-relaxed">
-                提交后将生成待审批提案，需独立审批人确认后方写入 ERP。
+                {tx({
+                  "zh-CN": "提交后将生成待审批提案，需独立审批人确认后方写入 ERP。",
+                  "zh-HK": "提交後將產生待審批提案，須獨立審批人確認後方寫入 ERP。",
+                  en: "Creates a pending proposal requiring independent approval before posting to ERP.",
+                })}
               </p>
               <div>
                 <label
                   htmlFor="drawer-reschedule-date"
                   className="block text-[11.5px] font-medium text-[var(--ink-secondary)]"
                 >
-                  新交付日期 (YYYY-MM-DD)
+                  {tx({
+                    "zh-CN": "新交付日期 (YYYY-MM-DD)",
+                    "zh-HK": "新交付日期 (YYYY-MM-DD)",
+                    en: "New Delivery Date (YYYY-MM-DD)",
+                  })}
                 </label>
                 <input
                   id="drawer-reschedule-date"
@@ -530,7 +725,17 @@ export function AssistantResultDrawer({
                 disabled={!newDate}
                 className="w-full"
               >
-                {submitting ? "生成提案中…" : "生成改期提案"}
+                {submitting
+                  ? tx({
+                      "zh-CN": "生成提案中…",
+                      "zh-HK": "產生提案中…",
+                      en: "Creating proposal…",
+                    })
+                  : tx({
+                      "zh-CN": "生成改期提案",
+                      "zh-HK": "產生改期提案",
+                      en: "Create Reschedule Proposal",
+                    })}
               </Button>
             </form>
           )}
@@ -541,26 +746,50 @@ export function AssistantResultDrawer({
         typeof rawData.invoice_id === "string" && (
           <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">发票编号</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "发票编号",
+                  "zh-HK": "發票編號",
+                  en: "Invoice ID",
+                })}
+              </dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
                 {(rawData as unknown as InvoiceView).invoice_id}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">仓库</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "仓库",
+                  "zh-HK": "倉庫",
+                  en: "Warehouse",
+                })}
+              </dt>
               <dd className="font-mono-code text-[var(--ink-primary)]">
                 {(rawData as unknown as InvoiceView).warehouse}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">金额</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "金额",
+                  "zh-HK": "金額",
+                  en: "Amount",
+                })}
+              </dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                 {(rawData as unknown as InvoiceView).currency}{" "}
                 {(rawData as unknown as InvoiceView).amount}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">状态</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "状态",
+                  "zh-HK": "狀態",
+                  en: "Status",
+                })}
+              </dt>
               <dd>
                 <StatusBadge
                   status={(rawData as unknown as InvoiceView).state}
@@ -575,19 +804,37 @@ export function AssistantResultDrawer({
         typeof rawData.open_shipments === "number" && (
           <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">仓库站点</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "仓库",
+                  "zh-HK": "倉庫",
+                  en: "Warehouse",
+                })}
+              </dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
                 {(rawData as unknown as WarehouseDecisionSummary).warehouse}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">未关闭运单数</dt>
-              <dd className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "未关闭运单数",
+                  "zh-HK": "未關閉運單數",
+                  en: "Open Shipments",
+                })}
+              </dt>
+              <dd className="font-semibold text-[var(--ink-primary)] tabular-nums">
                 {(rawData as unknown as WarehouseDecisionSummary).open_shipments}
               </dd>
             </div>
             <div className="flex justify-between px-3.5 py-2.5">
-              <dt className="text-[var(--ink-muted)]">统计日期</dt>
+              <dt className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "统计日期",
+                  "zh-HK": "統計日期",
+                  en: "As of",
+                })}
+              </dt>
               <dd className="font-mono-code text-[var(--ink-primary)] tabular-nums">
                 {(rawData as unknown as WarehouseDecisionSummary).as_of}
               </dd>

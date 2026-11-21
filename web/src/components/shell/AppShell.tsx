@@ -17,10 +17,16 @@ import {
   X,
 } from "lucide-react";
 import { fetchTasks, isStaleAuthError } from "@/lib/api-client";
-import { formatRoleLabel } from "@/lib/format";
+import { sortWarehouses } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { Avatar } from "@/components/ui/Avatar";
+import {
+  LanguageSwitcher,
+  PreferencesBar,
+  ThemeToggle,
+} from "@/components/ui/PreferencesControls";
 import { DemoPersonaSwitcher } from "@/components/shell/DemoPersonaSwitcher";
 import { NoticesPopover } from "@/components/shell/NoticesPopover";
 import { WorkbenchDrawerSlot } from "@/components/shell/WorkbenchDrawerSlot";
@@ -37,6 +43,7 @@ interface WorkbenchNavTier {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/inbox";
   const router = useRouter();
+  const { t, localizeRole, localizePersona } = useLocale();
   const {
     status,
     actor,
@@ -92,8 +99,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (status === "loading" || status === "unauthenticated" || !actor) {
     return (
       <div className="flex h-dvh w-full items-center justify-center bg-[var(--bg-app)] text-[13px] text-[var(--ink-muted)]">
-        <span className="font-mono-code">
-          {status === "loading" ? "正在核验企业会话…" : "正在跳转至登录页…"}
+        <span>
+          {status === "loading"
+            ? t("shell.verifyingSession")
+            : t("shell.redirectingLogin")}
         </span>
       </div>
     );
@@ -106,8 +115,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const workbenchTiers: WorkbenchNavTier[] = [
     {
       href: "/work",
-      label: "待办与进件",
-      shortLabel: "工作台",
+      label: t("shell.nav.work"),
+      shortLabel: t("shell.nav.workShort"),
       match: (p) =>
         p === "/work" ||
         p.startsWith("/orders/") ||
@@ -117,8 +126,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     },
     {
       href: "/calendar",
-      label: "日历与会议",
-      shortLabel: "日历",
+      label: t("shell.nav.calendar"),
+      shortLabel: t("shell.nav.calendarShort"),
       match: (p) => p === "/calendar" || p.startsWith("/calendar/"),
       icon: CalendarDays,
     },
@@ -127,8 +136,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (canManagePeople) {
     workbenchTiers.push({
       href: "/admin/people",
-      label: "员工权限",
-      shortLabel: "权限",
+      label: t("shell.nav.people"),
+      shortLabel: t("shell.nav.peopleShort"),
       match: (p) => p === "/admin/people" || p.startsWith("/admin/people/"),
       icon: Users,
     });
@@ -137,8 +146,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (canAccessAdminOps) {
     workbenchTiers.push({
       href: "/admin",
-      label: "运维监控",
-      shortLabel: "监控",
+      label: t("shell.nav.admin"),
+      shortLabel: t("shell.nav.adminShort"),
       match: (p) => p === "/admin" || p === "/admin/exceptions",
       icon: Activity,
     });
@@ -147,8 +156,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const userAvatarSrc = profile?.has_avatar
     ? `/v1/profile/avatar?v=${avatarVersion}`
     : null;
-  const userDisplayName = profile?.display_name || actor.subject;
-  const agentDisplayName = agentProfile?.display_name || "个人业务助手";
+  const localizedActorPersona = localizePersona(actor.subject);
+  const userDisplayName =
+    profile?.display_name?.trim() ||
+    localizedActorPersona.displayName ||
+    actor.subject;
+  const sortedWarehouses = sortWarehouses(actor.warehouses);
+  const agentDisplayName =
+    agentProfile?.display_name || t("brand.defaultAgentName");
 
   const handleLogout = async () => {
     await logout();
@@ -164,12 +179,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             role="status"
             className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-4 py-2 text-[12.5px] text-[var(--status-amber-ink)]"
           >
-            <span>{accessChangedBanner}</span>
+            <span>{t("shell.accessChangedBanner")}</span>
             <button
               type="button"
               onClick={dismissAccessChangedBanner}
-              aria-label="关闭权限变更提示"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[rgba(178,98,0,0.12)] cursor-pointer"
+              aria-label={t("shell.closeAccessBannerAria")}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[var(--status-amber-border)] cursor-pointer"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -184,26 +199,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // 2. Workbench & Management Routes — Calm 5-control Frosted Porcelain top bar
+  // 2. Workbench & Management Routes — Calm Frosted Porcelain / Obsidian top bar
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--ink-primary)]">
-      <header className="aios-topbar-glass sticky top-0 z-30 flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-3 border-b border-[var(--hairline)] px-4 lg:px-6">
+      <header className="aios-topbar-glass sticky top-0 z-30 flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-2 border-b border-[var(--hairline)] px-4 lg:grid lg:grid-cols-[auto_1fr_auto] xl:grid-cols-[1fr_auto_1fr] lg:items-center lg:px-5 xl:px-6">
         {/* Control 1 (Left): Back to Messenger Pill */}
-        <div className="flex min-w-0 items-center">
+        <div className="flex min-w-0 items-center lg:justify-self-start">
           <Link
             href="/inbox/assistant"
             data-testid="shell-back-to-inbox"
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:text-[var(--accent)] transition-all duration-[150ms]"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-2.5 xl:px-3 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:text-[var(--accent-ink)] transition-all duration-[150ms]"
           >
             <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
-            <span>返回会话</span>
+            <span className="whitespace-nowrap">{t("shell.backToInbox")}</span>
           </Link>
         </div>
 
         {/* Control 2 (Center): Capability-Gated Segmented Navigation */}
         <nav
-          aria-label="主导航"
-          className="hidden lg:flex items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
+          aria-label={t("shell.mainNavAria")}
+          className="hidden lg:flex lg:justify-self-center items-center gap-1 rounded-full bg-[var(--bg-inset)] p-1 ring-1 ring-[var(--hairline)]"
         >
           {workbenchTiers.map((tier) => {
             const active = tier.match(pathname);
@@ -214,16 +229,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 href={tier.href}
                 aria-current={active ? "page" : undefined}
                 className={[
-                  "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition-all duration-[150ms]",
+                  "inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[12.5px] xl:px-3.5 xl:text-[13px] font-medium transition-all duration-[150ms]",
                   active
-                    ? "bg-[var(--bg-surface)] text-[var(--accent)] shadow-[var(--shadow-subtle)] font-semibold"
-                    : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-white/50",
+                    ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
+                    : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
                 ].join(" ")}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                <span>{tier.label}</span>
+                <span className="whitespace-nowrap">{tier.label}</span>
                 {tier.badge !== undefined && (
-                  <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent)] px-1.5 font-mono-code text-[10px] font-semibold text-white">
+                  <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 tabular-nums text-[10px] font-semibold text-[var(--accent-fg)]">
                     {tier.badge > 99 ? "99+" : tier.badge}
                   </span>
                 )}
@@ -232,8 +247,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        {/* Controls 3–5 (Right): Demo Switcher (when enabled, merges tenant/site scope), Notices, Icon-Only Drawer Toggle, Avatar Menu */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* Right Utility Group: Language/Theme Preferences, Demo Switcher, Notices, Drawer Toggle, Avatar Menu */}
+        <div className="flex items-center gap-1.5 shrink-0 lg:justify-self-end">
+          <div className="hidden sm:inline-flex">
+            <PreferencesBar variant="inline" />
+          </div>
+
           <DemoPersonaSwitcher side="bottom" align="end" />
 
           <NoticesPopover side="bottom" align="end" />
@@ -242,12 +261,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             type="button"
             onClick={(e) => toggleDrawer(e.currentTarget)}
             aria-expanded={drawerOpen}
-            aria-label="切换右侧业务面板"
-            title="侧边核对 (⌘.)"
+            aria-label={t("shell.toggleDrawerAria")}
+            title={t("shell.toggleDrawerTitle")}
             className={[
               "inline-flex h-8 w-8 items-center justify-center rounded-full transition-all duration-[150ms] cursor-pointer",
               drawerOpen
-                ? "bg-[var(--accent-wash)] text-[var(--accent)] ring-1 ring-[var(--accent-border)]"
+                ? "bg-[var(--accent-wash)] text-[var(--accent-ink)] ring-1 ring-[var(--accent-border)]"
                 : "text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)]",
             ].join(" ")}
           >
@@ -258,8 +277,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <DropdownMenu.Trigger asChild>
               <button
                 type="button"
-                title={`${userDisplayName} · ${actor.tenant} (${actor.warehouses.join("/") || "无站点"})`}
-                aria-label="账号与资料菜单"
+                title={`${userDisplayName} · ${actor.tenant} (${sortedWarehouses.join("/") || t("shell.noWarehouse")})`}
+                aria-label={t("shell.accountMenuAria")}
                 className="inline-flex items-center rounded-full p-0.5 hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
               >
                 <Avatar
@@ -277,18 +296,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 side="bottom"
                 align="end"
                 sideOffset={8}
-                className="z-50 w-[244px] rounded-lg bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
+                className="z-50 w-[256px] rounded-lg bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
               >
                 <div className="border-b border-[var(--hairline)] px-3 py-2.5">
                   <div className="truncate text-[13.5px] font-semibold text-[var(--ink-primary)]">
                     {userDisplayName}
                   </div>
-                  <div className="mt-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                    {actor.subject} · {formatRoleLabel(actor.role)}
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--ink-muted)]">
+                    <span className="font-mono-code">{actor.subject}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{localizeRole(actor.role)}</span>
                   </div>
-                  <div className="mt-0.5 font-mono-code text-[10.5px] text-[var(--ink-muted)]">
-                    {actor.tenant} · {actor.warehouses.join(", ") || "无站点"}
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-[var(--ink-muted)]">
+                    <span className="font-mono-code">{actor.tenant}</span>
+                    <span aria-hidden="true">·</span>
+                    {sortedWarehouses.length > 0 ? (
+                      <span className="font-mono-code">
+                        {sortedWarehouses.join(", ")}
+                      </span>
+                    ) : (
+                      <span>{t("shell.noWarehouse")}</span>
+                    )}
                   </div>
+                </div>
+
+                {/* Compact Mobile-Only Preferences Row (< 640px) */}
+                <div className="flex sm:hidden items-center justify-between gap-2 border-b border-[var(--hairline)] px-2.5 py-2">
+                  <LanguageSwitcher variant="segmented" size="sm" />
+                  <ThemeToggle size="sm" />
                 </div>
 
                 <DropdownMenu.Item asChild>
@@ -297,7 +332,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     className="mt-1 flex items-center gap-2.5 rounded-sm px-3 py-2 text-[12.5px] text-[var(--ink-primary)] outline-none hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)]"
                   >
                     <User className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
-                    <span>个人资料</span>
+                    <span>{t("shell.menu.profile")}</span>
                   </Link>
                 </DropdownMenu.Item>
 
@@ -308,7 +343,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   >
                     <Bot className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
                     <span className="truncate">
-                      个人 Agent 资料（{agentDisplayName}）
+                      {t("shell.menu.agentProfile", { name: agentDisplayName })}
                     </span>
                   </Link>
                 </DropdownMenu.Item>
@@ -320,7 +355,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   className="flex cursor-pointer items-center gap-2.5 rounded-sm px-3 py-2 text-[12.5px] text-[var(--status-crimson)] outline-none hover:bg-[var(--status-crimson-wash)] focus:bg-[var(--status-crimson-wash)]"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  <span>退出登录</span>
+                  <span>{t("shell.menu.logout")}</span>
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
@@ -334,12 +369,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           role="status"
           className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-5 py-2 text-[12.5px] text-[var(--status-amber-ink)]"
         >
-          <span>{accessChangedBanner}</span>
+          <span>{t("shell.accessChangedBanner")}</span>
           <button
             type="button"
             onClick={dismissAccessChangedBanner}
-            aria-label="关闭权限变更提示"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[rgba(178,98,0,0.12)] cursor-pointer"
+            aria-label={t("shell.closeAccessBannerAria")}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[var(--status-amber-border)] cursor-pointer"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -354,7 +389,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile Workbench Bottom Navigation (< 1024px) */}
       <nav
-        aria-label="移动端主导航"
+        aria-label={t("shell.mobileNavAria")}
         className="aios-topbar-glass flex lg:hidden h-[56px] shrink-0 items-stretch justify-around border-t border-[var(--hairline)] px-2"
       >
         {workbenchTiers.map((tier) => {
@@ -368,14 +403,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className={[
                 "relative flex min-w-[60px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium",
                 active
-                  ? "text-[var(--accent)]"
+                  ? "text-[var(--accent-ink)]"
                   : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
               ].join(" ")}
             >
               <Icon className="h-[18px] w-[18px]" strokeWidth={1.8} />
               <span>{tier.shortLabel}</span>
               {tier.badge !== undefined && (
-                <span className="absolute right-3 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 font-mono-code text-[9px] font-semibold text-white">
+                <span className="absolute right-3 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent-solid)] px-1 tabular-nums text-[9px] font-semibold text-[var(--accent-fg)]">
                   {tier.badge > 99 ? "99+" : tier.badge}
                 </span>
               )}

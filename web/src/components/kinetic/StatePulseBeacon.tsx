@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { useLocale, type TranslationKey } from "@/lib/i18n";
 import type { ProposalState } from "@/lib/types";
 
 export type BeaconState =
@@ -20,15 +21,15 @@ export interface StatePulseBeaconProps {
   className?: string;
 }
 
-const DEFAULT_LABELS: Record<BeaconState, string> = {
-  processing_turn: "正在处理请求…",
-  queued: "已批准 · 等待执行",
-  sending: "正在提交 ERP",
-  verifying: "正在核对回执",
-  unknown: "结果待确认",
-  operator_needed: "需人工核查",
-  verified: "已核验入账",
-  rejected: "已拒绝 / 终止",
+const DEFAULT_LABEL_KEYS: Record<BeaconState, TranslationKey> = {
+  processing_turn: "kinetic.processingRequest",
+  queued: "kinetic.beacon.queued",
+  sending: "kinetic.beacon.sending",
+  verifying: "kinetic.beacon.verifying",
+  unknown: "kinetic.beacon.unknown",
+  operator_needed: "kinetic.beacon.operatorNeeded",
+  verified: "kinetic.beacon.verified",
+  rejected: "kinetic.beacon.rejected",
 };
 
 export function proposalStateToBeacon(state: ProposalState): BeaconState | null {
@@ -59,11 +60,13 @@ export function StatePulseBeacon({
   detail,
   className = "",
 }: StatePulseBeaconProps) {
+  const { t } = useLocale();
+
   // Enforce literal truthful label for in-flight turns (never fake progress/percentages)
   const displayLabel =
     state === "processing_turn"
-      ? "正在处理请求…"
-      : (label ?? DEFAULT_LABELS[state]);
+      ? t("kinetic.processingRequest")
+      : (label ?? t(DEFAULT_LABEL_KEYS[state]));
 
   const isActive =
     state === "processing_turn" ||
@@ -104,14 +107,14 @@ export function StatePulseBeacon({
               cx="9"
               cy="9"
               r="7.2"
-              stroke="rgba(22, 104, 227, 0.16)"
+              stroke="var(--accent-wash-strong)"
               strokeWidth="1.4"
             />
             <circle
               cx="9"
               cy="9"
               r="7.2"
-              stroke="#1668E3"
+              stroke="var(--accent)"
               strokeWidth="1.6"
               strokeDasharray="13 33"
               strokeLinecap="round"
@@ -121,7 +124,7 @@ export function StatePulseBeacon({
               cx="9"
               cy="9"
               r="2.1"
-              fill="#1668E3"
+              fill="var(--accent)"
               className="aios-beacon-core"
             />
           </>
@@ -133,20 +136,20 @@ export function StatePulseBeacon({
               cx="9"
               cy="9"
               r="7.2"
-              stroke="#B26200"
+              stroke="var(--status-amber)"
               strokeWidth="1.4"
-              fill="rgba(178, 98, 0, 0.09)"
+              fill="var(--status-amber-wash)"
             />
             <line
               x1="9"
               y1="5.3"
               x2="9"
               y2="9.6"
-              stroke="#B26200"
+              stroke="var(--status-amber)"
               strokeWidth="1.6"
               strokeLinecap="round"
             />
-            <circle cx="9" cy="12.2" r="0.9" fill="#B26200" />
+            <circle cx="9" cy="12.2" r="0.9" fill="var(--status-amber)" />
           </>
         )}
 
@@ -156,14 +159,14 @@ export function StatePulseBeacon({
               cx="9"
               cy="9"
               r="7.2"
-              stroke="#C92A37"
+              stroke="var(--status-crimson)"
               strokeWidth="1.4"
-              fill="rgba(201, 42, 55, 0.09)"
+              fill="var(--status-crimson-wash)"
             />
             {state === "rejected" ? (
               <path
                 d="M6.5 6.5L11.5 11.5M11.5 6.5L6.5 11.5"
-                stroke="#C92A37"
+                stroke="var(--status-crimson)"
                 strokeWidth="1.6"
                 strokeLinecap="round"
               />
@@ -174,11 +177,11 @@ export function StatePulseBeacon({
                   y1="5.3"
                   x2="9"
                   y2="9.6"
-                  stroke="#C92A37"
+                  stroke="var(--status-crimson)"
                   strokeWidth="1.6"
                   strokeLinecap="round"
                 />
-                <circle cx="9" cy="12.2" r="0.9" fill="#C92A37" />
+                <circle cx="9" cy="12.2" r="0.9" fill="var(--status-crimson)" />
               </>
             )}
           </>
@@ -190,13 +193,13 @@ export function StatePulseBeacon({
               cx="9"
               cy="9"
               r="7.2"
-              stroke="#127A46"
+              stroke="var(--status-emerald)"
               strokeWidth="1.4"
-              fill="rgba(18, 122, 70, 0.09)"
+              fill="var(--status-emerald-wash)"
             />
             <path
               d="M5.7 9.2L7.9 11.4L12.4 6.9"
-              stroke="#127A46"
+              stroke="var(--status-emerald)"
               strokeWidth="1.7"
               strokeLinecap="round"
               strokeLinejoin="round"

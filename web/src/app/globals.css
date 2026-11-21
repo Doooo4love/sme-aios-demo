@@ -6,6 +6,9 @@
   --color-surface: var(--bg-surface);
   --color-surface-subtle: var(--bg-surface-subtle);
   --color-surface-tint: var(--bg-surface-tint);
+  --color-surface-hover: var(--bg-surface-hover);
+  --color-inset: var(--bg-inset);
+  --color-header: var(--bg-header);
   --color-canvas: var(--bg-canvas);
   --color-sheet: var(--bg-sheet);
   --color-plane: var(--bg-plane);
@@ -24,6 +27,10 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-active: var(--accent-active);
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-solid-hover: var(--accent-solid-hover);
+  --color-accent-solid-active: var(--accent-solid-active);
+  --color-accent-ink: var(--accent-ink);
   --color-accent-fg: var(--accent-fg);
 
   --color-amber: var(--status-amber);
@@ -45,6 +52,22 @@
   --radius-pill: var(--radius-pill);
 }
 
+/* Locale-specialized CJK glyph & punctuation ordering (authentic HK/TC vs SC) */
+:lang(zh-CN) {
+  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+               "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont,
+                  "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+}
+
+:lang(zh-HK),
+:lang(zh-Hant) {
+  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+               "PingFang HK", "PingFang TC", "Noto Sans HK", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont,
+                  "PingFang HK", "PingFang TC", "Noto Sans HK", "Noto Sans TC", sans-serif;
+}
+
 html,
 body {
   height: 100%;
@@ -57,15 +80,21 @@ body {
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
 }
 
 * {
   box-sizing: border-box;
   border-color: var(--hairline);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
-/* Subtle macOS-inspired rounded scrollbars */
+::selection {
+  background-color: var(--accent-wash-strong);
+  color: var(--ink-primary);
+}
+
+/* Subtle macOS-inspired rounded scrollbars (WebKit/Chromium) */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -76,10 +105,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(17, 19, 24, 0.14);
+  background: var(--scrollbar-thumb);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(17, 19, 24, 0.24);
+  background: var(--scrollbar-thumb-hover);
 }

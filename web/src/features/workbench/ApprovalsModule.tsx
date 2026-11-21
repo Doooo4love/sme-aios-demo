@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -19,12 +19,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import {
-  formatProposalAction,
-  formatRelativeCountdown,
-  formatShortDigest,
-  formatUnixTime,
-} from "@/lib/format";
+import { formatShortDigest } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
@@ -50,9 +46,26 @@ interface BatchPreparedRow {
   error: string | null;
 }
 
-export function ApprovalsModule() {
+export interface ApprovalsModuleProps {
+  onCountLoaded?: (count: number) => void;
+}
+
+export function ApprovalsModule({ onCountLoaded }: ApprovalsModuleProps = {}) {
+  const {
+    locale,
+    t,
+    tx,
+    tp,
+    formatDateTime,
+    formatCountdown,
+    localizeAction,
+    localizeError,
+  } = useLocale();
   const { authGeneration, handleAccessChanged } = useSession();
   const { openDrawer, setAssignedCount } = useWorkbench();
+
+  const onCountLoadedRef = useRef(onCountLoaded);
+  onCountLoadedRef.current = onCountLoaded;
 
   const [items, setItems] = useState<ApprovalItem[]>([]);
   const [nextCursor, setNextCursor] = useState<DueCursor | null>(null);
@@ -85,6 +98,7 @@ export function ApprovalsModule() {
       setItems(page.items);
       setNextCursor(page.next);
       setAssignedCount(page.items.length);
+      onCountLoadedRef.current?.(page.items.length);
       setSelectedIds({});
     } catch (err) {
       if (isStaleAuthError(err) || startGen !== getAuthGeneration()) return;
@@ -185,7 +199,13 @@ export function ApprovalsModule() {
         prepared.push({
           item,
           proposal: null,
-          error: isApiError(err) ? err.message : "无法读取提案摘要",
+          error: isApiError(err)
+            ? localizeError(err)
+            : tx({
+                "zh-CN": "无法读取提案摘要",
+                "zh-HK": "無法讀取提案摘要",
+                en: "Unable to fetch proposal digest",
+              }),
         });
       }
     }
@@ -237,10 +257,18 @@ export function ApprovalsModule() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
           <div>
             <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-              主管审批队列
+              {tx({
+                "zh-CN": "主管审批队列",
+                "zh-HK": "主管審批佇列",
+                en: "Manager Approval Queue",
+              })}
             </h2>
             <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
-              按需核对摘要并支持单笔或批量批准入队。
+              {tx({
+                "zh-CN": "按需核对摘要并支持单笔或批量批准入队。",
+                "zh-HK": "按需核對摘要並支援單筆或批次批准入隊。",
+                en: "Verify digests on demand and approve single or selected proposals into the ERP queue.",
+              })}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -253,7 +281,16 @@ export function ApprovalsModule() {
                 data-testid="batch-approve-trigger-btn"
               >
                 <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.85} />
-                <span>批量批准已选 ({selectedList.length})</span>
+                <span>
+                  {tx(
+                    {
+                      "zh-CN": "批量批准已选 ({count})",
+                      "zh-HK": "批次批准已選 ({count})",
+                      en: "Approve Selected ({count})",
+                    },
+                    { count: selectedList.length },
+                  )}
+                </span>
               </Button>
             )}
             <Button
@@ -265,7 +302,13 @@ export function ApprovalsModule() {
               data-testid="approvals-refresh-btn"
             >
               <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>刷新审批列表</span>
+              <span>
+                {tx({
+                  "zh-CN": "刷新审批列表",
+                  "zh-HK": "重新整理審批清單",
+                  en: "Refresh",
+                })}
+              </span>
             </Button>
           </div>
         </div>
@@ -281,7 +324,11 @@ export function ApprovalsModule() {
 
         {!error && loading && items.length === 0 && (
           <div className="py-14 text-center text-[13px] text-[var(--ink-muted)]">
-            正在加载待审批提案…
+            {tx({
+              "zh-CN": "正在加载待审批提案…",
+              "zh-HK": "正在載入待審批提案…",
+              en: "Loading pending proposals…",
+            })}
           </div>
         )}
 
@@ -290,10 +337,16 @@ export function ApprovalsModule() {
             className="flex flex-col items-center gap-2.5 py-14 text-center text-[13px] text-[var(--ink-muted)]"
             data-testid="approvals-empty-state"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]">
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-muted)]">
               <ClipboardCheck className="h-5 w-5" strokeWidth={1.6} />
             </span>
-            <span>当前授权仓库暂无待您审批的提案</span>
+            <span>
+              {tx({
+                "zh-CN": "当前授权仓库暂无待您审批的提案",
+                "zh-HK": "目前授權倉庫暫無待您審批的提案",
+                en: "No proposals awaiting your approval across authorized warehouses",
+              })}
+            </span>
           </div>
         )}
 
@@ -307,23 +360,46 @@ export function ApprovalsModule() {
                       type="checkbox"
                       checked={allSelected}
                       onChange={toggleAll}
-                      aria-label="全选当前页待审批提案"
+                      aria-label={tx({
+                        "zh-CN": "全选当前页待审批提案",
+                        "zh-HK": "全選目前頁面待審批提案",
+                        en: "Select all pending proposals on this page",
+                      })}
                       data-testid="approvals-select-all"
                       className="h-4 w-4 rounded accent-[var(--accent)] cursor-pointer"
                     />
                   </th>
-                  <th className="px-3.5 py-2.5 font-medium">审批单据</th>
-                  <th className="px-3.5 py-2.5 font-medium">站点</th>
-                  <th className="px-3.5 py-2.5 font-medium">状态</th>
-                  <th className="px-3.5 py-2.5 font-medium">审批有效期</th>
-                  <th className="px-4 py-2.5 font-medium text-right">操作</th>
+                  <th className="px-3.5 py-2.5 font-medium">
+                    {tx({
+                      "zh-CN": "审批单据",
+                      "zh-HK": "審批單據",
+                      en: "Proposal",
+                    })}
+                  </th>
+                  <th className="px-3.5 py-2.5 font-medium">
+                    {tx({ "zh-CN": "仓库", "zh-HK": "倉庫", en: "Warehouse" })}
+                  </th>
+                  <th className="px-3.5 py-2.5 font-medium">
+                    {tx({ "zh-CN": "状态", "zh-HK": "狀態", en: "Status" })}
+                  </th>
+                  <th className="px-3.5 py-2.5 font-medium">
+                    {tx({
+                      "zh-CN": "审批有效期",
+                      "zh-HK": "審批有效期",
+                      en: "Expires",
+                    })}
+                  </th>
+                  <th className="px-4 py-2.5 font-medium text-right">
+                    {tx({ "zh-CN": "操作", "zh-HK": "操作", en: "Actions" })}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--hairline-subtle)]">
                 {items.map((item) => {
                   const checked = Boolean(selectedIds[item.id]);
-                  const expiry = formatRelativeCountdown(item.expires);
+                  const expiry = formatCountdown(item.expires);
                   const shortId = formatShortDigest(item.id, 4, 4);
+                  const actionLabel = localizeAction(item.action);
                   return (
                     <tr
                       key={item.id}
@@ -346,7 +422,14 @@ export function ApprovalsModule() {
                               [item.id]: e.target.checked,
                             }))
                           }
-                          aria-label={`选择提案 ${item.id}`}
+                          aria-label={tx(
+                            {
+                              "zh-CN": "选择提案 {id}",
+                              "zh-HK": "選擇提案 {id}",
+                              en: "Select proposal {id}",
+                            },
+                            { id: item.id },
+                          )}
                           data-testid={`approval-select-${item.id}`}
                           className="h-4 w-4 rounded accent-[var(--accent)] cursor-pointer"
                         />
@@ -357,7 +440,7 @@ export function ApprovalsModule() {
                             href={`/proposals/${encodeURIComponent(item.id)}`}
                             className="font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] transition-colors"
                           >
-                            {formatProposalAction(item.action)} · {item.warehouse}
+                            {actionLabel}
                           </Link>
                           <div className="inline-flex items-center gap-1 text-[11.5px] text-[var(--ink-muted)]">
                             <span
@@ -369,9 +452,23 @@ export function ApprovalsModule() {
                             <button
                               type="button"
                               onClick={() => void handleCopyId(item.id)}
-                              title={`复制完整单号 ${item.id}`}
-                              aria-label={`复制单号 ${item.id}`}
-                              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--ink-faint)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-all cursor-pointer"
+                              title={tx(
+                                {
+                                  "zh-CN": "复制完整单号 {id}",
+                                  "zh-HK": "複製完整單號 {id}",
+                                  en: "Copy full ID {id}",
+                                },
+                                { id: item.id },
+                              )}
+                              aria-label={tx(
+                                {
+                                  "zh-CN": "复制单号 {id}",
+                                  "zh-HK": "複製單號 {id}",
+                                  en: "Copy ID {id}",
+                                },
+                                { id: item.id },
+                              )}
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--ink-muted)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-all cursor-pointer"
                             >
                               {copiedId === item.id ? (
                                 <Check className="h-3 w-3 text-[var(--status-emerald)]" />
@@ -390,9 +487,9 @@ export function ApprovalsModule() {
                       <td className="px-3.5 py-3.5">
                         <StatusBadge status={item.state} compact />
                       </td>
-                      <td className="px-3.5 py-3.5 font-mono-code tabular-nums text-[12px]">
-                        <div className="text-[var(--ink-primary)]">
-                          {formatUnixTime(item.expires)}
+                      <td className="px-3.5 py-3.5 tabular-nums text-[12px]">
+                        <div className="font-mono-code text-[var(--ink-primary)]">
+                          {formatDateTime(item.expires)}
                         </div>
                         <div
                           className={
@@ -416,7 +513,14 @@ export function ApprovalsModule() {
                                   kind: "proposal",
                                   id: item.id,
                                   warehouse: item.warehouse,
-                                  title: `审批核对 · ${shortId}`,
+                                  title: tx(
+                                    {
+                                      "zh-CN": "审批核对 · {id}",
+                                      "zh-HK": "審批核對 · {id}",
+                                      en: "Approval Review · {id}",
+                                    },
+                                    { id: shortId },
+                                  ),
                                 },
                                 { tab: "current", trigger: e.currentTarget },
                               )
@@ -424,14 +528,26 @@ export function ApprovalsModule() {
                             data-testid={`approval-inspect-${item.id}`}
                           >
                             <PanelRight className="h-3.5 w-3.5" />
-                            <span>核对并审批</span>
+                            <span>
+                              {tx({
+                                "zh-CN": "核对并审批",
+                                "zh-HK": "核對並審批",
+                                en: "Review & Approve",
+                              })}
+                            </span>
                           </Button>
                           <Link
                             href={`/proposals/${encodeURIComponent(item.id)}`}
                             data-testid={`approval-open-link-${item.id}`}
                             className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent)] transition-colors duration-[150ms]"
                           >
-                            <span>详情页</span>
+                            <span>
+                              {tx({
+                                "zh-CN": "详情页",
+                                "zh-HK": "詳情頁",
+                                en: "Open Page",
+                              })}
+                            </span>
                             <ArrowUpRight className="h-3.5 w-3.5" />
                           </Link>
                         </div>
@@ -454,7 +570,11 @@ export function ApprovalsModule() {
               onClick={() => void handleLoadMore()}
               data-testid="approvals-load-more"
             >
-              加载更多待审批提案
+              {tx({
+                "zh-CN": "加载更多待审批提案",
+                "zh-HK": "載入更多待審批提案",
+                en: "Load More Approvals",
+              })}
             </Button>
           </div>
         )}
@@ -468,17 +588,30 @@ export function ApprovalsModule() {
         >
           <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-3.5">
             <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-              批量审批逐项结果
+              {tx({
+                "zh-CN": "批量审批逐项结果",
+                "zh-HK": "批次審批逐項結果",
+                en: "Batch Approval Results",
+              })}
             </span>
-            <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
-              成功 {batchResults.filter((r) => r.status === 202).length} / 共{" "}
-              {batchResults.length}
+            <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
+              {tx(
+                {
+                  "zh-CN": "成功 {ok} / 共 {total}",
+                  "zh-HK": "成功 {ok} / 共 {total}",
+                  en: "{ok} of {total} succeeded",
+                },
+                {
+                  ok: batchResults.filter((r) => r.status === 202).length,
+                  total: batchResults.length,
+                },
+              )}
             </span>
           </div>
           <div className="divide-y divide-[var(--hairline-subtle)]">
             {batchResults.map((res) => {
               const ok = res.status === 202;
-              const detailText =
+              const rawMsg =
                 typeof res.detail === "string"
                   ? res.detail
                   : typeof res.detail === "object" &&
@@ -487,13 +620,27 @@ export function ApprovalsModule() {
                       typeof (res.detail as { message?: unknown }).message ===
                         "string"
                     ? (res.detail as { message: string }).message
-                    : res.status === 404
-                      ? "当前账号无法访问这条记录。"
-                      : res.status === 403
-                        ? "无审批权限或不可自审批。"
-                        : res.status === 409
-                          ? "提案摘要、分派或状态已变更。"
-                          : "";
+                    : "";
+              const detailText =
+                res.status === 404
+                  ? t("notice.recordUnavailable.message")
+                  : res.status === 403
+                    ? tx({
+                        "zh-CN": "无审批权限或不可自审批。",
+                        "zh-HK": "無審批權限或不可自審批。",
+                        en: "Not authorized or self-approval blocked.",
+                      })
+                    : res.status === 409
+                      ? tx({
+                          "zh-CN": "提案摘要、分派或状态已变更。",
+                          "zh-HK": "提案摘要、分派或狀態已變更。",
+                          en: "Proposal digest, assignment, or state changed.",
+                        })
+                      : rawMsg ||
+                        localizeError({
+                          status: res.status,
+                          rawDetail: res.detail,
+                        });
               return (
                 <div
                   key={res.proposal_id}
@@ -523,13 +670,19 @@ export function ApprovalsModule() {
                   <div className="flex items-center gap-2">
                     <span
                       className={[
-                        "rounded-full px-2.5 py-0.5 font-mono-code text-[11.5px] font-medium",
+                        "rounded-full px-2.5 py-0.5 text-[11.5px] font-medium",
                         ok
                           ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
                           : "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
                       ].join(" ")}
                     >
-                      {ok ? "已批准并入队" : `${res.status} · ${detailText}`}
+                      {ok
+                        ? tx({
+                            "zh-CN": "已批准并入队",
+                            "zh-HK": "已批准並入隊",
+                            en: "Approved & Queued",
+                          })
+                        : `${res.status} · ${detailText}`}
                     </span>
                   </div>
                 </div>
@@ -543,8 +696,24 @@ export function ApprovalsModule() {
       <Modal
         open={batchModalOpen}
         onOpenChange={setBatchModalOpen}
-        title={`批量批准确认（已选 ${selectedList.length} 条提案）`}
-        subtitle="提交前已按需读取所选提案的最新权威摘要锁，逐条独立提交并互不阻塞。"
+        title={tp(
+          {
+            "zh-CN": "批量批准确认（已选 {count} 条提案）",
+            "zh-HK": "批次批准確認（已選 {count} 筆提案）",
+            en: {
+              one: "Confirm Batch Approval ({count} proposal)",
+              other: "Confirm Batch Approval ({count} proposals)",
+            },
+          },
+          selectedList.length,
+        )}
+        subtitle={tx({
+          "zh-CN":
+            "提交前已按需读取所选提案的最新权威摘要锁，逐条独立提交并互不阻塞。",
+          "zh-HK":
+            "提交前已按需讀取所選提案的最新權威摘要鎖，逐筆獨立提交並互不阻塞。",
+          en: "Latest authoritative digests were fetched on demand; each proposal is committed independently.",
+        })}
         size="lg"
         footer={
           <>
@@ -553,7 +722,7 @@ export function ApprovalsModule() {
               disabled={batchSubmitting}
               onClick={() => setBatchModalOpen(false)}
             >
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               variant="primary"
@@ -562,7 +731,14 @@ export function ApprovalsModule() {
               onClick={() => void executeBatchApprove()}
               data-testid="batch-approve-confirm-btn"
             >
-              确认批量批准 ({readyBatchCount})
+              {tx(
+                {
+                  "zh-CN": "确认批量批准 ({count})",
+                  "zh-HK": "確認批次批准 ({count})",
+                  en: "Confirm Batch Approve ({count})",
+                },
+                { count: readyBatchCount },
+              )}
             </Button>
           </>
         }
@@ -570,7 +746,11 @@ export function ApprovalsModule() {
         <div className="space-y-3" data-testid="batch-approve-modal">
           {batchPreparing ? (
             <div className="py-8 text-center text-[13px] text-[var(--ink-muted)]">
-              正在获取已选提案的权威快照与摘要锁…
+              {tx({
+                "zh-CN": "正在获取已选提案的权威快照与摘要锁…",
+                "zh-HK": "正在取得已選提案的權威快照與摘要鎖…",
+                en: "Fetching authoritative snapshots and digest locks…",
+              })}
             </div>
           ) : (
             <div className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
@@ -584,15 +764,29 @@ export function ApprovalsModule() {
                       {formatShortDigest(row.item.id, 6, 4)} ·{" "}
                       {row.item.warehouse}
                     </span>
-                    <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)]">
+                    <span
+                      className={[
+                        "rounded-full bg-[var(--bg-surface)] px-2 py-0.5 text-[11px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)]",
+                        row.proposal ? "font-mono-code" : "",
+                      ].join(" ")}
+                    >
                       {row.proposal
                         ? formatShortDigest(row.proposal.digest)
-                        : "读取失败"}
+                        : tx({
+                            "zh-CN": "读取失败",
+                            "zh-HK": "讀取失敗",
+                            en: "Load failed",
+                          })}
                     </span>
                   </div>
                   {row.proposal ? (
                     <div className="text-[var(--ink-secondary)]">
-                      {summarizePlanChange(row.proposal.plan)} · 发起人{" "}
+                      {summarizePlanChange(row.proposal.plan, locale)} ·{" "}
+                      {tx({
+                        "zh-CN": "发起人",
+                        "zh-HK": "發起人",
+                        en: "Requester",
+                      })}{" "}
                       <span className="font-mono-code">
                         {row.proposal.requester}
                       </span>

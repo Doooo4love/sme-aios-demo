@@ -724,9 +724,21 @@ export interface ZoomBookingAttendee {
   department: string;
 }
 
+export type NlMeetingWarningCode =
+  | "DEFAULT_NEXT_HOUR"
+  | "ROLLED_TO_TOMORROW"
+  | "ADJUSTED_15_MIN"
+  | "UNRESOLVED_MENTION";
+
+export interface NlMeetingWarningItem {
+  code: NlMeetingWarningCode;
+  params?: Record<string, string>;
+}
+
 export interface ZoomBookingDraft {
   client_id: string;
   title: string;
+  title_is_default?: boolean;
   starts_at: string;
   ends_at: string;
   duration_minutes: number;
@@ -743,6 +755,7 @@ export interface ZoomBookingPreviewResponse {
   phase: "preview";
   draft: ZoomBookingDraft;
   warnings: string[];
+  warning_items?: NlMeetingWarningItem[];
   zoom_configured: boolean;
   zoom_mode_preview: "live_mcp" | "live_api" | "sandbox_preview";
   connectors: McpConnectorStatusItem[];
@@ -754,6 +767,7 @@ export interface ExternalCalendarSyncResult {
   status: "synced" | "unconfigured" | "error";
   external_event_id: string | null;
   message: string;
+  message_code?: "SYNCED" | "UNCONFIGURED" | "MCP_ERROR" | "SYNC_FAILED";
   setup_env_keys?: string[];
 }
 
@@ -762,6 +776,13 @@ export interface ZoomMeetingResult {
   mode: "live_mcp" | "live_api" | "sandbox_preview" | "error_fallback" | "skipped";
   sync_mode: "live_mcp" | "live_api" | "sandbox_preview" | "error_fallback" | "skipped";
   status_label: string;
+  status_code?:
+    | "LIVE_MCP_JOIN"
+    | "LIVE_MCP_CREATED"
+    | "LIVE_API_JOIN"
+    | "ERROR_FALLBACK"
+    | "SANDBOX_PREVIEW"
+    | "SKIPPED";
   join_url: string | null;
   meeting_id: string | null;
   passcode: string | null;
@@ -827,6 +848,10 @@ export type DrawerObjectKind =
   | "calendar"
   | "room-members"
   | "meeting-draft";
+
+export type UiLocale = "zh-CN" | "zh-HK" | "en";
+
+export type UiTheme = "light" | "dark";
 
 export interface DrawerObjectSelection {
   kind: DrawerObjectKind;

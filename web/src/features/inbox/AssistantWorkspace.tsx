@@ -35,7 +35,8 @@ import {
   submitWorkbenchTurn,
   type ApiError,
 } from "@/lib/api-client";
-import { formatProposalAction, formatUnixTime } from "@/lib/format";
+import { sortWarehouses } from "@/lib/format";
+import { LOCALE_META, useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { BriefProgressChain, Interactive3DCard } from "@/components/kinetic";
@@ -62,10 +63,14 @@ import {
   AssistantProposalDrawer,
   AssistantResultDrawer,
 } from "@/features/inbox/AssistantDrawerPanels";
-import { IMessageBubbleTail } from "@/features/inbox/bubble-group";
+import {
+  IMessageBubbleTail,
+  getBubbleRadiusClass,
+} from "@/features/inbox/bubble-group";
 import {
   TurnResultCard,
   buildCapabilityPromptOptions,
+  type CapabilityDomainId,
 } from "@/features/inbox/TurnResultCard";
 import { ZoomBookingCard } from "@/features/inbox/ZoomBookingCard";
 import type {
@@ -77,20 +82,25 @@ import type {
 } from "@/lib/types";
 
 const MAX_IN_PROGRESS_POLLS = 8;
+const DEFAULT_AGENT_NAMES = new Set([
+  "个人业务助手",
+  "個人業務助手",
+  "Personal Agent",
+]);
 
 function isZoomMeetingIntent(input: string): boolean {
   const text = input.trim();
   if (!text) return false;
   if (/\bzoom\b/i.test(text)) return true;
   if (
-    /(?:预约|预定|订一个|订个|安排|约个|约一个|发起|约会|订会|开一个|开个).{0,18}(?:会议|会|评审会|对齐会|碰头会|同步会|讨论会|电话会)/.test(
+    /(?:预约|预定|預約|預訂|订一个|訂一個|订个|訂個|安排|约个|約個|约一个|約一個|发起|發起|约会|約會|订会|訂會|开一个|開一個|开个|開個).{0,18}(?:会议|會議|会|會|评审会|評審會|对齐会|對齊會|碰头会|碰頭會|同步会|同步會|讨论会|討論會|电话会|電話會)/.test(
       text,
     )
   ) {
     return true;
   }
   if (
-    /(?:明天|后天|今天|下周|周[一二三四五六日天]|星期[一二三四五六日天]|\d{1,2}点).{0,24}(?:开会|评审会|对齐会|会议)/.test(
+    /(?:明天|后天|後天|今天|下周|下週|[周週][一二三四五六日天]|星期[一二三四五六日天]|\d{1,2}[点點]).{0,24}(?:开会|開會|评审会|評審會|对齐会|對齊會|会议|會議)/.test(
       text,
     )
   ) {
@@ -117,15 +127,15 @@ function getBrowserTimezone(): { timezone: string; tzOffsetMinutes: number } {
   }
 }
 
-function getSuggestionIcon(domain: string) {
-  switch (domain) {
-    case "财务":
+function getSuggestionIcon(domainId: CapabilityDomainId) {
+  switch (domainId) {
+    case "finance":
       return Receipt;
-    case "运单":
+    case "shipment":
       return Package;
-    case "经营":
+    case "insights":
       return Warehouse;
-    case "邮箱":
+    case "mail":
       return Mail;
     default:
       return Sparkles;
@@ -153,10 +163,20 @@ export function AssistantWorkspace() {
     clearDraft,
     assignedCount,
   } = useWorkbench();
+  const {
+    locale,
+    t,
+    tp,
+    tx,
+    formatDateTime,
+    localizeAction,
+    localizeTool,
+    localizeError,
+  } = useLocale();
 
   const [memoryTick, setMemoryTick] = useState(0);
   useEffect(
-    () => subscribeAssistantMemory(() => setMemoryTick((t) => t + 1)),
+    () => subscribeAssistantMemory(() => setMemoryTick((tick) => tick + 1)),
     [],
   );
 
@@ -243,7 +263,7 @@ export function AssistantWorkspace() {
   }, [clearAllPollTimers]);
 
   const availableTools = useMemo(
-    () => (capabilities?.tools ?? []).filter((t) => t.available),
+    () => (capabilities?.tools ?? []).filter((tool) => tool.available),
     [capabilities],
   );
 
@@ -253,7 +273,7 @@ export function AssistantWorkspace() {
       setToolWarehouse("");
       return;
     }
-    const current = availableTools.find((t) => t.id === selectedToolId);
+    const current = availableTools.find((tool) => tool.id === selectedToolId);
     const chosen = current ?? availableTools[0]!;
     if (!current) {
       setSelectedToolId(chosen.id);
@@ -333,7 +353,14 @@ export function AssistantWorkspace() {
         {
           id: `call_${proposal.id}_${Date.now()}`,
           clientId: proposal.id,
-          userText: `发起运单改期提案 (${proposal.plan.target} · ${proposal.warehouse})`,
+          userText: tx(
+            {
+              "zh-CN": "发起运单改期提案 ({target} · {wh})",
+              "zh-HK": "發起運單改期提案 ({target} · {wh})",
+              en: "Propose shipment reschedule ({target} · {wh})",
+            },
+            { target: proposal.plan.target, wh: proposal.warehouse },
+          ),
           createdAt: Math.floor(Date.now() / 1000),
           status: "done",
           result: {
@@ -349,12 +376,12 @@ export function AssistantWorkspace() {
           kind: "proposal",
           id: proposal.id,
           warehouse: proposal.warehouse,
-          title: formatProposalAction(proposal.plan.action),
+          title: localizeAction(proposal.plan.action),
         },
         { tab: "current" },
       );
     },
-    [openDrawer],
+    [openDrawer, localizeAction, tx],
   );
 
   useEffect(() => {
@@ -473,66 +500,73 @@ export function AssistantWorkspace() {
     [handleAccessChanged, loadHistory],
   );
 
-  const executeZoomBookingParse = useCallback(async (utterance: string) => {
-    const trimmed = utterance.trim();
-    if (!trimmed) return;
-    const startGen = getAuthGeneration();
-    const entryId = generateClientId("zmturn");
+  const executeZoomBookingParse = useCallback(
+    async (utterance: string) => {
+      const trimmed = utterance.trim();
+      if (!trimmed) return;
+      const startGen = getAuthGeneration();
+      const entryId = generateClientId("zmturn");
 
-    const newEntry: AssistantTurnEntry = {
-      id: entryId,
-      clientId: entryId,
-      userText: trimmed,
-      createdAt: Math.floor(Date.now() / 1000),
-      status: "pending",
-      sourceKind: "zoom_booking",
-      zoomBooking: { phase: "parsing" },
-    };
-    setAssistantTurns(startGen, (prev) => [...prev, newEntry]);
-    requestAnimationFrame(() => {
-      feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    });
-
-    try {
-      const { timezone, tzOffsetMinutes } = getBrowserTimezone();
-      const preview = await parseNaturalLanguageZoomBooking({
-        utterance: trimmed,
-        timezone,
-        tz_offset_minutes: tzOffsetMinutes,
-      });
-      if (startGen !== getAuthGeneration()) return;
-      setAssistantTurns(startGen, (prev) =>
-        prev.map((item) =>
-          item.id === entryId
-            ? {
-                ...item,
-                status: "done",
-                zoomBooking: { phase: "preview", preview },
-              }
-            : item,
-        ),
-      );
+      const newEntry: AssistantTurnEntry = {
+        id: entryId,
+        clientId: entryId,
+        userText: trimmed,
+        createdAt: Math.floor(Date.now() / 1000),
+        status: "pending",
+        sourceKind: "zoom_booking",
+        zoomBooking: { phase: "parsing" },
+      };
+      setAssistantTurns(startGen, (prev) => [...prev, newEntry]);
       requestAnimationFrame(() => {
         feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
       });
-    } catch (err) {
-      if (isStaleAuthError(err) || startGen !== getAuthGeneration()) return;
-      const msg = isApiError(err)
-        ? err.message
-        : "解析自然语言会议请求失败，请检查时间或参会同事描述后重试。";
-      setAssistantTurns(startGen, (prev) =>
-        prev.map((item) =>
-          item.id === entryId
-            ? {
-                ...item,
-                status: "error",
-                zoomBooking: { phase: "error", errorMessage: msg },
-              }
-            : item,
-        ),
-      );
-    }
-  }, []);
+
+      try {
+        const { timezone, tzOffsetMinutes } = getBrowserTimezone();
+        const preview = await parseNaturalLanguageZoomBooking({
+          utterance: trimmed,
+          timezone,
+          tz_offset_minutes: tzOffsetMinutes,
+        });
+        if (startGen !== getAuthGeneration()) return;
+        setAssistantTurns(startGen, (prev) =>
+          prev.map((item) =>
+            item.id === entryId
+              ? {
+                  ...item,
+                  status: "done",
+                  zoomBooking: { phase: "preview", preview },
+                }
+              : item,
+          ),
+        );
+        requestAnimationFrame(() => {
+          feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        });
+      } catch (err) {
+        if (isStaleAuthError(err) || startGen !== getAuthGeneration()) return;
+        const msg = isApiError(err)
+          ? localizeError(err)
+          : tx({
+              "zh-CN": "解析自然语言会议请求失败，请检查时间或参会同事描述后重试。",
+              "zh-HK": "解析自然語言會議請求失敗，請檢查時間或與會同事描述後重試。",
+              en: "Could not parse the meeting request. Please verify the time and attendee details.",
+            });
+        setAssistantTurns(startGen, (prev) =>
+          prev.map((item) =>
+            item.id === entryId
+              ? {
+                  ...item,
+                  status: "error",
+                  zoomBooking: { phase: "error", errorMessage: msg },
+                }
+              : item,
+          ),
+        );
+      }
+    },
+    [localizeError, tx],
+  );
 
   const executeTurn = useCallback(
     async (text: string, existingEntry?: { id: string; clientId: string }) => {
@@ -640,7 +674,11 @@ export function AssistantWorkspace() {
           const fallbackErr = new (await import("@/lib/api-client")).ApiError({
             status: 503,
             code: "UPSTREAM_UNAVAILABLE",
-            message: "网络连接异常或上游暂不可用，请点击重试。",
+            message: tx({
+              "zh-CN": "网络连接异常或上游暂不可用，请点击重试。",
+              "zh-HK": "網路連線異常或上游暫時無法使用，請點擊重試。",
+              en: "Network or upstream service unavailable. Please retry.",
+            }),
             requestId: null,
             retryAfter: 2,
             fieldErrors: [],
@@ -672,6 +710,7 @@ export function AssistantWorkspace() {
       handleAccessChanged,
       loadHistory,
       scheduleInProgressPoll,
+      tx,
     ],
   );
 
@@ -685,7 +724,11 @@ export function AssistantWorkspace() {
       {
         id: entryId,
         clientId: entryId,
-        userText: "汇总今日工作简报",
+        userText: tx({
+          "zh-CN": "汇总今日工作简报",
+          "zh-HK": "彙整今日工作簡報",
+          en: "Summarize today's operations brief",
+        }),
         createdAt: Math.floor(Date.now() / 1000),
         status: "pending",
         sourceKind: "brief_card",
@@ -716,7 +759,7 @@ export function AssistantWorkspace() {
         );
       }
     }
-  }, [handleAccessChanged]);
+  }, [handleAccessChanged, tx]);
 
   const handleSendComposer = () => {
     const trimmed = composerText.trim();
@@ -789,7 +832,7 @@ export function AssistantWorkspace() {
     e.preventDefault();
     if (toolSubmitting || !selectedToolId) return;
 
-    const chosen = availableTools.find((t) => t.id === selectedToolId);
+    const chosen = availableTools.find((tool) => tool.id === selectedToolId);
     if (!chosen) return;
 
     let payload: WorkbenchToolCall;
@@ -797,11 +840,22 @@ export function AssistantWorkspace() {
 
     if (chosen.id === "mail.inbox.read") {
       payload = { tool: "mail.inbox.read", limit: 10 };
-      labelText = "查看我的收件箱";
+      labelText = tx({
+        "zh-CN": "查看我的收件箱",
+        "zh-HK": "檢視我的收件箱",
+        en: "Check my inbox",
+      });
     } else if (chosen.id === "decision.warehouse.summary") {
       if (!toolWarehouse) return;
       payload = { tool: "decision.warehouse.summary", warehouse: toolWarehouse };
-      labelText = `仓库汇总 ${toolWarehouse}`;
+      labelText = tx(
+        {
+          "zh-CN": "仓库汇总 {wh}",
+          "zh-HK": "倉庫摘要 {wh}",
+          en: "Warehouse summary {wh}",
+        },
+        { wh: toolWarehouse },
+      );
     } else if (chosen.id === "finance.invoice.read") {
       if (!toolWarehouse || !toolRefId.trim()) return;
       payload = {
@@ -809,7 +863,14 @@ export function AssistantWorkspace() {
         warehouse: toolWarehouse,
         invoice_id: toolRefId.trim(),
       };
-      labelText = `查看发票 ${toolRefId.trim()} (${toolWarehouse})`;
+      labelText = tx(
+        {
+          "zh-CN": "查看发票 {ref} ({wh})",
+          "zh-HK": "檢視發票 {ref} ({wh})",
+          en: "Check invoice {ref} ({wh})",
+        },
+        { ref: toolRefId.trim(), wh: toolWarehouse },
+      );
     } else if (chosen.id === "shipment.read") {
       if (!toolWarehouse || !toolRefId.trim()) return;
       payload = {
@@ -817,7 +878,14 @@ export function AssistantWorkspace() {
         warehouse: toolWarehouse,
         shipment_id: toolRefId.trim(),
       };
-      labelText = `查看运单 ${toolRefId.trim()} (${toolWarehouse})`;
+      labelText = tx(
+        {
+          "zh-CN": "查看运单 {ref} ({wh})",
+          "zh-HK": "檢視運單 {ref} ({wh})",
+          en: "Check shipment {ref} ({wh})",
+        },
+        { ref: toolRefId.trim(), wh: toolWarehouse },
+      );
     } else if (chosen.id === "shipment.reschedule") {
       if (!toolWarehouse || !toolRefId.trim() || !toolDeliveryDate) return;
       payload = {
@@ -826,7 +894,14 @@ export function AssistantWorkspace() {
         shipment_id: toolRefId.trim(),
         delivery_date: toolDeliveryDate,
       };
-      labelText = `运单改期 ${toolRefId.trim()} -> ${toolDeliveryDate}`;
+      labelText = tx(
+        {
+          "zh-CN": "运单改期 {ref} -> {date}",
+          "zh-HK": "運單改期 {ref} -> {date}",
+          en: "Reschedule shipment {ref} -> {date}",
+        },
+        { ref: toolRefId.trim(), date: toolDeliveryDate },
+      );
     } else if (chosen.id === "order.draft.prepare") {
       if (!toolWarehouse || !toolRefId.trim()) return;
       payload = {
@@ -834,7 +909,14 @@ export function AssistantWorkspace() {
         warehouse: toolWarehouse,
         intake_id: toolRefId.trim(),
       };
-      labelText = `准备订单草稿 ${toolRefId.trim()} (${toolWarehouse})`;
+      labelText = tx(
+        {
+          "zh-CN": "准备订单草稿 {ref} ({wh})",
+          "zh-HK": "準備訂單草稿 {ref} ({wh})",
+          en: "Prepare order draft {ref} ({wh})",
+        },
+        { ref: toolRefId.trim(), wh: toolWarehouse },
+      );
     } else {
       return;
     }
@@ -885,43 +967,68 @@ export function AssistantWorkspace() {
     }
   };
 
-  const agentDisplayName = agentProfile?.display_name || "个人业务助手";
+  const trimmedAgentName = agentProfile?.display_name?.trim();
+  const agentDisplayName =
+    trimmedAgentName && !DEFAULT_AGENT_NAMES.has(trimmedAgentName)
+      ? trimmedAgentName
+      : t("brand.defaultAgentName");
   const agentAvatarSrc = agentProfile?.has_avatar
     ? `/v1/agent-profile/avatar?v=${agentAvatarVersion}`
     : null;
   const quickPromptOptions = useMemo(
-    () => buildCapabilityPromptOptions(capabilities),
-    [capabilities],
+    () => buildCapabilityPromptOptions(capabilities, locale),
+    [capabilities, locale],
   );
   // Strict max 3 consistent suggestion chips on empty state (2 capability + 1 Zoom)
   const emptySuggestions = useMemo(
     () => quickPromptOptions.slice(0, 2),
     [quickPromptOptions],
   );
-  const selectedToolMeta = availableTools.find((t) => t.id === selectedToolId);
-  const hasPendingTurn = turns.some((t) => t.status === "pending");
+  const selectedToolMeta = availableTools.find(
+    (tool) => tool.id === selectedToolId,
+  );
+  const hasPendingTurn = turns.some((turn) => turn.status === "pending");
+
+  const defaultZoomSample = tx({
+    "zh-CN": "明天下午 3 点和 manager 用 Zoom 开 HK01 订单评审会",
+    "zh-HK": "明天下午 3 點和 manager 用 Zoom 開 HK01 訂單評審會",
+    en: "Book a Zoom meeting with manager tomorrow at 3pm for HK01 order review",
+  });
 
   return (
     <div
       data-testid="assistant-workspace"
-      className="flex h-full min-h-0 flex-col bg-[var(--bg-surface)]"
+      className="flex h-full min-h-0 flex-col bg-[var(--bg-sheet)]"
     >
-      {/* Pure 60px Frosted Top Header: Agent Avatar + Name (left) & ONLY "工作台" pill (right) */}
+      {/* Pure 60px Frosted Top Header: Agent Avatar + Name (left) & ONLY "工作台" / "Workbench" pill (right) */}
       <header className="aios-topbar-glass sticky top-0 z-20 flex h-[var(--header-h)] shrink-0 items-center justify-between gap-3 border-b border-[var(--hairline)] px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
           <Link
             href="/inbox"
-            aria-label="返回会话列表"
+            aria-label={tx({
+              "zh-CN": "返回会话列表",
+              "zh-HK": "返回對話清單",
+              en: "Back to conversations",
+            })}
             data-testid="assistant-mobile-back"
             className="inline-flex h-8 items-center gap-0.5 rounded-full pr-2.5 pl-1.5 text-[13.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors lg:hidden"
           >
             <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
-            <span>返回</span>
+            <span>
+              {tx({ "zh-CN": "返回", "zh-HK": "返回", en: "Back" })}
+            </span>
           </Link>
 
           <Link
             href="/settings/agent"
-            title={`配置 ${agentDisplayName}`}
+            title={tx(
+              {
+                "zh-CN": "配置 {name}",
+                "zh-HK": "設定 {name}",
+                en: "Configure {name}",
+              },
+              { name: agentDisplayName },
+            )}
             className="group flex min-w-0 items-center gap-2.5 rounded-full py-1 pr-2 hover:bg-[var(--bg-hover)] transition-colors"
           >
             <Avatar
@@ -940,16 +1047,20 @@ export function AssistantWorkspace() {
                 {agentDisplayName}
               </h2>
               <p className="truncate text-[11.5px] text-[var(--ink-muted)]">
-                个人工作助手
+                {tx({
+                  "zh-CN": "随时为你查询与起草",
+                  "zh-HK": "隨時為你查詢與起草",
+                  en: "Lookups, drafts & scheduling",
+                })}
                 {actor?.warehouses.length
-                  ? ` · ${actor.warehouses.join(" / ")}`
+                  ? ` · ${sortWarehouses(actor.warehouses).join(" / ")}`
                   : ""}
               </p>
             </div>
           </Link>
         </div>
 
-        {/* Top-Right ONLY: Sleek "工作台" Pill */}
+        {/* Top-Right ONLY: Sleek "工作台" / "Workbench" Pill */}
         <Link
           href="/work"
           data-testid="agent-open-workbench-btn"
@@ -959,9 +1070,15 @@ export function AssistantWorkspace() {
             className="h-3.5 w-3.5 text-[var(--accent)]"
             strokeWidth={1.9}
           />
-          <span>工作台</span>
+          <span>
+            {tx({
+              "zh-CN": "工作台",
+              "zh-HK": "工作台",
+              en: "Workbench",
+            })}
+          </span>
           {assignedCount > 0 && (
-            <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent)] px-1.5 font-mono-code text-[10.5px] font-semibold text-white">
+            <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 font-mono-code text-[10.5px] font-semibold text-[var(--accent-fg)]">
               {assignedCount > 99 ? "99+" : assignedCount}
             </span>
           )}
@@ -971,7 +1088,7 @@ export function AssistantWorkspace() {
       {/* Main Breathable Conversation Stream */}
       <div
         data-testid="assistant-feed"
-        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-surface)] px-4 py-6 sm:px-8"
+        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)] px-4 py-6 sm:px-8"
       >
         <div className="mx-auto max-w-[740px] space-y-5">
           {/* Whisper-Quiet Centered History Pill */}
@@ -988,14 +1105,32 @@ export function AssistantWorkspace() {
               >
                 <Clock className="h-3.5 w-3.5" strokeWidth={1.8} />
                 <span>
-                  历史活动记录 · {historyItems.length}
-                  {historyNext ? "+" : ""} 条
+                  {historyNext
+                    ? tx(
+                        {
+                          "zh-CN": "历史活动记录 · {count}+ 条",
+                          "zh-HK": "歷史活動紀錄 · {count}+ 則",
+                          en: "Activity History · {count}+ items",
+                        },
+                        { count: historyItems.length },
+                      )
+                    : tp(
+                        {
+                          "zh-CN": "历史活动记录 · {count} 条",
+                          "zh-HK": "歷史活動紀錄 · {count} 則",
+                          en: {
+                            one: "Activity History · {count} item",
+                            other: "Activity History · {count} items",
+                          },
+                        },
+                        historyItems.length,
+                      )}
                 </span>
               </button>
             </div>
           )}
 
-          {/* Serene Unboxed Muse Empty State (max 3 uniform icon chips) */}
+          {/* Serene Unboxed Muse Empty State — Opus Nit #2: text-balance & crisp max-w-[520px] (zero widow chars) */}
           {turns.length === 0 && (
             <div className="flex flex-col items-center justify-center pt-[10vh] pb-6 text-center">
               <Avatar
@@ -1006,23 +1141,31 @@ export function AssistantWorkspace() {
                 kind="agent"
                 className="shadow-[var(--shadow-card)]"
               />
-              <h3 className="mt-5 text-[22px] font-semibold tracking-[-0.025em] text-[var(--ink-primary)]">
-                你好，今天想推进哪项业务？
+              <h3 className="mt-5 text-[22px] font-semibold tracking-[-0.025em] text-[var(--ink-primary)] text-balance">
+                {tx({
+                  "zh-CN": "你好，今天想推进哪项业务？",
+                  "zh-HK": "你好，今天想推進哪項業務？",
+                  en: "What would you like to work on today?",
+                })}
               </h3>
-              <p className="mt-2 max-w-[420px] text-[13.5px] leading-relaxed text-[var(--ink-muted)]">
-                查询运单与发票、起草业务提案，或用自然语言直接预约 Zoom 会议。
+              <p className="mt-2 max-w-[520px] text-[13.5px] leading-relaxed text-[var(--ink-muted)] text-balance">
+                {tx({
+                  "zh-CN": "查询运单与发票、起草业务提案，或直接预约 Zoom 会议。",
+                  "zh-HK": "查詢運單與發票、起草業務提案，或直接預約 Zoom 會議。",
+                  en: "Query shipments & invoices, draft proposals, or book Zoom calls.",
+                })}
               </p>
 
               <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
                 {emptySuggestions.map((opt) => {
-                  const Icon = getSuggestionIcon(opt.domain);
+                  const Icon = getSuggestionIcon(opt.domainId);
                   return (
                     <button
                       key={opt.prompt}
                       type="button"
                       disabled={hasPendingTurn}
                       onClick={() => void executeTurn(opt.prompt)}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-4 py-2 text-[13px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent)] transition-colors duration-[150ms] cursor-pointer disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-4 py-2 text-[13px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors duration-[150ms] cursor-pointer disabled:opacity-50"
                     >
                       <Icon
                         className="h-3.5 w-3.5 text-[var(--accent)]"
@@ -1037,15 +1180,15 @@ export function AssistantWorkspace() {
                   disabled={hasPendingTurn}
                   onClick={() => {
                     setZoomBarOpen(true);
-                    setZoomNlText("明天下午3点和manager用Zoom开HK01订单评审会");
+                    setZoomNlText(defaultZoomSample);
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-4 py-2 text-[13px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent)] transition-colors duration-[150ms] cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-4 py-2 text-[13px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors duration-[150ms] cursor-pointer disabled:opacity-50"
                 >
                   <Video
                     className="h-3.5 w-3.5 text-[var(--accent)]"
                     strokeWidth={1.85}
                   />
-                  <span>预约 Zoom 会议</span>
+                  <span>{t("assistant.action.bookZoom")}</span>
                 </button>
               </div>
             </div>
@@ -1058,15 +1201,20 @@ export function AssistantWorkspace() {
               data-testid={`assistant-turn-${turn.clientId}`}
               className="space-y-3"
             >
-              {/* Outgoing User Bubble — seamless native Cobalt + SVG tail (no corner double-pinch, no shadow seam) */}
+              {/* Outgoing User Bubble — seamless native bubble-sent-bg + matching SVG tail */}
               <div className="flex justify-end pr-1.5">
-                <div className="imessage-bubble-sent relative max-w-[82%] rounded-lg bg-[var(--accent)] px-4 py-2.5 text-[14.5px] leading-[1.45] text-white whitespace-pre-wrap break-words">
+                <div
+                  className={[
+                    "imessage-bubble-sent relative max-w-[82%] bg-[var(--bubble-sent-bg)] px-4 py-2.5 text-[14.5px] leading-[1.45] text-[var(--bubble-sent-ink)] whitespace-pre-wrap break-words",
+                    getBubbleRadiusClass("sent", "single"),
+                  ].join(" ")}
+                >
                   {turn.userText}
                   <IMessageBubbleTail side="sent" />
                 </div>
               </div>
 
-              {/* Incoming Agent Turn Row — translate-only .aios-row-in (zero rubbery scale) */}
+              {/* Incoming Agent Turn Row — translate-only .aios-row-in */}
               <div className="aios-row-in flex items-start gap-2.5 max-w-[96%]">
                 <Avatar
                   src={agentAvatarSrc}
@@ -1120,18 +1268,37 @@ export function AssistantWorkspace() {
                         <div className="space-y-1.5">
                           <BriefProgressChain
                             phase="done"
-                            summaryLabel="已汇总今日工作简报 · 2 步核验"
+                            summaryLabel={tx({
+                              "zh-CN": "已汇总今日工作简报 · 2 步核验",
+                              "zh-HK": "已彙整今日工作簡報 · 2 步核驗",
+                              en: "Today's brief ready · 2 steps verified",
+                            })}
                             steps={[
                               {
                                 id: "brief-scope",
-                                label: `已按当前账号权限统计待审单据与会议（${actor?.tenant || "当前租户"}）`,
+                                label: tx(
+                                  {
+                                    "zh-CN": "已按当前账号权限统计待审单据与会议（{tenant}）",
+                                    "zh-HK": "已按目前帳號權限統計待審單據與會議（{tenant}）",
+                                    en: "Aggregated approvals & meetings within scope ({tenant})",
+                                  },
+                                  {
+                                    tenant:
+                                      actor?.tenant ||
+                                      t("kinetic.currentTenant"),
+                                  },
+                                ),
                                 status: "done",
                               },
                               {
                                 id: "brief-ts",
-                                label: "已生成本地时区实时快照",
+                                label: tx({
+                                  "zh-CN": "已生成本地时区实时快照",
+                                  "zh-HK": "已產生本地時區即時快照",
+                                  en: "Live local-timezone snapshot captured",
+                                }),
                                 status: "done",
-                                meta: formatUnixTime(turn.brief.as_of),
+                                meta: formatDateTime(turn.brief.as_of),
                               },
                             ]}
                           />
@@ -1145,28 +1312,38 @@ export function AssistantWorkspace() {
                             <div className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline-subtle)]">
                               <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ink-primary)]">
                                 <CalendarDays className="h-4 w-4 text-[var(--accent)]" />
-                                <span>今日工作简报</span>
+                                <span>
+                                  {tx({
+                                    "zh-CN": "今日工作简报",
+                                    "zh-HK": "今日工作簡報",
+                                    en: "Today's Brief",
+                                  })}
+                                </span>
                               </span>
                               <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                                {formatUnixTime(turn.brief.as_of)}
+                                {formatDateTime(turn.brief.as_of)}
                               </span>
                             </div>
                             <div className="p-4 space-y-3">
                               <div className="grid grid-cols-2 gap-2.5">
                                 <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3">
                                   <div className="text-[11.5px] text-[var(--ink-muted)]">
-                                    待我审批
+                                    {t("assistant.brief.pendingApprovals")}
                                   </div>
-                                  <div className="mt-0.5 font-mono-code text-[22px] font-semibold text-[var(--ink-primary)] tabular-nums">
+                                  <div className="mt-0.5 text-[22px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] tabular-nums">
                                     {turn.brief.pending_approvals}
                                     {turn.brief.pending_approvals_capped ? "+" : ""}
                                   </div>
                                 </div>
                                 <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3">
                                   <div className="text-[11.5px] text-[var(--ink-muted)]">
-                                    今日会议
+                                    {tx({
+                                      "zh-CN": "今日会议",
+                                      "zh-HK": "今日會議",
+                                      en: "Meetings Today",
+                                    })}
                                   </div>
-                                  <div className="mt-0.5 font-mono-code text-[22px] font-semibold text-[var(--ink-primary)] tabular-nums">
+                                  <div className="mt-0.5 text-[22px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] tabular-nums">
                                     {turn.brief.meetings}
                                   </div>
                                 </div>
@@ -1197,13 +1374,19 @@ export function AssistantWorkspace() {
                                   className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]"
                                 >
                                   <Calendar className="h-3.5 w-3.5 text-[var(--accent)]" />
-                                  <span>打开日历</span>
+                                  <span>
+                                    {tx({
+                                      "zh-CN": "打开日历",
+                                      "zh-HK": "開啟日曆",
+                                      en: "Calendar",
+                                    })}
+                                  </span>
                                 </Link>
                                 <Link
                                   href="/work"
-                                  className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 text-[12px] font-medium text-white hover:bg-[var(--accent-hover)]"
+                                  className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent-solid)] px-3.5 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)]"
                                 >
-                                  <span>进入工作台</span>
+                                  <span>{t("inbox.enterWorkbench")}</span>
                                   <ArrowUpRight className="h-3.5 w-3.5" />
                                 </Link>
                               </div>
@@ -1259,8 +1442,8 @@ export function AssistantWorkspace() {
                           <AccessNoticeCard
                             error={turn.error}
                             authorizedWarehouses={
-                              turn.error.status === 403
-                                ? actor?.warehouses
+                              turn.error.status === 403 && actor
+                                ? sortWarehouses(actor.warehouses)
                                 : undefined
                             }
                           />
@@ -1269,8 +1452,15 @@ export function AssistantWorkspace() {
                               turn.error.status === 409 ||
                               turn.error.code === "TURN_IN_PROGRESS") && (
                               <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11.5px] text-[var(--ink-muted)]">
-                                <span className="font-mono-code">
-                                  重试将复用幂等键 {turn.clientId}
+                                <span>
+                                  {tx({
+                                    "zh-CN": "重试将复用幂等键 ",
+                                    "zh-HK": "重試將沿用冪等鍵 ",
+                                    en: "Retry reuses idempotency key ",
+                                  })}
+                                  <span className="font-mono-code">
+                                    {turn.clientId}
+                                  </span>
                                 </span>
                                 <Button
                                   size="sm"
@@ -1284,7 +1474,11 @@ export function AssistantWorkspace() {
                                     })
                                   }
                                 >
-                                  重新提交
+                                  {tx({
+                                    "zh-CN": "重新提交",
+                                    "zh-HK": "重新提交",
+                                    en: "Resubmit",
+                                  })}
                                 </Button>
                               </div>
                             )}
@@ -1302,7 +1496,7 @@ export function AssistantWorkspace() {
       </div>
 
       {/* Muse-Exact Floating Bottom Composer Area */}
-      <footer className="shrink-0 bg-gradient-to-t from-[var(--bg-surface)] via-[var(--bg-surface)] to-transparent px-4 pt-2 pb-4 sm:px-8 sm:pb-5">
+      <footer className="shrink-0 bg-gradient-to-t from-[var(--bg-sheet)] via-[var(--bg-sheet)] to-transparent px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8 sm:pb-5">
         <div className="mx-auto max-w-[740px] space-y-2.5">
           {zoomBarOpen && (
             <form
@@ -1326,8 +1520,13 @@ export function AssistantWorkspace() {
                 value={zoomNlText}
                 onChange={(e) => setZoomNlText(e.target.value)}
                 data-testid="zoom-nl-input"
-                placeholder="例如：明天下午3点和manager用Zoom开HK01订单评审会"
-                className="min-w-[200px] flex-1 bg-transparent text-[13.5px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none"
+                placeholder={tx({
+                  "zh-CN": "例如：明天下午 3 点和 manager 用 Zoom 开 HK01 订单评审会",
+                  "zh-HK": "例如：明天下午 3 點和 manager 用 Zoom 開 HK01 訂單評審會",
+                  en: "e.g. Book a Zoom call with manager tomorrow at 3pm for HK01 review",
+                })}
+                style={{ outline: "none" }}
+                className="min-w-[200px] flex-1 border-0 bg-transparent text-[13.5px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
               />
               <Button
                 type="submit"
@@ -1336,12 +1535,20 @@ export function AssistantWorkspace() {
                 pill
                 disabled={!zoomNlText.trim()}
               >
-                解析预览
+                {tx({
+                  "zh-CN": "解析预览",
+                  "zh-HK": "解析預覽",
+                  en: "Parse Draft",
+                })}
               </Button>
               <button
                 type="button"
                 onClick={() => setZoomBarOpen(false)}
-                aria-label="关闭 Zoom 预约栏"
+                aria-label={tx({
+                  "zh-CN": "关闭 Zoom 预约栏",
+                  "zh-HK": "關閉 Zoom 預約列",
+                  en: "Close Zoom booking bar",
+                })}
                 className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" />
@@ -1361,8 +1568,16 @@ export function AssistantWorkspace() {
                 value={composerText}
                 onChange={(e) => updateComposer(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
-                placeholder={`给 ${agentDisplayName} 发消息…`}
-                className="block max-h-[160px] min-h-[28px] w-full resize-none bg-transparent text-[14.5px] leading-[1.5] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none"
+                placeholder={tx(
+                  {
+                    "zh-CN": "给{name}发消息…",
+                    "zh-HK": "傳訊息給{name}…",
+                    en: "Message {name}…",
+                  },
+                  { name: agentDisplayName },
+                )}
+                style={{ outline: "none" }}
+                className="block max-h-[160px] min-h-[28px] w-full resize-none border-0 bg-transparent text-[14.5px] leading-[1.5] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
               />
             </div>
 
@@ -1375,11 +1590,21 @@ export function AssistantWorkspace() {
                   <button
                     type="button"
                     data-testid="assistant-add-context-btn"
-                    aria-label="添加上下文"
+                    aria-label={tx({
+                      "zh-CN": "添加上下文",
+                      "zh-HK": "加入上下文",
+                      en: "Add context",
+                    })}
                     className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors duration-[140ms] cursor-pointer"
                   >
                     <Plus className="h-4 w-4" strokeWidth={2} />
-                    <span>添加上下文</span>
+                    <span>
+                      {tx({
+                        "zh-CN": "添加上下文",
+                        "zh-HK": "加入上下文",
+                        en: "Add Context",
+                      })}
+                    </span>
                   </button>
                 </Popover.Trigger>
 
@@ -1401,7 +1626,13 @@ export function AssistantWorkspace() {
                             className="h-4 w-4 text-[var(--accent)]"
                             strokeWidth={1.85}
                           />
-                          <span>新建订单 / 上传单据</span>
+                          <span>
+                            {tx({
+                              "zh-CN": "新建订单 / 上传单据",
+                              "zh-HK": "新增訂單 / 上傳單據",
+                              en: "New Order / Upload Document",
+                            })}
+                          </span>
                         </Link>
                       )}
 
@@ -1415,7 +1646,13 @@ export function AssistantWorkspace() {
                           className="h-4 w-4 text-[var(--accent)]"
                           strokeWidth={1.85}
                         />
-                        <span>插入今日简报</span>
+                        <span>
+                          {tx({
+                            "zh-CN": "插入今日简报",
+                            "zh-HK": "插入今日簡報",
+                            en: "Insert Daily Brief",
+                          })}
+                        </span>
                       </button>
 
                       <button
@@ -1432,7 +1669,13 @@ export function AssistantWorkspace() {
                           className="h-4 w-4 text-[var(--ink-muted)]"
                           strokeWidth={1.85}
                         />
-                        <span>历史活动记录</span>
+                        <span>
+                          {tx({
+                            "zh-CN": "历史活动记录",
+                            "zh-HK": "歷史活動紀錄",
+                            en: "Activity History",
+                          })}
+                        </span>
                       </button>
 
                       <button
@@ -1448,7 +1691,7 @@ export function AssistantWorkspace() {
                           className="h-4 w-4 text-[var(--accent)]"
                           strokeWidth={1.85}
                         />
-                        <span>预约 Zoom 会议</span>
+                        <span>{t("assistant.action.bookZoom")}</span>
                       </button>
 
                       {availableTools.length > 0 && (
@@ -1464,7 +1707,13 @@ export function AssistantWorkspace() {
                             className="h-4 w-4 text-[var(--ink-muted)]"
                             strokeWidth={1.85}
                           />
-                          <span>按表单查询</span>
+                          <span>
+                            {tx({
+                              "zh-CN": "按表单查询",
+                              "zh-HK": "按表單查詢",
+                              en: "Structured Tool Form",
+                            })}
+                          </span>
                         </button>
                       )}
                     </div>
@@ -1472,26 +1721,39 @@ export function AssistantWorkspace() {
                     {quickPromptOptions.length > 0 && (
                       <div className="mt-2 border-t border-[var(--hairline)] pt-2">
                         <div className="px-3 pb-1.5 text-[11px] font-medium text-[var(--ink-muted)]">
-                          常用
+                          {tx({
+                            "zh-CN": "常用",
+                            "zh-HK": "常用",
+                            en: "Quick Prompts",
+                          })}
                         </div>
                         <div className="space-y-0.5">
-                          {quickPromptOptions.map((opt) => (
-                            <button
-                              key={opt.prompt}
-                              type="button"
-                              disabled={hasPendingTurn}
-                              onClick={() => {
-                                setContextMenuOpen(false);
-                                void executeTurn(opt.prompt);
-                              }}
-                              className="flex w-full items-center justify-between gap-2 rounded-sm px-3 py-1.5 text-left text-[12.5px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent)] transition-colors cursor-pointer disabled:opacity-50"
-                            >
-                              <span className="truncate">{opt.label}</span>
-                              <span className="shrink-0 text-[11px] text-[var(--ink-faint)]">
-                                {opt.domain}
-                              </span>
-                            </button>
-                          ))}
+                          {quickPromptOptions.map((opt) => {
+                            const Icon = getSuggestionIcon(opt.domainId);
+                            return (
+                              <button
+                                key={opt.prompt}
+                                type="button"
+                                disabled={hasPendingTurn}
+                                onClick={() => {
+                                  setContextMenuOpen(false);
+                                  void executeTurn(opt.prompt);
+                                }}
+                                className="flex w-full items-center justify-between gap-2 rounded-sm px-3 py-1.5 text-left text-[12.5px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <span className="flex min-w-0 items-center gap-2.5">
+                                  <Icon
+                                    className="h-4 w-4 shrink-0 text-[var(--accent)]"
+                                    strokeWidth={1.85}
+                                  />
+                                  <span className="truncate">{opt.label}</span>
+                                </span>
+                                <span className="shrink-0 text-[11px] text-[var(--ink-muted)]">
+                                  {opt.domainLabel}
+                                </span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -1508,13 +1770,13 @@ export function AssistantWorkspace() {
                 <button
                   type="button"
                   data-testid="assistant-send-btn"
-                  aria-label="发送消息"
+                  aria-label={t("assistant.sendAria")}
                   disabled={hasPendingTurn || composerText.trim().length === 0}
                   onClick={handleSendComposer}
                   className={[
                     "inline-flex h-8 w-8 items-center justify-center rounded-full transition-all duration-[150ms]",
                     !hasPendingTurn && composerText.trim().length > 0
-                      ? "bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] active:scale-[0.92] cursor-pointer"
+                      ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)] active:scale-[0.92] cursor-pointer"
                       : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)] cursor-not-allowed",
                   ].join(" ")}
                 >
@@ -1530,14 +1792,26 @@ export function AssistantWorkspace() {
       <Modal
         open={historyModalOpen}
         onOpenChange={setHistoryModalOpen}
-        title="历史活动记录"
-        subtitle="仅保留安全索引，展开单条记录时按您当前实时权限重新核验。"
+        title={tx({
+          "zh-CN": "历史活动记录",
+          "zh-HK": "歷史活動紀錄",
+          en: "Activity History",
+        })}
+        subtitle={tx({
+          "zh-CN": "仅保留安全索引，展开单条记录时按您当前实时权限重新核验。",
+          "zh-HK": "僅保留安全索引，展開單筆紀錄時按您目前即時權限重新核驗。",
+          en: "Only safe indices are stored; expanding any record re-verifies your live permissions.",
+        })}
         size="lg"
       >
         <div className="space-y-3.5" data-testid="assistant-history-section">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[12px] text-[var(--ink-muted)]">
-              若某项权限已被撤销，重新核验将立即清除已展示内容。
+              {tx({
+                "zh-CN": "若某项权限已被撤销，重新核验将立即清除已展示内容。",
+                "zh-HK": "若某項權限已被撤銷，重新核驗將立即清除已顯示內容。",
+                en: "If a permission was revoked, re-verification immediately clears restricted data.",
+              })}
             </span>
             <Button
               size="sm"
@@ -1552,7 +1826,13 @@ export function AssistantWorkspace() {
                   historyLoading ? "animate-spin" : "",
                 ].join(" ")}
               />
-              <span>刷新索引</span>
+              <span>
+                {tx({
+                  "zh-CN": "刷新索引",
+                  "zh-HK": "重新整理索引",
+                  en: "Refresh",
+                })}
+              </span>
             </Button>
           </div>
 
@@ -1565,7 +1845,11 @@ export function AssistantWorkspace() {
 
           {!historyLoading && !historyError && historyItems.length === 0 && (
             <div className="rounded-tile bg-[var(--bg-surface-tint)] py-10 text-center text-[13px] text-[var(--ink-muted)]">
-              当前账号暂无历史活动记录。
+              {tx({
+                "zh-CN": "当前账号暂无历史活动记录。",
+                "zh-HK": "目前帳號暫無歷史活動紀錄。",
+                en: "No activity history for this account yet.",
+              })}
             </div>
           )}
 
@@ -1585,7 +1869,7 @@ export function AssistantWorkspace() {
                           {item.id}
                         </span>
                         <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
-                          {formatUnixTime(item.started_at)}
+                          {formatDateTime(item.started_at)}
                         </span>
                       </div>
 
@@ -1600,8 +1884,16 @@ export function AssistantWorkspace() {
                         <ShieldCheck className="h-3.5 w-3.5 text-[var(--accent)]" />
                         <span>
                           {expanded?.result || expanded?.error
-                            ? "重新核验"
-                            : "重新核验并展开"}
+                            ? tx({
+                                "zh-CN": "重新核验",
+                                "zh-HK": "重新核驗",
+                                en: "Re-verify",
+                              })
+                            : tx({
+                                "zh-CN": "重新核验并展开",
+                                "zh-HK": "重新核驗並展開",
+                                en: "Verify & Expand",
+                              })}
                         </span>
                       </Button>
                     </div>
@@ -1651,7 +1943,13 @@ export function AssistantWorkspace() {
                 onClick={() => void loadHistory(historyNext)}
                 className="w-full"
               >
-                {historyLoadingMore ? "加载中…" : "加载更多历史记录"}
+                {historyLoadingMore
+                  ? t("common.loading")
+                  : tx({
+                      "zh-CN": "加载更多历史记录",
+                      "zh-HK": "載入更多歷史紀錄",
+                      en: "Load More History",
+                    })}
               </Button>
             </div>
           )}
@@ -1662,8 +1960,16 @@ export function AssistantWorkspace() {
       <Modal
         open={structuredModalOpen}
         onOpenChange={setStructuredModalOpen}
-        title="按表单查询"
-        subtitle="选择当前已授权的业务查询项与仓库站点直接执行。"
+        title={tx({
+          "zh-CN": "按表单查询",
+          "zh-HK": "按表單查詢",
+          en: "Structured Tool Query",
+        })}
+        subtitle={tx({
+          "zh-CN": "选择当前已授权的业务查询项与仓库直接执行。",
+          "zh-HK": "選擇目前已授權的業務查詢項目與倉庫直接執行。",
+          en: "Run an authorized typed business tool directly within your warehouse scope.",
+        })}
         size="md"
         footer={
           <>
@@ -1673,7 +1979,7 @@ export function AssistantWorkspace() {
               disabled={toolSubmitting}
               onClick={() => setStructuredModalOpen(false)}
             >
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               variant="primary"
@@ -1681,7 +1987,11 @@ export function AssistantWorkspace() {
               loading={toolSubmitting}
               onClick={(e) => void handleStructuredSubmit(e)}
             >
-              立即执行
+              {tx({
+                "zh-CN": "立即执行",
+                "zh-HK": "立即執行",
+                en: "Run Tool",
+              })}
             </Button>
           </>
         }
@@ -1693,7 +2003,11 @@ export function AssistantWorkspace() {
         >
           <div>
             <label className="block text-[12px] font-medium text-[var(--ink-secondary)]">
-              业务项目
+              {tx({
+                "zh-CN": "业务项目",
+                "zh-HK": "業務項目",
+                en: "Tool",
+              })}
             </label>
             <select
               value={selectedToolId}
@@ -1702,7 +2016,19 @@ export function AssistantWorkspace() {
             >
               {availableTools.map((tool) => (
                 <option key={tool.id} value={tool.id}>
-                  {tool.id} ({tool.mode === "proposal" ? "提案" : "只读"})
+                  {localizeTool(tool.id)} · {tool.id} (
+                  {tool.mode === "proposal"
+                    ? tx({
+                        "zh-CN": "提案",
+                        "zh-HK": "提案",
+                        en: "Proposal",
+                      })
+                    : tx({
+                        "zh-CN": "只读",
+                        "zh-HK": "唯讀",
+                        en: "Read",
+                      })}
+                  )
                 </option>
               ))}
             </select>
@@ -1711,14 +2037,18 @@ export function AssistantWorkspace() {
           {selectedToolMeta && selectedToolMeta.warehouses.length > 0 && (
             <div>
               <label className="block text-[12px] font-medium text-[var(--ink-secondary)]">
-                仓库站点
+                {tx({
+                  "zh-CN": "仓库",
+                  "zh-HK": "倉庫",
+                  en: "Warehouse",
+                })}
               </label>
               <select
                 value={toolWarehouse}
                 onChange={(e) => setToolWarehouse(e.target.value)}
                 className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent)] focus:outline-none"
               >
-                {selectedToolMeta.warehouses.map((wh) => (
+                {sortWarehouses(selectedToolMeta.warehouses).map((wh) => (
                   <option key={wh} value={wh}>
                     {wh}
                   </option>
@@ -1734,10 +2064,22 @@ export function AssistantWorkspace() {
             <div>
               <label className="block text-[12px] font-medium text-[var(--ink-secondary)]">
                 {selectedToolId === "finance.invoice.read"
-                  ? "发票编号"
+                  ? tx({
+                      "zh-CN": "发票编号",
+                      "zh-HK": "發票編號",
+                      en: "Invoice ID",
+                    })
                   : selectedToolId === "order.draft.prepare"
-                    ? "进件编号"
-                    : "运单编号"}
+                    ? tx({
+                        "zh-CN": "进件编号",
+                        "zh-HK": "進件編號",
+                        en: "Intake ID",
+                      })
+                    : tx({
+                        "zh-CN": "运单编号",
+                        "zh-HK": "運單編號",
+                        en: "Shipment ID",
+                      })}
               </label>
               <input
                 type="text"
@@ -1747,7 +2089,11 @@ export function AssistantWorkspace() {
                   selectedToolId === "finance.invoice.read"
                     ? "INV-100"
                     : selectedToolId === "order.draft.prepare"
-                      ? "输入进件编号"
+                      ? tx({
+                          "zh-CN": "输入进件编号",
+                          "zh-HK": "輸入進件編號",
+                          en: "Enter intake ID",
+                        })
                       : toolWarehouse === "HK02"
                         ? "SHP-2001"
                         : "SHP-1001"
@@ -1760,10 +2106,15 @@ export function AssistantWorkspace() {
           {selectedToolId === "shipment.reschedule" && (
             <div>
               <label className="block text-[12px] font-medium text-[var(--ink-secondary)]">
-                目标交付日期
+                {tx({
+                  "zh-CN": "目标交付日期",
+                  "zh-HK": "目標交付日期",
+                  en: "Target Delivery Date",
+                })}
               </label>
               <input
                 type="date"
+                lang={LOCALE_META[locale].htmlLang}
                 value={toolDeliveryDate}
                 onChange={(e) => setToolDeliveryDate(e.target.value)}
                 className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent)] focus:outline-none"

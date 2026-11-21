@@ -1,5 +1,12 @@
 import { callMcpTool, validateMcpEndpointUrl } from "@/lib/mcp/client";
 import { isValidZoomJoinUrl } from "@/lib/mcp/ics";
+import {
+  CALENDAR_CONNECTOR_LABELS_I18N,
+  DEFAULT_LOCALE,
+  localizeMcpSyncMessage,
+  localizeZoomStatusLabel,
+  type Locale,
+} from "@/lib/i18n";
 import type {
   ExternalCalendarSyncResult,
   ExternalCalendarTarget,
@@ -22,13 +29,17 @@ function readCleanEnv(key: string): string | null {
   return val && val.length > 0 ? val : null;
 }
 
-function getCalendarConnectorEnv(target: ExternalCalendarTarget): CalendarConnectorEnv {
+function getCalendarConnectorEnv(
+  target: ExternalCalendarTarget,
+  locale: Locale = DEFAULT_LOCALE,
+): CalendarConnectorEnv {
+  const label = CALENDAR_CONNECTOR_LABELS_I18N[target][locale];
   switch (target) {
     case "google": {
       const url = readCleanEnv("AIOS_MCP_GOOGLE_CALENDAR_URL");
       return {
         target: "google",
-        label: "Google Calendar",
+        label,
         url: url && validateMcpEndpointUrl(url) ? url : null,
         token: readCleanEnv("AIOS_MCP_GOOGLE_CALENDAR_TOKEN"),
         toolName: readCleanEnv("AIOS_MCP_GOOGLE_CALENDAR_TOOL") || "create-event",
@@ -44,7 +55,7 @@ function getCalendarConnectorEnv(target: ExternalCalendarTarget): CalendarConnec
       const url = readCleanEnv("AIOS_MCP_ICLOUD_CALENDAR_URL");
       return {
         target: "icloud",
-        label: "Apple iCloud 日历",
+        label,
         url: url && validateMcpEndpointUrl(url) ? url : null,
         token: readCleanEnv("AIOS_MCP_ICLOUD_CALENDAR_TOKEN"),
         toolName: readCleanEnv("AIOS_MCP_ICLOUD_CALENDAR_TOOL") || "create_event",
@@ -59,7 +70,7 @@ function getCalendarConnectorEnv(target: ExternalCalendarTarget): CalendarConnec
       const url = readCleanEnv("AIOS_MCP_OUTLOOK_CALENDAR_URL");
       return {
         target: "outlook",
-        label: "Outlook / M365 日历",
+        label,
         url: url && validateMcpEndpointUrl(url) ? url : null,
         token: readCleanEnv("AIOS_MCP_OUTLOOK_CALENDAR_TOKEN"),
         toolName:
@@ -120,19 +131,21 @@ export function isZoomConfigured(): boolean {
  * Returns safe connector readiness status for all calendar & meeting integrations.
  * NEVER exposes URLs, tokens, secrets, or forbidden JSON keys.
  */
-export function getMcpConnectorsStatus(): McpConnectorStatusItem[] {
+export function getMcpConnectorsStatus(
+  locale: Locale = DEFAULT_LOCALE,
+): McpConnectorStatusItem[] {
   const zoomMode = getZoomPreviewMode();
   const zoomConfigured = zoomMode !== "sandbox_preview";
 
-  const google = getCalendarConnectorEnv("google");
-  const icloud = getCalendarConnectorEnv("icloud");
-  const outlook = getCalendarConnectorEnv("outlook");
+  const google = getCalendarConnectorEnv("google", locale);
+  const icloud = getCalendarConnectorEnv("icloud", locale);
+  const outlook = getCalendarConnectorEnv("outlook", locale);
 
   return [
     {
       connector: "internal",
       connector_id: "internal",
-      label: "AIOS 站内日历",
+      label: CALENDAR_CONNECTOR_LABELS_I18N.internal[locale],
       category: "internal",
       configured: true,
       status: "connected",
@@ -144,12 +157,15 @@ export function getMcpConnectorsStatus(): McpConnectorStatusItem[] {
     {
       connector: "zoom",
       connector_id: "zoom",
-      label: "Zoom 视频会议",
+      label: CALENDAR_CONNECTOR_LABELS_I18N.zoom[locale],
       category: "meeting",
       configured: zoomConfigured,
       status: zoomConfigured ? "connected" : "sandbox_ready",
       mode: zoomMode,
-      protocol: zoomMode === "live_api" ? "Zoom S2S OAuth v2" : "MCP Streamable HTTP / Zoom S2S",
+      protocol:
+        zoomMode === "live_api"
+          ? "Zoom S2S OAuth v2"
+          : "MCP Streamable HTTP / Zoom S2S",
       supports_sync: true,
       setup_env_keys: [
         "AIOS_MCP_ZOOM_URL",
@@ -212,9 +228,10 @@ async function fetchZoomS2SToken(cfg: {
     return cachedZoomToken.token;
   }
 
-  const basic = Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`, "utf8").toString(
-    "base64",
-  );
+  const basic = Buffer.from(
+    `${cfg.clientId}:${cfg.clientSecret}`,
+    "utf8",
+  ).toString("base64");
   const res = await fetch(
     `https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(cfg.accountId)}`,
     {
@@ -253,7 +270,11 @@ function extractZoomFieldsFromMcp(
   if (!obj && rawText.trim().startsWith("{")) {
     try {
       const parsed = JSON.parse(rawText) as unknown;
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        !Array.isArray(parsed)
+      ) {
         obj = parsed as Record<string, unknown>;
       }
     } catch {
@@ -286,7 +307,9 @@ function extractZoomFieldsFromMcp(
   }
 
   if (!joinUrl && rawText) {
-    const match = rawText.match(/https:\/\/(?:[a-z0-9-]+\.)?zoom\.us\/j\/[A-Za-z0-9/?=&_%.-]+/);
+    const match = rawText.match(
+      /https:\/\/(?:[a-z0-9-]+\.)?zoom\.us\/j\/[A-Za-z0-9/?=&_%.-]+/,
+    );
     if (match && isValidZoomJoinUrl(match[0])) {
       joinUrl = match[0];
     }
@@ -295,13 +318,38 @@ function extractZoomFieldsFromMcp(
   return { joinUrl, meetingId, passcode };
 }
 
-export async function createZoomMeeting(input: {
-  topic: string;
-  startsAtIso: string;
-  durationMinutes: number;
-  timezone: string;
-  agenda?: string;
-}): Promise<ZoomMeetingResult> {
+function buildZoomResult(
+  partial: Omit<ZoomMeetingResult, "status_label">,
+  locale: Locale,
+): ZoomMeetingResult {
+  const status_label = localizeZoomStatusLabel(
+    {
+      mode: partial.mode,
+      join_url: partial.join_url,
+      status_label: "",
+      status_code: partial.status_code,
+    },
+    locale,
+  );
+  return { ...partial, status_label };
+}
+
+function defaultAgendaForLocale(locale: Locale): string {
+  if (locale === "en") return "AIOS Collaboration Meeting";
+  if (locale === "zh-HK") return "AIOS 企業協作會議";
+  return "AIOS 企业协作会议";
+}
+
+export async function createZoomMeeting(
+  input: {
+    topic: string;
+    startsAtIso: string;
+    durationMinutes: number;
+    timezone: string;
+    agenda?: string;
+  },
+  locale: Locale = DEFAULT_LOCALE,
+): Promise<ZoomMeetingResult> {
   const mcpCfg = getZoomMcpConfig();
   if (mcpCfg) {
     const res = await callMcpTool(
@@ -313,39 +361,48 @@ export async function createZoomMeeting(input: {
         start_time: input.startsAtIso,
         duration: input.durationMinutes,
         timezone: input.timezone,
-        agenda: input.agenda || "AIOS 企业协作会议",
+        agenda: input.agenda || defaultAgendaForLocale(locale),
       },
     );
     if (res.ok) {
-      const extracted = extractZoomFieldsFromMcp(res.structuredContent, res.rawText);
-      return {
-        requested: true,
-        mode: "live_mcp",
-        sync_mode: "live_mcp",
-        status_label: extracted.joinUrl
-          ? "Zoom MCP 已生成真实会议链接"
-          : "Zoom MCP 已创建会议",
-        join_url: extracted.joinUrl,
-        meeting_id: extracted.meetingId,
-        passcode: extracted.passcode,
-      };
+      const extracted = extractZoomFieldsFromMcp(
+        res.structuredContent,
+        res.rawText,
+      );
+      return buildZoomResult(
+        {
+          requested: true,
+          mode: "live_mcp",
+          sync_mode: "live_mcp",
+          status_code: extracted.joinUrl ? "LIVE_MCP_JOIN" : "LIVE_MCP_CREATED",
+          join_url: extracted.joinUrl,
+          meeting_id: extracted.meetingId,
+          passcode: extracted.passcode,
+        },
+        locale,
+      );
     }
-    return {
-      requested: true,
-      mode: "error_fallback",
-      sync_mode: "error_fallback",
-      status_label: "Zoom MCP 连接暂不可用（站内日历已真实入库，可先导出 .ics）",
-      join_url: null,
-      meeting_id: null,
-      passcode: null,
-    };
+    return buildZoomResult(
+      {
+        requested: true,
+        mode: "error_fallback",
+        sync_mode: "error_fallback",
+        status_code: "ERROR_FALLBACK",
+        join_url: null,
+        meeting_id: null,
+        passcode: null,
+      },
+      locale,
+    );
   }
 
   const s2sCfg = getZoomS2SConfig();
   if (s2sCfg) {
     try {
       const accessToken = await fetchZoomS2SToken(s2sCfg);
-      const startUtc = new Date(input.startsAtIso).toISOString().replace(/\.\d{3}Z$/, "Z");
+      const startUtc = new Date(input.startsAtIso)
+        .toISOString()
+        .replace(/\.\d{3}Z$/, "Z");
       const res = await fetch(
         `https://api.zoom.us/v2/users/${encodeURIComponent(s2sCfg.hostUserId)}/meetings`,
         {
@@ -361,7 +418,7 @@ export async function createZoomMeeting(input: {
             start_time: startUtc,
             duration: input.durationMinutes,
             timezone: input.timezone,
-            agenda: input.agenda || "AIOS 企业协作会议",
+            agenda: input.agenda || defaultAgendaForLocale(locale),
             settings: {
               host_video: true,
               participant_video: true,
@@ -385,38 +442,47 @@ export async function createZoomMeeting(input: {
         typeof data.join_url === "string" && isValidZoomJoinUrl(data.join_url)
           ? data.join_url
           : null;
-      return {
-        requested: true,
-        mode: "live_api",
-        sync_mode: "live_api",
-        status_label: "Zoom API 已生成真实会议链接",
-        join_url: safeJoin,
-        meeting_id: data.id !== undefined ? String(data.id) : null,
-        passcode: typeof data.password === "string" ? data.password : null,
-      };
+      return buildZoomResult(
+        {
+          requested: true,
+          mode: "live_api",
+          sync_mode: "live_api",
+          status_code: "LIVE_API_JOIN",
+          join_url: safeJoin,
+          meeting_id: data.id !== undefined ? String(data.id) : null,
+          passcode: typeof data.password === "string" ? data.password : null,
+        },
+        locale,
+      );
     } catch {
-      return {
-        requested: true,
-        mode: "error_fallback",
-        sync_mode: "error_fallback",
-        status_label: "Zoom 连接暂不可用（站内日历已真实入库，可先导出 .ics）",
-        join_url: null,
-        meeting_id: null,
-        passcode: null,
-      };
+      return buildZoomResult(
+        {
+          requested: true,
+          mode: "error_fallback",
+          sync_mode: "error_fallback",
+          status_code: "ERROR_FALLBACK",
+          join_url: null,
+          meeting_id: null,
+          passcode: null,
+        },
+        locale,
+      );
     }
   }
 
   // Priority 3: Honest transparent sandbox_preview — NEVER fabricates a fake clickable URL
-  return {
-    requested: true,
-    mode: "sandbox_preview",
-    sync_mode: "sandbox_preview",
-    status_label: "MCP 待接入真实凭证（站内日历已真实入库）",
-    join_url: null,
-    meeting_id: null,
-    passcode: null,
-  };
+  return buildZoomResult(
+    {
+      requested: true,
+      mode: "sandbox_preview",
+      sync_mode: "sandbox_preview",
+      status_code: "SANDBOX_PREVIEW",
+      join_url: null,
+      meeting_id: null,
+      passcode: null,
+    },
+    locale,
+  );
 }
 
 // ============================================================================
@@ -460,8 +526,9 @@ function extractExternalEventId(
 async function syncSingleCalendar(
   target: ExternalCalendarTarget,
   payload: ExternalCalendarEventPayload,
+  locale: Locale,
 ): Promise<ExternalCalendarSyncResult> {
-  const env = getCalendarConnectorEnv(target);
+  const env = getCalendarConnectorEnv(target, locale);
 
   if (!env.url) {
     return {
@@ -469,10 +536,16 @@ async function syncSingleCalendar(
       label: env.label,
       status: "unconfigured",
       external_event_id: null,
-      message:
-        target === "icloud"
-          ? "未配置 iCloud CalDAV MCP，可使用 .ics 一键导入 Apple 日历"
-          : `未配置 ${env.label} MCP，可使用 .ics 一键导入`,
+      message_code: "UNCONFIGURED",
+      message: localizeMcpSyncMessage(
+        {
+          connector: target,
+          status: "unconfigured",
+          message: "",
+          message_code: "UNCONFIGURED",
+        },
+        locale,
+      ),
       setup_env_keys: env.setupEnvKeys,
     };
   }
@@ -537,8 +610,20 @@ async function syncSingleCalendar(
       connector: target,
       label: env.label,
       status: "synced",
-      external_event_id: extractExternalEventId(res.structuredContent, res.rawText),
-      message: `已实时写入 ${env.label}`,
+      external_event_id: extractExternalEventId(
+        res.structuredContent,
+        res.rawText,
+      ),
+      message_code: "SYNCED",
+      message: localizeMcpSyncMessage(
+        {
+          connector: target,
+          status: "synced",
+          message: "",
+          message_code: "SYNCED",
+        },
+        locale,
+      ),
     };
   }
 
@@ -547,7 +632,16 @@ async function syncSingleCalendar(
     label: env.label,
     status: "error",
     external_event_id: null,
-    message: `${env.label} MCP 同步暂不可用，可使用 .ics 导入`,
+    message_code: "MCP_ERROR",
+    message: localizeMcpSyncMessage(
+      {
+        connector: target,
+        status: "error",
+        message: "",
+        message_code: "MCP_ERROR",
+      },
+      locale,
+    ),
     setup_env_keys: env.setupEnvKeys,
   };
 }
@@ -555,10 +649,11 @@ async function syncSingleCalendar(
 export async function syncExternalCalendars(
   targets: readonly ExternalCalendarTarget[],
   payload: ExternalCalendarEventPayload,
+  locale: Locale = DEFAULT_LOCALE,
 ): Promise<ExternalCalendarSyncResult[]> {
   const uniqueTargets = Array.from(new Set(targets));
   const settled = await Promise.allSettled(
-    uniqueTargets.map((target) => syncSingleCalendar(target, payload)),
+    uniqueTargets.map((target) => syncSingleCalendar(target, payload, locale)),
   );
 
   return settled.map((item, idx) => {
@@ -566,13 +661,22 @@ export async function syncExternalCalendars(
     if (item.status === "fulfilled") {
       return item.value;
     }
-    const env = getCalendarConnectorEnv(target);
+    const env = getCalendarConnectorEnv(target, locale);
     return {
       connector: target,
       label: env.label,
       status: "error",
       external_event_id: null,
-      message: `${env.label} 同步失败，请使用 .ics 导入`,
+      message_code: "SYNC_FAILED",
+      message: localizeMcpSyncMessage(
+        {
+          connector: target,
+          status: "error",
+          message: "",
+          message_code: "SYNC_FAILED",
+        },
+        locale,
+      ),
       setup_env_keys: env.setupEnvKeys,
     };
   });

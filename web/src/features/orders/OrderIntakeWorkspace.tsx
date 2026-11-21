@@ -26,7 +26,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import { formatShortDigest } from "@/lib/format";
+import { formatShortDigest, sortWarehouses } from "@/lib/format";
+import { useLocale, type TrilingualText } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
@@ -92,15 +93,47 @@ const DEMO_STRUCTURED_FORM: StructuredFormState = {
   ],
 };
 
-const BATCH_REVIEW_CODE_LABELS: Record<string, string> = {
-  INVALID_ORDER: "订单结构或字段格式校验失败",
-  CONFLICTING_ORDER_REVISIONS: "同批次内存在相同 PO 冲突修订版本",
-  CURRENCY_OR_WAREHOUSE_UNSUPPORTED: "该仓库不支持所选币种或站点配置",
-  ORDER_LIMIT_EXCEEDED: "超出该仓库单笔订单总额上限",
-  MAPPING_MISSING: "商品 SKU / 买方 / 单位换算映射缺失",
-  LINE_AMOUNT_MISMATCH: "明细行金额与数量×单价不一致",
-  ORDER_TOTAL_MISMATCH: "订单总额与明细行汇总不一致",
-  POLICY_DENIED: "外部策略拒绝该提案",
+const BATCH_REVIEW_CODE_LABELS_I18N: Record<string, TrilingualText> = {
+  INVALID_ORDER: {
+    "zh-CN": "订单结构或字段格式校验失败",
+    "zh-HK": "訂單結構或欄位格式校驗失敗",
+    en: "Order structure or field format validation failed",
+  },
+  CONFLICTING_ORDER_REVISIONS: {
+    "zh-CN": "同批次内存在相同 PO 冲突修订版本",
+    "zh-HK": "同批次內存在相同 PO 衝突修訂版本",
+    en: "Conflicting revisions for the same PO in this batch",
+  },
+  CURRENCY_OR_WAREHOUSE_UNSUPPORTED: {
+    "zh-CN": "该仓库不支持所选币种或仓库配置",
+    "zh-HK": "該倉庫不支援所選幣別或倉庫設定",
+    en: "Currency or warehouse configuration is unsupported",
+  },
+  ORDER_LIMIT_EXCEEDED: {
+    "zh-CN": "超出该仓库单笔订单总额上限",
+    "zh-HK": "超出該倉庫單筆訂單總額上限",
+    en: "Order total exceeds single-order warehouse limit",
+  },
+  MAPPING_MISSING: {
+    "zh-CN": "商品 SKU / 买方 / 单位换算映射缺失",
+    "zh-HK": "商品 SKU / 買方 / 單位換算對應缺失",
+    en: "Missing SKU, buyer, or UOM conversion mapping",
+  },
+  LINE_AMOUNT_MISMATCH: {
+    "zh-CN": "明细行金额与数量×单价不一致",
+    "zh-HK": "明細行金額與數量×單價不一致",
+    en: "Line amount does not match quantity × unit price",
+  },
+  ORDER_TOTAL_MISMATCH: {
+    "zh-CN": "订单总额与明细行汇总不一致",
+    "zh-HK": "訂單總額與明細行彙總不一致",
+    en: "Order total does not match sum of line amounts",
+  },
+  POLICY_DENIED: {
+    "zh-CN": "外部策略拒绝该提案",
+    "zh-HK": "外部策略拒絕該提案",
+    en: "Proposal rejected by external policy",
+  },
 };
 
 const INPUT_CLASS =
@@ -185,19 +218,20 @@ export function OrderIntakeWorkspace() {
   const searchParams = useSearchParams();
   const initialLookupId = searchParams.get("intake") ?? "";
 
+  const { tx, formatCurrency } = useLocale();
   const { actor, capabilities, authGeneration, handleAccessChanged } =
     useSession();
   const { openDrawer } = useWorkbench();
 
   const authorizedWarehouses = useMemo(() => {
     const tool = capabilities?.tools.find(
-      (t) => t.id === "order.draft.prepare" && t.available,
+      (tItem) => tItem.id === "order.draft.prepare" && tItem.available,
     );
-    return tool?.warehouses ?? [];
+    return sortWarehouses(tool?.warehouses ?? []);
   }, [capabilities]);
 
   const readableWarehouses = useMemo(
-    () => capabilities?.order_read_warehouses ?? [],
+    () => sortWarehouses(capabilities?.order_read_warehouses ?? []),
     [capabilities],
   );
 
@@ -209,7 +243,8 @@ export function OrderIntakeWorkspace() {
   const [poSuffixCounter, setPoSuffixCounter] = useState(1);
   const [structuredIntake, setStructuredIntake] =
     useState<StructuredIntakeResponse | null>(null);
-  const [structuredFingerprint, setStructuredFingerprint] = useState<string>("");
+  const [structuredFingerprint, setStructuredFingerprint] =
+    useState<string>("");
   const [structuredIdemKey, setStructuredIdemKey] = useState<string>("");
   const [structuredSubmitting, setStructuredSubmitting] = useState(false);
   const [structuredPreparing, setStructuredPreparing] = useState(false);
@@ -532,16 +567,34 @@ export function OrderIntakeWorkspace() {
       try {
         const parsed = JSON.parse(batchJsonText);
         if (!Array.isArray(parsed) || parsed.length === 0) {
-          setBatchJsonError("请输入非空的 JSON 订单数组（1–50 条）。");
+          setBatchJsonError(
+            tx({
+              "zh-CN": "请输入非空的 JSON 订单数组（1–50 条）。",
+              "zh-HK": "請輸入非空的 JSON 訂單陣列（1–50 筆）。",
+              en: "Enter a non-empty JSON array of orders (1–50 items).",
+            }),
+          );
           return;
         }
         if (parsed.length > 50) {
-          setBatchJsonError("单次批量导入最多支持 50 条订单。");
+          setBatchJsonError(
+            tx({
+              "zh-CN": "单次批量导入最多支持 50 条订单。",
+              "zh-HK": "單次批次匯入最多支援 50 筆訂單。",
+              en: "Batch import supports up to 50 orders per submission.",
+            }),
+          );
           return;
         }
         ordersPayload = parsed;
       } catch {
-        setBatchJsonError("JSON 格式无法解析，请检查逗号与引号。");
+        setBatchJsonError(
+          tx({
+            "zh-CN": "JSON 格式无法解析，请检查逗号与引号。",
+            "zh-HK": "JSON 格式無法解析，請檢查逗號與引號。",
+            en: "Invalid JSON syntax — check commas and quotes.",
+          }),
+        );
         return;
       }
     }
@@ -581,13 +634,26 @@ export function OrderIntakeWorkspace() {
       file.type === "image/jpeg" ||
       /\.(png|jpe?g)$/i.test(file.name);
     if (!validMime) {
-      setOcrFileValidationError("仅支持 PNG 或 JPEG 格式单据图片。");
+      setOcrFileValidationError(
+        tx({
+          "zh-CN": "仅支持 PNG 或 JPEG 格式单据图片。",
+          "zh-HK": "僅支援 PNG 或 JPEG 格式單據圖片。",
+          en: "Only PNG or JPEG document images are supported.",
+        }),
+      );
       setOcrFile(null);
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       setOcrFileValidationError(
-        `文件大小 ${(file.size / 1_000_000).toFixed(2)} MB 超过 8 MB 限制。`,
+        tx(
+          {
+            "zh-CN": "文件大小 {mb} MB 超过 8 MB 限制。",
+            "zh-HK": "檔案大小 {mb} MB 超過 8 MB 限制。",
+            en: "File size ({mb} MB) exceeds the 8 MB limit.",
+          },
+          { mb: (file.size / 1_000_000).toFixed(2) },
+        ),
       );
       setOcrFile(null);
       return;
@@ -681,22 +747,43 @@ export function OrderIntakeWorkspace() {
       >
         <AccessNoticeCard
           variant="ACCESS_RESTRICTED"
-          title="当前账号无订单进件写入权限"
-          message="新建销售订单进件需要 order.work 权限及有效仓库授权范围。如需查看已有进件或申请权限，请返回工作台或联系租户权限管理员。"
+          title={tx({
+            "zh-CN": "当前账号无订单进件写入权限",
+            "zh-HK": "目前帳號無訂單進件寫入權限",
+            en: "No Order Intake Write Permission",
+          })}
+          message={tx({
+            "zh-CN":
+              "新建销售订单进件需要 order.work 权限及有效仓库授权范围。如需查看已有进件或申请权限，请返回工作台或联系租户权限管理员。",
+            "zh-HK":
+              "新增銷售訂單進件需要 order.work 權限及有效倉庫授權範圍。如需檢視已有進件或申請權限，請返回工作台或聯絡租戶權限管理員。",
+            en: "Creating sales order intakes requires order.work permission and an authorized warehouse scope. Return to the workbench or contact your access administrator.",
+          })}
           backHref="/work"
         />
 
         {readableWarehouses.length > 0 && (
           <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 space-y-3.5">
             <h3 className="text-[14px] font-semibold text-[var(--ink-primary)]">
-              只读查询已有进件证据（已授权读仓：{readableWarehouses.join(", ")}）
+              {tx(
+                {
+                  "zh-CN": "只读查询已有进件证据（已授权读仓：{sites}）",
+                  "zh-HK": "唯讀查詢已有進件憑證（已授權讀倉：{sites}）",
+                  en: "Read-Only Intake Evidence Lookup (Warehouses: {sites})",
+                },
+                { sites: readableWarehouses.join(", ") },
+              )}
             </h3>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={lookupInput}
                 onChange={(e) => setLookupInput(e.target.value)}
-                placeholder="输入进件编号 (intake_id)"
+                placeholder={tx({
+                  "zh-CN": "输入进件编号 (intake_id)",
+                  "zh-HK": "輸入進件編號 (intake_id)",
+                  en: "Enter intake ID",
+                })}
                 className={INPUT_CLASS}
               />
               <Button
@@ -706,7 +793,13 @@ export function OrderIntakeWorkspace() {
                 onClick={() => void handleLookupIntake(lookupInput)}
               >
                 <Search className="h-3.5 w-3.5" />
-                <span>查询进件</span>
+                <span>
+                  {tx({
+                    "zh-CN": "查询进件",
+                    "zh-HK": "查詢進件",
+                    en: "Look Up",
+                  })}
+                </span>
               </Button>
             </div>
             {lookupError && <AccessNoticeCard error={lookupError} />}
@@ -738,7 +831,11 @@ export function OrderIntakeWorkspace() {
                 htmlFor="order-warehouse-select"
                 className="text-[12.5px] font-medium text-[var(--ink-secondary)]"
               >
-                目标仓库
+                {tx({
+                  "zh-CN": "目标仓库",
+                  "zh-HK": "目標倉庫",
+                  en: "Target Warehouse",
+                })}
               </label>
               <select
                 id="order-warehouse-select"
@@ -769,26 +866,42 @@ export function OrderIntakeWorkspace() {
 
             <div
               role="tablist"
-              aria-label="订单进件方式"
+              aria-label={tx({
+                "zh-CN": "订单进件方式",
+                "zh-HK": "訂單進件方式",
+                en: "Order intake mode",
+              })}
               className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
             >
               {(
                 [
                   {
                     id: "structured" as const,
-                    label: "结构化单笔进件",
+                    label: tx({
+                      "zh-CN": "结构化单笔进件",
+                      "zh-HK": "結構化單筆進件",
+                      en: "Structured PO",
+                    }),
                     icon: FileText,
                     testId: "orders-tab-structured",
                   },
                   {
                     id: "batch" as const,
-                    label: "批量结构化进件 (≤50)",
+                    label: tx({
+                      "zh-CN": "批量结构化进件 (≤50)",
+                      "zh-HK": "批次結構化進件 (≤50)",
+                      en: "Batch Intake (≤50)",
+                    }),
                     icon: Layers,
                     testId: "orders-tab-batch",
                   },
                   {
                     id: "ocr" as const,
-                    label: "单据图片 OCR 进件",
+                    label: tx({
+                      "zh-CN": "单据图片 OCR 进件",
+                      "zh-HK": "單據圖片 OCR 進件",
+                      en: "Image OCR Intake",
+                    }),
                     icon: ImageUp,
                     testId: "orders-tab-ocr",
                   },
@@ -807,7 +920,7 @@ export function OrderIntakeWorkspace() {
                     className={[
                       "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] transition-all duration-[165ms] cursor-pointer",
                       active
-                        ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                        ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] font-semibold shadow-[var(--shadow-subtle)]"
                         : "text-[var(--ink-secondary)] font-medium hover:text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
@@ -831,7 +944,11 @@ export function OrderIntakeWorkspace() {
               type="text"
               value={lookupInput}
               onChange={(e) => setLookupInput(e.target.value)}
-              placeholder="按 intake_id 查询历史进件"
+              placeholder={tx({
+                "zh-CN": "按 intake_id 查询历史进件",
+                "zh-HK": "按 intake_id 查詢歷史進件",
+                en: "Look up saved intake ID",
+              })}
               data-testid="orders-intake-lookup-input"
               className="h-9 w-48 sm:w-56 rounded-full border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3.5 font-mono-code text-[12px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
             />
@@ -844,7 +961,9 @@ export function OrderIntakeWorkspace() {
               data-testid="orders-intake-lookup-btn"
             >
               <Search className="h-3.5 w-3.5" />
-              <span>调阅</span>
+              <span>
+                {tx({ "zh-CN": "调阅", "zh-HK": "調閱", en: "Look Up" })}
+              </span>
             </Button>
           </form>
         </div>
@@ -854,7 +973,11 @@ export function OrderIntakeWorkspace() {
           <div className="border-t border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-5 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
-                历史进件证据
+                {tx({
+                  "zh-CN": "历史进件证据",
+                  "zh-HK": "歷史進件憑證",
+                  en: "Saved Intake Evidence",
+                })}
               </span>
               <button
                 type="button"
@@ -864,7 +987,7 @@ export function OrderIntakeWorkspace() {
                 }}
                 className="rounded-full px-2.5 py-1 text-[12px] text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
               >
-                收起
+                {tx({ "zh-CN": "收起", "zh-HK": "收合", en: "Collapse" })}
               </button>
             </div>
             {lookupError && <AccessNoticeCard error={lookupError} />}
@@ -902,14 +1025,39 @@ export function OrderIntakeWorkspace() {
                       )}
                     </span>
                   </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono-code text-[12px] text-[var(--ink-secondary)]">
-                    <span>买方：{lookupDetail.data.evidence.order.buyer}</span>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[var(--ink-secondary)]">
                     <span>
-                      交期：{lookupDetail.data.evidence.order.delivery}
+                      {tx({
+                        "zh-CN": "买方：",
+                        "zh-HK": "買方：",
+                        en: "Buyer: ",
+                      })}
+                      <span className="font-mono-code">
+                        {lookupDetail.data.evidence.order.buyer}
+                      </span>
+                    </span>
+                    <span>
+                      {tx({
+                        "zh-CN": "交期：",
+                        "zh-HK": "交期：",
+                        en: "Delivery: ",
+                      })}
+                      <span className="font-mono-code tabular-nums">
+                        {lookupDetail.data.evidence.order.delivery}
+                      </span>
                     </span>
                     <span className="font-semibold text-[var(--ink-primary)]">
-                      总额：{lookupDetail.data.evidence.order.currency}{" "}
-                      {lookupDetail.data.evidence.order.total}
+                      {tx({
+                        "zh-CN": "总额：",
+                        "zh-HK": "總額：",
+                        en: "Total: ",
+                      })}
+                      <span className="font-mono-code tabular-nums">
+                        {formatCurrency(
+                          lookupDetail.data.evidence.order.total,
+                          lookupDetail.data.evidence.order.currency,
+                        )}
+                      </span>
                     </span>
                   </div>
                 </div>
@@ -931,14 +1079,26 @@ export function OrderIntakeWorkspace() {
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
               <div>
                 <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                  结构化采购单进件
+                  {tx({
+                    "zh-CN": "结构化采购单进件",
+                    "zh-HK": "結構化採購單進件",
+                    en: "Structured Purchase Order Intake",
+                  })}
                 </h2>
                 <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
-                  第 1 步写入内容寻址进件（站点{" "}
+                  {tx({
+                    "zh-CN": "第 1 步写入内容寻址进件（仓库 ",
+                    "zh-HK": "第 1 步寫入內容定址進件（倉庫 ",
+                    en: "Step 1 writes a content-addressed intake (warehouse ",
+                  })}
                   <span className="font-mono-code text-[var(--ink-secondary)]">
                     {warehouse || "—"}
                   </span>
-                  ），第 2 步携带稳定幂等键生成 ERP 销售草稿提案。
+                  {tx({
+                    "zh-CN": "），第 2 步携带稳定幂等键生成 ERP 销售草稿提案。",
+                    "zh-HK": "），第 2 步攜帶穩定冪等鍵產生 ERP 銷售草稿提案。",
+                    en: "); Step 2 prepares an idempotent ERP sales order draft proposal.",
+                  })}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -950,7 +1110,13 @@ export function OrderIntakeWorkspace() {
                   data-testid="orders-prefill-demo-btn"
                 >
                   <Sparkles className="h-3.5 w-3.5 text-[var(--accent)]" />
-                  <span>载入演示样例 (FE-DEMO-001)</span>
+                  <span>
+                    {tx({
+                      "zh-CN": "载入演示样例 (FE-DEMO-001)",
+                      "zh-HK": "載入示範樣例 (FE-DEMO-001)",
+                      en: "Prefill Sample (FE-DEMO-001)",
+                    })}
+                  </span>
                 </Button>
                 <Button
                   size="sm"
@@ -960,7 +1126,13 @@ export function OrderIntakeWorkspace() {
                   data-testid="orders-po-suffix-btn"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  <span>生成新 PO 后缀</span>
+                  <span>
+                    {tx({
+                      "zh-CN": "生成新 PO 后缀",
+                      "zh-HK": "產生新 PO 後綴",
+                      en: "New PO Suffix",
+                    })}
+                  </span>
                 </Button>
               </div>
             </div>
@@ -970,7 +1142,11 @@ export function OrderIntakeWorkspace() {
               <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
                 <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
-                    采购单号 (PO)
+                    {tx({
+                      "zh-CN": "采购单号 (PO)",
+                      "zh-HK": "採購單號 (PO)",
+                      en: "Purchase Order (PO)",
+                    })}
                   </span>
                   <input
                     type="text"
@@ -992,7 +1168,11 @@ export function OrderIntakeWorkspace() {
 
                 <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
-                    买方编码 (Buyer)
+                    {tx({
+                      "zh-CN": "买方编码 (Buyer)",
+                      "zh-HK": "買方編號 (Buyer)",
+                      en: "Buyer Code",
+                    })}
                   </span>
                   <input
                     type="text"
@@ -1016,7 +1196,11 @@ export function OrderIntakeWorkspace() {
 
                 <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
-                    币种 (ISO-4217)
+                    {tx({
+                      "zh-CN": "币种 (ISO-4217)",
+                      "zh-HK": "幣別 (ISO-4217)",
+                      en: "Currency (ISO-4217)",
+                    })}
                   </span>
                   <input
                     type="text"
@@ -1039,7 +1223,11 @@ export function OrderIntakeWorkspace() {
 
                 <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
-                    交付日期
+                    {tx({
+                      "zh-CN": "交付日期",
+                      "zh-HK": "交付日期",
+                      en: "Delivery Date",
+                    })}
                   </span>
                   <input
                     type="date"
@@ -1058,7 +1246,11 @@ export function OrderIntakeWorkspace() {
 
                 <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
-                    订单总额
+                    {tx({
+                      "zh-CN": "订单总额",
+                      "zh-HK": "訂單總額",
+                      en: "Order Total",
+                    })}
                   </span>
                   <input
                     type="text"
@@ -1080,8 +1272,12 @@ export function OrderIntakeWorkspace() {
               <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
                 <div className="flex items-center justify-between border-b border-[var(--hairline-subtle)] px-4 py-2.5">
                   <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
-                    商品明细行
-                    <span className="ml-1.5 font-mono-code tabular-nums text-[12px] font-normal text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "商品明细行",
+                      "zh-HK": "商品明細行",
+                      en: "Order Line Items",
+                    })}
+                    <span className="ml-1.5 tabular-nums text-[12px] font-normal text-[var(--ink-muted)]">
                       ({form.lines.length})
                     </span>
                   </span>
@@ -1100,7 +1296,13 @@ export function OrderIntakeWorkspace() {
                     }
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    <span>添加明细行</span>
+                    <span>
+                      {tx({
+                        "zh-CN": "添加明细行",
+                        "zh-HK": "新增明細行",
+                        en: "Add Line",
+                      })}
+                    </span>
                   </Button>
                 </div>
 
@@ -1109,15 +1311,33 @@ export function OrderIntakeWorkspace() {
                     <thead>
                       <tr className="border-b border-[var(--hairline-subtle)] text-[11.5px] text-[var(--ink-muted)]">
                         <th className="px-3.5 py-2 font-medium">SKU</th>
-                        <th className="px-3.5 py-2 font-medium">源单位</th>
-                        <th className="px-3.5 py-2 font-medium text-right">
-                          数量
+                        <th className="px-3.5 py-2 font-medium">
+                          {tx({
+                            "zh-CN": "源单位",
+                            "zh-HK": "源單位",
+                            en: "UOM",
+                          })}
                         </th>
                         <th className="px-3.5 py-2 font-medium text-right">
-                          单价
+                          {tx({
+                            "zh-CN": "数量",
+                            "zh-HK": "數量",
+                            en: "Qty",
+                          })}
                         </th>
                         <th className="px-3.5 py-2 font-medium text-right">
-                          行金额
+                          {tx({
+                            "zh-CN": "单价",
+                            "zh-HK": "單價",
+                            en: "Unit Price",
+                          })}
+                        </th>
+                        <th className="px-3.5 py-2 font-medium text-right">
+                          {tx({
+                            "zh-CN": "行金额",
+                            "zh-HK": "行金額",
+                            en: "Amount",
+                          })}
                         </th>
                         <th className="px-2 py-2 w-10" />
                       </tr>
@@ -1205,7 +1425,11 @@ export function OrderIntakeWorkspace() {
                                   lines: prev.lines.filter((_, i) => i !== idx),
                                 }))
                               }
-                              aria-label="删除行"
+                              aria-label={tx({
+                                "zh-CN": "删除行",
+                                "zh-HK": "刪除行",
+                                en: "Remove line",
+                              })}
                               className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--status-crimson-wash)] hover:text-[var(--status-crimson)] disabled:opacity-30 transition-colors cursor-pointer"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -1259,7 +1483,11 @@ export function OrderIntakeWorkspace() {
                     <div className="flex flex-wrap items-center gap-2 text-[var(--status-emerald)]">
                       <CheckCircle2 className="h-4 w-4" strokeWidth={1.85} />
                       <span>
-                        步骤 1 完成 · 进件号{" "}
+                        {tx({
+                          "zh-CN": "步骤 1 完成 · 进件号",
+                          "zh-HK": "步驟 1 完成 · 進件號",
+                          en: "Step 1 complete · Intake",
+                        })}{" "}
                         <span
                           className="font-mono-code font-semibold"
                           data-testid="orders-intake-id-value"
@@ -1267,16 +1495,34 @@ export function OrderIntakeWorkspace() {
                           {structuredIntake.intake_id}
                         </span>
                       </span>
-                      <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                        Idempotency-Key:{" "}
-                        {formatShortDigest(structuredIdemKey, 10, 6)}
+                      <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--ink-muted)]">
+                        {tx({
+                          "zh-CN": "幂等键：",
+                          "zh-HK": "冪等鍵：",
+                          en: "Idempotency key: ",
+                        })}
+                        <span className="font-mono-code text-[var(--ink-secondary)]">
+                          {formatShortDigest(structuredIdemKey, 10, 6)}
+                        </span>
                       </span>
                     </div>
                   ) : (
                     <span className="text-[var(--ink-muted)]">
                       {formModifiedSinceIntake
-                        ? "表单字段已修改，将重新提交进件并生成新的幂等键（Idempotency-Key）。"
-                        : "支持分步提交，或一键完成「写入进件 → 生成 ERP 销售草稿提案」。"}
+                        ? tx({
+                            "zh-CN":
+                              "表单字段已修改，将重新提交进件并生成新的幂等键。",
+                            "zh-HK":
+                              "表單欄位已修改，將重新提交進件並產生新的冪等鍵。",
+                            en: "Form changed — submitting again creates a fresh intake and idempotency key.",
+                          })
+                        : tx({
+                            "zh-CN":
+                              "支持分步提交，或一键完成「写入进件 → 生成 ERP 销售草稿提案」。",
+                            "zh-HK":
+                              "支援分步提交，或一鍵完成「寫入進件 → 產生 ERP 銷售草稿提案」。",
+                            en: "Run steps individually or submit & prepare an ERP sales draft in one click.",
+                          })}
                     </span>
                   )}
                 </div>
@@ -1290,7 +1536,11 @@ export function OrderIntakeWorkspace() {
                     onClick={() => void handleStep1SubmitStructured()}
                     data-testid="orders-submit-intake-btn"
                   >
-                    1. 提交结构化进件
+                    {tx({
+                      "zh-CN": "1. 提交结构化进件",
+                      "zh-HK": "1. 提交結構化進件",
+                      en: "1. Save Intake",
+                    })}
                   </Button>
                   <Button
                     type="button"
@@ -1301,7 +1551,11 @@ export function OrderIntakeWorkspace() {
                     onClick={() => void handleStep2PrepareProposal()}
                     data-testid="orders-prepare-proposal-btn"
                   >
-                    2. 生成订单提案
+                    {tx({
+                      "zh-CN": "2. 生成订单提案",
+                      "zh-HK": "2. 產生訂單提案",
+                      en: "2. Prepare Proposal",
+                    })}
                   </Button>
                   <Button
                     type="submit"
@@ -1310,7 +1564,11 @@ export function OrderIntakeWorkspace() {
                     loading={structuredSubmitting || structuredPreparing}
                     data-testid="orders-submit-and-prepare-btn"
                   >
-                    提交并生成提案
+                    {tx({
+                      "zh-CN": "提交并生成提案",
+                      "zh-HK": "提交並產生提案",
+                      en: "Submit & Prepare Draft",
+                    })}
                   </Button>
                 </div>
               </div>
@@ -1327,7 +1585,14 @@ export function OrderIntakeWorkspace() {
                     kind: "proposal",
                     id: createdProposal.id,
                     warehouse: createdProposal.warehouse,
-                    title: `销售订单草稿 · ${createdProposal.id}`,
+                    title: tx(
+                      {
+                        "zh-CN": "销售订单草稿 · {id}",
+                        "zh-HK": "銷售訂單草稿 · {id}",
+                        en: "Sales Order Draft · {id}",
+                      },
+                      { id: createdProposal.id },
+                    ),
                   },
                   { tab: "current", trigger },
                 )
@@ -1346,14 +1611,28 @@ export function OrderIntakeWorkspace() {
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
               <div>
                 <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                  批量结构化订单进件
+                  {tx({
+                    "zh-CN": "批量结构化订单进件",
+                    "zh-HK": "批次結構化訂單進件",
+                    en: "Batch Structured Order Intake",
+                  })}
                 </h2>
                 <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
-                  一次向站点{" "}
+                  {tx({
+                    "zh-CN": "一次向仓库 ",
+                    "zh-HK": "一次向倉庫 ",
+                    en: "Submit 1–50 purchase orders to ",
+                  })}
                   <span className="font-mono-code text-[var(--ink-secondary)]">
                     {warehouse || "—"}
-                  </span>{" "}
-                  提交 1–50 条采购单，逐条返回已生成提案或需人工复核原因。
+                  </span>
+                  {tx({
+                    "zh-CN":
+                      " 提交 1–50 条采购单，逐条返回已生成提案或需人工复核原因。",
+                    "zh-HK":
+                      " 提交 1–50 筆採購單，逐筆回傳已產生提案或須人工覆核原因。",
+                    en: " at once; each row returns either a prepared proposal or review diagnostics.",
+                  })}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1365,7 +1644,13 @@ export function OrderIntakeWorkspace() {
                   data-testid="orders-batch-load-sample-btn"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5 text-[var(--accent)]" />
-                  <span>载入批量示例（1 正常 + 1 异常）</span>
+                  <span>
+                    {tx({
+                      "zh-CN": "载入批量示例（1 正常 + 1 异常）",
+                      "zh-HK": "載入批次示範（1 正常 + 1 異常）",
+                      en: "Load Batch Sample (1 OK + 1 Review)",
+                    })}
+                  </span>
                 </Button>
                 <div className="inline-flex rounded-full bg-[var(--bg-surface-subtle)] p-1">
                   <button
@@ -1374,11 +1659,15 @@ export function OrderIntakeWorkspace() {
                     className={[
                       "rounded-full px-3 py-1 text-[12px] font-medium transition-all cursor-pointer",
                       batchMode === "rows"
-                        ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                        ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] font-semibold shadow-[var(--shadow-subtle)]"
                         : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
-                    多行表格
+                    {tx({
+                      "zh-CN": "多行表格",
+                      "zh-HK": "多行表格",
+                      en: "Table Rows",
+                    })}
                   </button>
                   <button
                     type="button"
@@ -1389,11 +1678,15 @@ export function OrderIntakeWorkspace() {
                     className={[
                       "rounded-full px-3 py-1 text-[12px] font-medium transition-all cursor-pointer",
                       batchMode === "json"
-                        ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                        ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] font-semibold shadow-[var(--shadow-subtle)]"
                         : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
-                    JSON 编辑
+                    {tx({
+                      "zh-CN": "JSON 编辑",
+                      "zh-HK": "JSON 編輯",
+                      en: "JSON Editor",
+                    })}
                   </button>
                 </div>
               </div>
@@ -1408,17 +1701,41 @@ export function OrderIntakeWorkspace() {
                         <tr className="border-b border-[var(--hairline-subtle)] text-[11.5px] text-[var(--ink-muted)]">
                           <th className="px-3 py-2.5 font-medium">#</th>
                           <th className="px-3 py-2.5 font-medium">PO</th>
-                          <th className="px-3 py-2.5 font-medium">买方</th>
-                          <th className="px-3 py-2.5 font-medium">交期</th>
+                          <th className="px-3 py-2.5 font-medium">
+                            {tx({
+                              "zh-CN": "买方",
+                              "zh-HK": "買方",
+                              en: "Buyer",
+                            })}
+                          </th>
+                          <th className="px-3 py-2.5 font-medium">
+                            {tx({
+                              "zh-CN": "交期",
+                              "zh-HK": "交期",
+                              en: "Delivery",
+                            })}
+                          </th>
                           <th className="px-3 py-2.5 font-medium">SKU</th>
                           <th className="px-3 py-2.5 font-medium text-right">
-                            数量
+                            {tx({
+                              "zh-CN": "数量",
+                              "zh-HK": "數量",
+                              en: "Qty",
+                            })}
                           </th>
                           <th className="px-3 py-2.5 font-medium text-right">
-                            单价
+                            {tx({
+                              "zh-CN": "单价",
+                              "zh-HK": "單價",
+                              en: "Unit Price",
+                            })}
                           </th>
                           <th className="px-3 py-2.5 font-medium text-right">
-                            总额 (HKD)
+                            {tx({
+                              "zh-CN": "总额 (HKD)",
+                              "zh-HK": "總額 (HKD)",
+                              en: "Total (HKD)",
+                            })}
                           </th>
                           <th className="px-2 py-2.5 w-10" />
                         </tr>
@@ -1535,6 +1852,11 @@ export function OrderIntakeWorkspace() {
                                 <button
                                   type="button"
                                   disabled={batchOrders.length <= 1}
+                                  aria-label={tx({
+                                    "zh-CN": "删除订单行",
+                                    "zh-HK": "刪除訂單行",
+                                    en: "Remove order row",
+                                  })}
                                   onClick={() =>
                                     setBatchOrders((prev) =>
                                       prev.filter((_, i) => i !== idx),
@@ -1567,7 +1889,13 @@ export function OrderIntakeWorkspace() {
                     }
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    <span>新增订单行</span>
+                    <span>
+                      {tx({
+                        "zh-CN": "新增订单行",
+                        "zh-HK": "新增訂單行",
+                        en: "Add Order Row",
+                      })}
+                    </span>
                   </Button>
                 </div>
               ) : (
@@ -1615,8 +1943,17 @@ export function OrderIntakeWorkspace() {
                   onClick={() => void handleSubmitBatch()}
                   data-testid="orders-batch-submit-btn"
                 >
-                  批量校验并提交 (
-                  {batchMode === "rows" ? batchOrders.length : "JSON"})
+                  {tx(
+                    {
+                      "zh-CN": "批量校验并提交 ({count})",
+                      "zh-HK": "批次校驗並提交 ({count})",
+                      en: "Validate & Submit Batch ({count})",
+                    },
+                    {
+                      count:
+                        batchMode === "rows" ? batchOrders.length : "JSON",
+                    },
+                  )}
                 </Button>
               </div>
             </div>
@@ -1630,28 +1967,64 @@ export function OrderIntakeWorkspace() {
             >
               <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-3.5">
                 <span className="text-[14px] font-semibold text-[var(--ink-primary)]">
-                  批量进件结果明细
+                  {tx({
+                    "zh-CN": "批量进件结果明细",
+                    "zh-HK": "批次進件結果明細",
+                    en: "Batch Intake Results",
+                  })}
                 </span>
-                <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
-                  已生成{" "}
-                  {batchItems.filter((i) => i.status === "prepared").length} ·
-                  待复核{" "}
-                  {batchItems.filter((i) => i.status === "review").length}
+                <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
+                  {tx(
+                    {
+                      "zh-CN": "已生成 {prepared} · 待复核 {review}",
+                      "zh-HK": "已產生 {prepared} · 待覆核 {review}",
+                      en: "Prepared {prepared} · Needs review {review}",
+                    },
+                    {
+                      prepared: batchItems.filter(
+                        (i) => i.status === "prepared",
+                      ).length,
+                      review: batchItems.filter((i) => i.status === "review")
+                        .length,
+                    },
+                  )}
                 </span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-[12.5px]">
                   <thead>
                     <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
-                      <th className="px-4 py-2.5 font-medium">序号</th>
-                      <th className="px-3.5 py-2.5 font-medium">处理结果</th>
-                      <th className="px-3.5 py-2.5 font-medium">
-                        进件 / 提案编号
+                      <th className="px-4 py-2.5 font-medium">
+                        {tx({ "zh-CN": "序号", "zh-HK": "序號", en: "#" })}
                       </th>
                       <th className="px-3.5 py-2.5 font-medium">
-                        详情 / 复核原因
+                        {tx({
+                          "zh-CN": "处理结果",
+                          "zh-HK": "處理結果",
+                          en: "Outcome",
+                        })}
                       </th>
-                      <th className="px-4 py-2.5 font-medium text-right">操作</th>
+                      <th className="px-3.5 py-2.5 font-medium">
+                        {tx({
+                          "zh-CN": "进件 / 提案编号",
+                          "zh-HK": "進件 / 提案編號",
+                          en: "Intake / Proposal ID",
+                        })}
+                      </th>
+                      <th className="px-3.5 py-2.5 font-medium">
+                        {tx({
+                          "zh-CN": "详情 / 复核原因",
+                          "zh-HK": "詳情 / 覆核原因",
+                          en: "Details / Review Reason",
+                        })}
+                      </th>
+                      <th className="px-4 py-2.5 font-medium text-right">
+                        {tx({
+                          "zh-CN": "操作",
+                          "zh-HK": "操作",
+                          en: "Actions",
+                        })}
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -1669,36 +2042,68 @@ export function OrderIntakeWorkspace() {
                           ) : (
                             <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]">
                               <AlertTriangle className="h-3 w-3" />
-                              <span>需人工复核</span>
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3.5 py-3 font-mono-code text-[12px]">
-                          {item.status === "prepared" ? (
-                            <div>
-                              <div className="font-semibold text-[var(--ink-primary)]">
-                                {item.proposal_id}
-                              </div>
-                              <div className="text-[11px] text-[var(--ink-muted)]">
-                                进件 {item.intake_id}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-[var(--ink-muted)]">
-                              {item.intake_id || "未写入进件"}
+                              <span>
+                                {tx({
+                                  "zh-CN": "需人工复核",
+                                  "zh-HK": "須人工覆核",
+                                  en: "Needs Review",
+                                })}
+                              </span>
                             </span>
                           )}
                         </td>
                         <td className="px-3.5 py-3 text-[12px]">
                           {item.status === "prepared" ? (
-                            <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)]">
-                              digest {formatShortDigest(item.digest)}
+                            <div>
+                              <div className="font-mono-code font-semibold text-[var(--ink-primary)]">
+                                {item.proposal_id}
+                              </div>
+                              <div className="text-[11px] text-[var(--ink-muted)]">
+                                {tx({
+                                  "zh-CN": "进件 ",
+                                  "zh-HK": "進件 ",
+                                  en: "Intake ",
+                                })}
+                                <span className="font-mono-code">
+                                  {item.intake_id}
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <span
+                              className={
+                                item.intake_id
+                                  ? "font-mono-code text-[var(--ink-muted)]"
+                                  : "text-[var(--ink-muted)]"
+                              }
+                            >
+                              {item.intake_id ||
+                                tx({
+                                  "zh-CN": "未写入进件",
+                                  "zh-HK": "未寫入進件",
+                                  en: "Not persisted",
+                                })}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-3 text-[12px]">
+                          {item.status === "prepared" ? (
+                            <span className="text-[11.5px] text-[var(--ink-muted)]">
+                              {tx({
+                                "zh-CN": "摘要 ",
+                                "zh-HK": "摘要 ",
+                                en: "Digest ",
+                              })}
+                              <span className="font-mono-code text-[var(--ink-secondary)]">
+                                {formatShortDigest(item.digest)}
+                              </span>
                             </span>
                           ) : (
                             <div className="space-y-0.5">
                               <div className="font-medium text-[var(--status-amber-ink)]">
-                                {BATCH_REVIEW_CODE_LABELS[item.code] ??
-                                  item.code}
+                                {BATCH_REVIEW_CODE_LABELS_I18N[item.code]
+                                  ? tx(BATCH_REVIEW_CODE_LABELS_I18N[item.code]!)
+                                  : item.code}
                               </div>
                               <div className="font-mono-code text-[11px] text-[var(--ink-muted)]">
                                 {item.code}
@@ -1722,19 +2127,36 @@ export function OrderIntakeWorkspace() {
                                       kind: "proposal",
                                       id: item.proposal_id,
                                       warehouse,
-                                      title: `销售订单草稿 · ${item.proposal_id}`,
+                                      title: tx(
+                                        {
+                                          "zh-CN": "销售订单草稿 · {id}",
+                                          "zh-HK": "銷售訂單草稿 · {id}",
+                                          en: "Sales Order Draft · {id}",
+                                        },
+                                        { id: item.proposal_id },
+                                      ),
                                     },
                                     { tab: "current", trigger: e.currentTarget },
                                   )
                                 }
                               >
-                                面板查看
+                                {tx({
+                                  "zh-CN": "面板查看",
+                                  "zh-HK": "面板檢視",
+                                  en: "Inspect",
+                                })}
                               </Button>
                               <Link
                                 href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
                                 className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent)] transition-colors"
                               >
-                                <span>详情</span>
+                                <span>
+                                  {tx({
+                                    "zh-CN": "详情",
+                                    "zh-HK": "詳情",
+                                    en: "Details",
+                                  })}
+                                </span>
                                 <ArrowUpRight className="h-3.5 w-3.5" />
                               </Link>
                             </div>
@@ -1759,10 +2181,20 @@ export function OrderIntakeWorkspace() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                  单据图片 OCR 进件与坐标定位核对
+                  {tx({
+                    "zh-CN": "单据图片 OCR 进件与坐标定位核对",
+                    "zh-HK": "單據圖片 OCR 進件與座標定位核對",
+                    en: "Image OCR Intake & Bounding-Box Verification",
+                  })}
                 </h2>
                 <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
-                  上传 PNG / JPEG 单据（≤ 8 MB），本地预览通过临时对象地址管理，切换账号或离开页面时立即释放。
+                  {tx({
+                    "zh-CN":
+                      "上传 PNG / JPEG 单据（≤ 8 MB），本地预览通过临时对象地址管理，切换账号或离开页面时立即释放。",
+                    "zh-HK":
+                      "上傳 PNG / JPEG 單據（≤ 8 MB），本地預覽透過臨時物件網址管理，切換帳號或離開頁面時立即釋放。",
+                    en: "Upload a PNG or JPEG purchase order (≤ 8 MB). Local object previews are revoked immediately on identity switch or navigation.",
+                  })}
                 </p>
               </div>
               <SourceTag source="internal" />
@@ -1793,7 +2225,13 @@ export function OrderIntakeWorkspace() {
                   data-testid="orders-ocr-upload-btn"
                 >
                   <ImageUp className="h-4 w-4" strokeWidth={1.85} />
-                  <span>上传并执行本地 OCR 提取</span>
+                  <span>
+                    {tx({
+                      "zh-CN": "上传并执行本地 OCR 提取",
+                      "zh-HK": "上傳並執行本地 OCR 擷取",
+                      en: "Upload & Run Local OCR",
+                    })}
+                  </span>
                 </Button>
               </div>
             </div>
@@ -1855,7 +2293,14 @@ export function OrderIntakeWorkspace() {
                     kind: "proposal",
                     id: ocrProposal.id,
                     warehouse: ocrProposal.warehouse,
-                    title: `销售订单草稿 · ${ocrProposal.id}`,
+                    title: tx(
+                      {
+                        "zh-CN": "销售订单草稿 · {id}",
+                        "zh-HK": "銷售訂單草稿 · {id}",
+                        en: "Sales Order Draft · {id}",
+                      },
+                      { id: ocrProposal.id },
+                    ),
                   },
                   { tab: "current", trigger },
                 )
@@ -1875,6 +2320,7 @@ function CreatedProposalBanner({
   proposal: Proposal;
   onInspectDrawer: (trigger: HTMLElement) => void;
 }) {
+  const { tx } = useLocale();
   return (
     <div
       data-testid="orders-created-proposal-card"
@@ -1887,19 +2333,36 @@ function CreatedProposalBanner({
             strokeWidth={1.9}
           />
           <span className="text-[14px] font-semibold text-[var(--ink-primary)]">
-            已生成 ERP 销售草稿提案
+            {tx({
+              "zh-CN": "已生成 ERP 销售草稿提案",
+              "zh-HK": "已產生 ERP 銷售草稿提案",
+              en: "ERP Sales Order Draft Proposal Created",
+            })}
           </span>
           <StatusBadge status={proposal.state} compact />
         </div>
-        <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono-code text-[11.5px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)]">
-          digest {formatShortDigest(proposal.digest)}
+        <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 text-[11.5px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)]">
+          {tx({
+            "zh-CN": "摘要 ",
+            "zh-HK": "摘要 ",
+            en: "Digest ",
+          })}
+          <span className="font-mono-code text-[var(--ink-secondary)]">
+            {formatShortDigest(proposal.digest)}
+          </span>
         </span>
       </div>
 
       <div className="p-5 space-y-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-[12.5px]">
           <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2.5">
-            <div className="text-[11px] text-[var(--ink-muted)]">提案编号</div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "提案编号",
+                "zh-HK": "提案編號",
+                en: "Proposal ID",
+              })}
+            </div>
             <div
               className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)]"
               data-testid="orders-created-proposal-id"
@@ -1908,13 +2371,25 @@ function CreatedProposalBanner({
             </div>
           </div>
           <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2.5">
-            <div className="text-[11px] text-[var(--ink-muted)]">仓库站点</div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "仓库",
+                "zh-HK": "倉庫",
+                en: "Warehouse",
+              })}
+            </div>
             <div className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
               {proposal.warehouse}
             </div>
           </div>
           <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2.5">
-            <div className="text-[11px] text-[var(--ink-muted)]">业务目标</div>
+            <div className="text-[11px] text-[var(--ink-muted)]">
+              {tx({
+                "zh-CN": "业务目标",
+                "zh-HK": "業務目標",
+                en: "Target",
+              })}
+            </div>
             <div className="mt-0.5 font-mono-code text-[var(--ink-primary)] break-all">
               {proposal.plan.target}
             </div>
@@ -1925,9 +2400,15 @@ function CreatedProposalBanner({
           <Link
             href={`/proposals/${encodeURIComponent(proposal.id)}`}
             data-testid="orders-open-proposal-link"
-            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-all duration-[160ms]"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-4 text-[13px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] transition-all duration-[160ms]"
           >
-            <span>打开提案详情页</span>
+            <span>
+              {tx({
+                "zh-CN": "打开提案详情页",
+                "zh-HK": "開啟提案詳情頁",
+                en: "Open Proposal Page",
+              })}
+            </span>
             <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.85} />
           </Link>
           <Button
@@ -1938,7 +2419,13 @@ function CreatedProposalBanner({
             data-testid="orders-inspect-drawer-btn"
           >
             <PanelRight className="h-3.5 w-3.5" strokeWidth={1.85} />
-            <span>在右侧面板核对</span>
+            <span>
+              {tx({
+                "zh-CN": "在右侧面板核对",
+                "zh-HK": "於右側面板核對",
+                en: "Inspect in Drawer",
+              })}
+            </span>
           </Button>
         </div>
       </div>

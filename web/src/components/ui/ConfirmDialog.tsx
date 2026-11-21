@@ -3,6 +3,7 @@
 import React from "react";
 import { AlertDialog } from "radix-ui";
 import { AlertTriangle, ShieldCheck } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
 
 export interface ConfirmDialogMetadataItem {
@@ -33,13 +34,17 @@ export function ConfirmDialog({
   description,
   scopeSummary,
   metadata,
-  confirmLabel = "确认执行",
-  cancelLabel = "取消",
+  confirmLabel,
+  cancelLabel,
   destructive = false,
   loading = false,
   onConfirm,
   children,
 }: ConfirmDialogProps) {
+  const { t } = useLocale();
+  const resolvedConfirm = confirmLabel ?? t("common.confirmExecute");
+  const resolvedCancel = cancelLabel ?? t("common.cancel");
+
   return (
     <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
       <AlertDialog.Portal>
@@ -56,7 +61,7 @@ export function ConfirmDialog({
                 "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
                 destructive
                   ? "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
-                  : "bg-[var(--accent-wash)] text-[var(--accent)]",
+                  : "bg-[var(--accent-wash)] text-[var(--accent-ink)]",
               ].join(" ")}
             >
               {destructive ? (
@@ -78,7 +83,7 @@ export function ConfirmDialog({
           {scopeSummary && (
             <div className="mt-4 rounded-md bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12.5px] text-[var(--ink-secondary)]">
               <span className="font-medium text-[var(--ink-primary)]">
-                影响范围：
+                {t("common.impactScope")}
               </span>
               {scopeSummary}
             </div>
@@ -112,7 +117,7 @@ export function ConfirmDialog({
           <div className="mt-6 flex items-center justify-end gap-2.5">
             <AlertDialog.Cancel asChild>
               <Button variant="secondary" disabled={loading}>
-                {cancelLabel}
+                {resolvedCancel}
               </Button>
             </AlertDialog.Cancel>
             <Button
@@ -120,7 +125,7 @@ export function ConfirmDialog({
               loading={loading}
               onClick={() => void onConfirm()}
             >
-              {confirmLabel}
+              {resolvedConfirm}
             </Button>
           </div>
         </AlertDialog.Content>

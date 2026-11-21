@@ -1,6 +1,6 @@
 /* ==========================================================================
-   SME AIOS v2 Unified Design Tokens — Frosted Alabaster & Porcelain
-   Single unified cool-neutral light system across all routes (/login -> /admin).
+   SME AIOS v2 Unified Design Tokens — Frosted Alabaster (Light) & Obsidian Porcelain (Dark)
+   Single unified system across all routes (/login -> /inbox -> /work -> /calendar -> /admin).
    ========================================================================== */
 :root {
   color-scheme: light;
@@ -9,59 +9,92 @@
   --bg-app: #F5F6F8;                        /* Global canvas: /login, /work, /admin, /calendar */
   --bg-sidebar: rgba(246, 247, 249, 0.82);  /* macOS Sequoia frosted sidebar material */
   --bg-sidebar-solid: #F3F4F7;              /* Fallback when backdrop-filter unavailable */
+  --bg-header: rgba(255, 255, 255, 0.82);   /* Translucent sticky header / top bar */
+  --bg-header-solid: rgba(255, 255, 255, 0.94);
+  --bg-sheet: #FFFFFF;                      /* Elevated sheet / card canvas */
   --bg-surface: #FFFFFF;                    /* Luminous white elevated sheet / chat canvas / cards */
   --bg-surface-subtle: #F2F4F7;             /* Recessed tonal well: incoming bubble, search fill, muted pills */
   --bg-surface-tint: #F8F9FB;               /* Ultra-soft table thead / inset well / collapsible surface */
-  --bg-glass: rgba(255, 255, 255, 0.82);    /* Translucent sticky header / top bar (blur 20px) */
+  --bg-surface-hover: #EAECEF;              /* Subtle elevated row/button hover surface */
+  --bg-inset: #ECEFF4;                      /* Deep inset well for segmented controls (clear chip contrast) */
+  --bg-glass: var(--bg-header);             /* Backwards-compatible frosted header alias */
   --bg-hover: rgba(17, 19, 24, 0.042);      /* Whisper macOS pointer hover */
   --bg-active: rgba(17, 19, 24, 0.075);     /* Active neutral press / selection */
 
-  /* Backwards-compatible v1 surface aliases (for incremental feature migration) */
+  /* Backwards-compatible v1 surface aliases */
   --bg-canvas: var(--bg-app);
-  --bg-sheet: var(--bg-surface);
   --bg-plane: var(--bg-sidebar-solid);
-  --bg-plane-hover: #EAECEF;
+  --bg-plane-hover: var(--bg-surface-hover);
   --bg-subtle: var(--bg-surface-tint);
+
+  /* Login & 3D Architectural Stage Surfaces */
+  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(22, 104, 227, 0.065), transparent 72%);
+  --canvas-stage-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.94) 0%, rgba(244, 246, 250, 0.9) 100%);
+  --canvas-footer-bg: rgba(255, 255, 255, 0.78);
 
   /* === 2. Ink & Optical Contrast Hierarchy (WCAG AA+ on #FFFFFF & #F5F6F8) === */
   --ink-primary: #111318;                   /* Deep obsidian ink (18.4:1 on white) */
   --ink-secondary: #525B6C;                 /* Calibrated secondary slate (6.8:1 on white) */
-  --ink-muted: #667085;                     /* Timestamps, captions, hints (4.9:1 on white) */
-  --ink-faint: #98A2B3;                     /* Placeholders & disabled labels ONLY */
+  --ink-muted: #667085;                     /* Timestamps, captions, hints (4.97:1 on white) */
+  --ink-faint: #98A2B3;                     /* Placeholders, decorative separators & disabled labels ONLY */
 
   /* === 3. Structural Hairlines (Major Seams Only — Shadows Carry Card Elevation) === */
-  --hairline: rgba(17, 19, 24, 0.07);       /* Pane dividers, subtle row separators */
-  --hairline-strong: rgba(17, 19, 24, 0.12);/* Input rest borders, secondary control edges */
-  --hairline-subtle: rgba(17, 19, 24, 0.045);/* Table row dividers inside elevated white sheets */
+  --hairline: rgba(17, 19, 24, 0.075);      /* Pane dividers, subtle row separators */
+  --hairline-strong: rgba(17, 19, 24, 0.14);/* Input rest borders, secondary control edges */
+  --hairline-subtle: rgba(17, 19, 24, 0.055);/* Table row dividers inside elevated white sheets */
   --hairline-specular: rgba(255, 255, 255, 0.88); /* Top rim light on glass/3D cards */
   --crosshair-mark: rgba(17, 19, 24, 0.18); /* Legacy blueprint reference mark */
 
-  /* === 4. Single Calibrated AA Oceanic Cobalt Accent (5.09:1 with #FFFFFF) === */
-  --accent: #1668E3;                        /* Primary CTA, outgoing iMessage bubble, active indicator */
+  /* === 4. Calibrated AA+ Oceanic Cobalt Accent System === */
+  --accent: #1668E3;                        /* Text & icon accent on light surfaces (5.09:1 on white) */
   --accent-hover: #1254BA;
   --accent-active: #0E47A1;
+  --accent-solid: #1668E3;                  /* Solid fill for primary buttons, badges, selected chips (5.09:1 w/ #FFF) */
+  --accent-solid-hover: #1254BA;            /* Darker on hover for higher contrast */
+  --accent-solid-active: #0E47A1;
+  --accent-ink: #1258C4;                    /* Accent text on --accent-wash (5.42:1 AA+) */
   --accent-fg: #FFFFFF;
-  --accent-wash: rgba(22, 104, 227, 0.08);
-  --accent-wash-strong: rgba(22, 104, 227, 0.14);
+  --accent-wash: rgba(22, 104, 227, 0.085);
+  --accent-wash-strong: rgba(22, 104, 227, 0.15);
   --accent-border: rgba(22, 104, 227, 0.28);
   --accent-ring: rgba(22, 104, 227, 0.24);
 
-  /* Agent Signature Material (Restrained Pearl-Cobalt — Zero Neon / Zero Rainbow) */
+  /* Agent Signature Material & Native iMessage Bubble Tokens */
   --agent-surface: linear-gradient(145deg, #F3F7FF 0%, #EAF0FD 100%);
   --agent-bubble-bg: #F2F4F7;
   --agent-ring: rgba(22, 104, 227, 0.18);
+  --bubble-sent-bg: #1668E3;
+  --bubble-sent-ink: #FFFFFF;
+  --bubble-received-bg: #F2F4F7;
+  --bubble-received-ink: #111318;
 
-  /* === 5. Semantic Status Tokens (Soft Botanical Washes — Always Icon + Text + Color) === */
+  /* Avatar Identity Washes (4 Restrained Editorial Hues) */
+  --avatar-tone-0-bg: rgba(22, 104, 227, 0.09);
+  --avatar-tone-0-ink: #1D5BC4;
+  --avatar-tone-1-bg: rgba(18, 122, 70, 0.09);
+  --avatar-tone-1-ink: #127A46;
+  --avatar-tone-2-bg: rgba(34, 104, 120, 0.09);
+  --avatar-tone-2-ink: #1E5C6B;
+  --avatar-tone-3-bg: rgba(154, 108, 52, 0.09);
+  --avatar-tone-3-ink: #855920;
+
+  /* Scrollbars */
+  --scrollbar-thumb: rgba(17, 19, 24, 0.16);
+  --scrollbar-thumb-hover: rgba(17, 19, 24, 0.28);
+
+  /* === 5. Semantic Status Tokens (AA+ Calibrated — Always Icon + Text + Color) === */
   --status-emerald: #127A46;
+  --status-emerald-solid: #127A46;
   --status-emerald-wash: rgba(18, 122, 70, 0.09);
   --status-emerald-border: rgba(18, 122, 70, 0.22);
 
-  --status-amber: #B26200;
-  --status-amber-ink: #8C4D00;
+  --status-amber: #A35A00;                  /* Deepened to >= 4.59:1 AA on --status-amber-wash */
+  --status-amber-ink: #824700;              /* >= 6.3:1 AA+ on --status-amber-wash */
   --status-amber-wash: rgba(178, 98, 0, 0.10);
   --status-amber-border: rgba(178, 98, 0, 0.24);
 
   --status-crimson: #C92A37;
+  --status-crimson-solid: #C92A37;
   --status-crimson-wash: rgba(201, 42, 55, 0.09);
   --status-crimson-border: rgba(201, 42, 55, 0.22);
 
@@ -78,25 +111,25 @@
   --radius-xl: 24px;                        /* Floating Muse composer capsule, login hero card */
   --radius-card: var(--radius-lg);          /* Semantic alias for top-level cards (18px) */
   --radius-tile: var(--radius-md);          /* Semantic alias for KPI / inset tiles (14px) */
-  --radius-pill: 9999px;                    /* "工作台" pill, circular avatars, send button, search bar */
+  --radius-pill: 9999px;                    /* Pill controls, circular avatars, send button, search bar */
 
   /* === 7. Layered Ambient Shadows (Replaces Harsh Nested Borders) === */
   --shadow-none: none;
   --shadow-subtle:
-    0 1px 2px rgba(17, 19, 24, 0.04),
-    0 0 0 1px rgba(17, 19, 24, 0.05);
+    0 1px 2px rgba(17, 19, 24, 0.05),
+    0 0 0 1px rgba(17, 19, 24, 0.07);
   --shadow-card:
     0 1px 2px rgba(17, 19, 24, 0.04),
     0 6px 18px -6px rgba(17, 19, 24, 0.06),
-    0 0 0 1px rgba(17, 19, 24, 0.05);
+    0 0 0 1px rgba(17, 19, 24, 0.055);
   --shadow-card-hover:
     0 4px 10px -2px rgba(17, 19, 24, 0.06),
     0 14px 32px -10px rgba(17, 19, 24, 0.10),
-    0 0 0 1px rgba(17, 19, 24, 0.075);
+    0 0 0 1px rgba(17, 19, 24, 0.08);
   --shadow-floating:
     0 6px 16px -4px rgba(17, 19, 24, 0.07),
     0 18px 40px -12px rgba(17, 19, 24, 0.12),
-    0 0 0 1px rgba(17, 19, 24, 0.06);
+    0 0 0 1px rgba(17, 19, 24, 0.07);
   --shadow-composer:
     0 2px 6px rgba(17, 19, 24, 0.04),
     0 12px 32px -8px rgba(17, 19, 24, 0.09),
@@ -115,11 +148,11 @@
     0 0 0 1px rgba(17, 19, 24, 0.07);
   --scrim: rgba(17, 19, 24, 0.22);
 
-  /* === 8. Typography Stack & Optical Scale === */
+  /* === 8. Typography Stack & Optical Scale (Locale-specialized in globals.css) === */
   --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
-               "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+               "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont,
-                  "PingFang SC", "Hiragino Sans GB", sans-serif;
+                  "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular,
                Menlo, Consolas, monospace;
 
@@ -162,6 +195,160 @@
 }
 
 /* ==========================================================================
+   True Apple macOS Sequoia Dark Mode — Linear Obsidian Porcelain
+   Calibrated WCAG AA+ contrast across fills, washes, inks, and elevated planes.
+   ========================================================================== */
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* 1. Layered Obsidian Surface Hierarchy (clear plane separation: app -> sheet -> surface) */
+  --bg-app: #0C0E13;
+  --bg-sidebar: rgba(20, 24, 34, 0.86);
+  --bg-sidebar-solid: #141822;
+  --bg-header: rgba(20, 24, 34, 0.84);
+  --bg-header-solid: #141822;
+  --bg-sheet: #141822;
+  --bg-surface: #1E2332;
+  --bg-surface-subtle: #242A3B;
+  --bg-surface-tint: #252B3C;
+  --bg-surface-hover: #2C3347;
+  --bg-inset: #11141C;
+  --bg-glass: var(--bg-header);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.105);
+
+  --bg-canvas: var(--bg-app);
+  --bg-plane: var(--bg-sidebar-solid);
+  --bg-plane-hover: var(--bg-surface-hover);
+  --bg-subtle: var(--bg-surface-tint);
+
+  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(59, 139, 255, 0.095), transparent 72%);
+  --canvas-stage-bg: linear-gradient(155deg, #141926 0%, #0E1119 100%);
+  --canvas-footer-bg: rgba(20, 24, 34, 0.84);
+
+  /* 2. High-Contrast Obsidian Ink Hierarchy (WCAG AA+ on surface & tint) */
+  --ink-primary: #F2F4F8;
+  --ink-secondary: #BAC2D1;
+  --ink-muted: #8E98AA;                     /* >= 5.5:1 on --bg-surface, >= 4.95:1 on --bg-surface-tint */
+  --ink-faint: #636D80;                     /* Placeholders, decorative separators & disabled labels ONLY */
+
+  /* 3. Precision Rim & Structural Hairlines */
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --hairline-subtle: rgba(255, 255, 255, 0.07);
+  --hairline-specular: rgba(255, 255, 255, 0.10);
+  --crosshair-mark: rgba(255, 255, 255, 0.18);
+
+  /* 4. Split AA+ Cobalt Accent (Solid Fills >= 4.63:1 w/ #FFF; Text on Wash >= 5.52:1) */
+  --accent: #3B8BFF;                        /* Icons & accent links on dark surfaces */
+  --accent-hover: #589CFF;
+  --accent-active: #2574EE;
+  --accent-solid: #1F6FEB;                  /* Solid primary buttons, pills, badges (4.63:1 with #FFF) */
+  --accent-solid-hover: #1A60D4;            /* Darker on hover (5.45:1 with #FFF) */
+  --accent-solid-active: #1553BC;
+  --accent-ink: #6AA6FF;                    /* Accent text on --accent-wash (5.52:1 AA+) */
+  --accent-fg: #FFFFFF;
+  --accent-wash: rgba(59, 139, 255, 0.15);
+  --accent-wash-strong: rgba(59, 139, 255, 0.24);
+  --accent-border: rgba(59, 139, 255, 0.38);
+  --accent-ring: rgba(59, 139, 255, 0.32);
+
+  /* Agent & iMessage Bubble Dark Material */
+  --agent-surface: linear-gradient(145deg, #18253C 0%, #131C2E 100%);
+  --agent-bubble-bg: #202636;
+  --agent-ring: rgba(59, 139, 255, 0.34);
+  --bubble-sent-bg: #1F6FEB;                /* AA+ 4.63:1 with #FFFFFF */
+  --bubble-sent-ink: #FFFFFF;
+  --bubble-received-bg: #202636;
+  --bubble-received-ink: #F2F4F8;
+
+  /* Dark-Calibrated Avatar Identity Washes */
+  --avatar-tone-0-bg: rgba(59, 139, 255, 0.17);
+  --avatar-tone-0-ink: #82B8FF;
+  --avatar-tone-1-bg: rgba(52, 211, 153, 0.16);
+  --avatar-tone-1-ink: #6EE7B7;
+  --avatar-tone-2-bg: rgba(56, 189, 248, 0.16);
+  --avatar-tone-2-ink: #7DD3FC;
+  --avatar-tone-3-bg: rgba(251, 191, 36, 0.16);
+  --avatar-tone-3-ink: #FCD34D;
+
+  /* Scrollbars */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+
+  /* 5. AA+ Calibrated Dark Semantic Status Tokens */
+  --status-emerald: #34D399;
+  --status-emerald-solid: #059669;
+  --status-emerald-wash: rgba(52, 211, 153, 0.15);
+  --status-emerald-border: rgba(52, 211, 153, 0.30);
+
+  --status-amber: #FBBF24;
+  --status-amber-ink: #FCD34D;
+  --status-amber-wash: rgba(251, 191, 36, 0.15);
+  --status-amber-border: rgba(251, 191, 36, 0.30);
+
+  --status-crimson: #F87171;
+  --status-crimson-solid: #DC2626;
+  --status-crimson-wash: rgba(248, 113, 113, 0.15);
+  --status-crimson-border: rgba(248, 113, 113, 0.30);
+
+  --status-neutral: #9AA5B8;
+  --status-neutral-wash: rgba(148, 163, 184, 0.15);
+  --status-neutral-border: rgba(148, 163, 184, 0.26);
+
+  /* 7. Layered Obsidian Ambient Shadows + Clear 0.09 Rim Elevation */
+  --shadow-subtle:
+    0 1px 2px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-card:
+    0 1px 2px rgba(0, 0, 0, 0.48),
+    0 6px 20px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(255, 255, 255, 0.09);
+  --shadow-card-hover:
+    0 4px 12px rgba(0, 0, 0, 0.52),
+    0 14px 32px rgba(0, 0, 0, 0.40),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 0 0 1px rgba(255, 255, 255, 0.13);
+  --shadow-floating:
+    0 8px 20px rgba(0, 0, 0, 0.52),
+    0 20px 44px rgba(0, 0, 0, 0.44),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 0 1px rgba(255, 255, 255, 0.11);
+  --shadow-composer:
+    0 2px 8px rgba(0, 0, 0, 0.46),
+    0 14px 34px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 0 1px rgba(255, 255, 255, 0.10);
+  --shadow-composer-focus:
+    0 4px 16px rgba(59, 139, 255, 0.18),
+    0 14px 36px rgba(0, 0, 0, 0.44),
+    0 0 0 1.5px rgba(59, 139, 255, 0.48);
+  --shadow-popover:
+    0 6px 18px rgba(0, 0, 0, 0.54),
+    0 22px 48px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.11);
+  --shadow-modal:
+    0 16px 40px rgba(0, 0, 0, 0.62),
+    0 32px 72px rgba(0, 0, 0, 0.54),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.11);
+  --scrim: rgba(0, 0, 0, 0.58);
+}
+
+/* Smooth transient theme switch crossfade (scoped to toggle event only) */
+html[data-theme-switching="true"],
+html[data-theme-switching="true"] *,
+html[data-theme-switching="true"] *::before,
+html[data-theme-switching="true"] *::after {
+  transition-property: color, background-color, border-color, box-shadow, fill, stroke !important;
+  transition-duration: 180ms !important;
+  transition-timing-function: ease !important;
+}
+
+/* ==========================================================================
    Typography Utilities & Accessibility Focus
    ========================================================================== */
 .tabular-nums {
@@ -196,19 +383,19 @@
 }
 
 .aios-topbar-glass {
-  background-color: rgba(255, 255, 255, 0.94);
+  background-color: var(--bg-header-solid);
 }
 
 @supports (backdrop-filter: blur(20px)) {
   .aios-topbar-glass {
-    background-color: var(--bg-glass);
+    background-color: var(--bg-header);
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
   }
 }
 
 /* ==========================================================================
-   Interactive 3D Porcelain Card Micro-Physics (Zero React Re-Renders)
+   Interactive 3D Porcelain / Obsidian Card Micro-Physics (Zero React Re-Renders)
    ========================================================================== */
 .aios-3d-card {
   position: relative;
@@ -228,7 +415,7 @@
     border-color 220ms ease;
 }
 
-/* Porcelain specular sheen — pure soft light + whisper cobalt refraction (zero neon) */
+/* Light-mode porcelain specular sheen — soft light + whisper cobalt refraction */
 .aios-3d-sheen {
   position: absolute;
   inset: 0;
@@ -244,6 +431,17 @@
     transparent 72%
   );
   box-shadow: inset 0 1px 0 var(--hairline-specular);
+}
+
+/* Dark-mode obsidian specular sheen — restrained rim light (never washed white) */
+html[data-theme="dark"] .aios-3d-sheen {
+  background: radial-gradient(
+    circle 260px at var(--sheen-x, 50%) var(--sheen-y, 50%),
+    rgba(255, 255, 255, var(--sheen-alpha-dark, 0.09)) 0%,
+    rgba(59, 139, 255, 0.05) 42%,
+    transparent 72%
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 
 /* ==========================================================================
@@ -431,7 +629,7 @@
   min-height: 0;
 }
 
-/* Hover elevation helper for porcelain cards */
+/* Hover elevation helper for porcelain/obsidian cards */
 .aios-card-elevated {
   background-color: var(--bg-surface);
   border-radius: var(--radius-lg);

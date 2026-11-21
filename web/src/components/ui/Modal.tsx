@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { Dialog } from "radix-ui";
 import { Maximize2, Minimize2, X } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 
 export interface ModalProps {
   open: boolean;
@@ -32,6 +33,7 @@ export function Modal({
   footer,
   children,
 }: ModalProps) {
+  const { t } = useLocale();
   const [expanded, setExpanded] = useState(false);
 
   const handleOpenChange = (next: boolean) => {
@@ -68,8 +70,16 @@ export function Modal({
                 <button
                   type="button"
                   onClick={() => setExpanded((v) => !v)}
-                  aria-label={expanded ? "还原窗口尺寸" : "全屏展开"}
-                  title={expanded ? "还原窗口尺寸" : "全屏展开"}
+                  aria-label={
+                    expanded
+                      ? t("common.restoreWindowSize")
+                      : t("common.expandFullscreen")
+                  }
+                  title={
+                    expanded
+                      ? t("common.restoreWindowSize")
+                      : t("common.expandFullscreen")
+                  }
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                 >
                   {expanded ? (
@@ -82,7 +92,7 @@ export function Modal({
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  aria-label="关闭窗口"
+                  aria-label={t("common.closeWindow")}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                 >
                   <X className="h-4 w-4" strokeWidth={1.8} />

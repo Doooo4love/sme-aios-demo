@@ -3,7 +3,8 @@
 import React, { useId, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, ChevronDown, Circle } from "lucide-react";
 import type { ApiError } from "@/lib/api-client";
-import { formatProposalStateLabel, formatShortDigest } from "@/lib/format";
+import { formatShortDigest, sortWarehouses } from "@/lib/format";
+import { useLocale, type LocaleContextValue } from "@/lib/i18n";
 import type { Actor, TurnResult } from "@/lib/types";
 
 export interface BriefProgressStep {
@@ -28,25 +29,11 @@ export interface BriefProgressChainProps {
   className?: string;
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  "shipment.read": "运单查询",
-  "shipment.reschedule": "运单改期提案",
-  "order.draft.prepare": "销售订单草稿",
-  "finance.invoice.read": "财务发票核对",
-  "mail.inbox.read": "企业邮箱读取",
-  "decision.warehouse.summary": "仓库经营汇总",
-};
-
-const SOURCE_LABELS: Record<string, string> = {
-  erp: "ERP",
-  synthetic: "合成数据",
-  finance: "财务系统",
-  mail: "企业邮箱",
-  decision: "经营汇总",
-  internal: "站内记录",
-};
-
-function extractWarehouseFromResult(result: TurnResult, actor?: Actor | null): string {
+function extractWarehouseFromResult(
+  result: TurnResult,
+  actor: Actor | null | undefined,
+  fallbackLabel: string,
+): string {
   if (result.kind === "proposal" || result.kind === "approval_preview") {
     return result.proposal.warehouse;
   }
@@ -55,17 +42,23 @@ function extractWarehouseFromResult(result: TurnResult, actor?: Actor | null): s
     if (typeof wh === "string" && wh.trim()) return wh.trim();
   }
   if (actor && actor.warehouses.length > 0) {
-    return actor.warehouses.join(" / ");
+    return sortWarehouses(actor.warehouses).join(" / ");
   }
-  return "当前授权范围";
+  return fallbackLabel;
 }
 
 function deriveRealSteps(
   phase: "done" | "error",
+  i18n: Pick<
+    LocaleContextValue,
+    "t" | "localizeTool" | "localizeSource" | "localizeStatus"
+  >,
   actor?: Actor | null,
   result?: TurnResult | null,
   error?: ApiError | null,
 ): { summary: string; steps: BriefProgressStep[] } {
+  const { t, localizeTool, localizeSource, localizeStatus } = i18n;
+
   if (phase === "error" || error) {
     const metaParts: string[] = [];
     if (error?.code) metaParts.push(error.code);
@@ -74,52 +67,58 @@ function deriveRealSteps(
     const steps: BriefProgressStep[] = [
       {
         id: "err-gate",
-        label: "服务端校验未通过",
+        label: t("kinetic.serverCheckFailed"),
         status: "error",
         meta: metaParts.length > 0 ? metaParts.join(" · ") : undefined,
       },
     ];
     return {
-      summary: "服务端校验未通过",
+      summary: t("kinetic.serverCheckFailed"),
       steps,
     };
   }
 
   if (!result) {
     return {
-      summary: "已完成",
+      summary: t("kinetic.completed"),
       steps: [
         {
           id: "done-generic",
-          label: "已校验身份并完成服务端处理",
+          label: t("kinetic.completedGenericStep"),
           status: "done",
         },
       ],
     };
   }
 
-  const tenantLabel = actor?.tenant || "当前租户";
-  const wh = extractWarehouseFromResult(result, actor);
+  const tenantLabel = actor?.tenant || t("kinetic.currentTenant");
+  const wh = extractWarehouseFromResult(result, actor, t("kinetic.currentScope"));
 
   if (result.kind === "result") {
-    const toolLabel = TOOL_LABELS[result.tool] || result.tool;
-    const sourceLabel = SOURCE_LABELS[result.source.toLowerCase()] || result.source;
+    const toolLabel = localizeTool(result.tool);
+    const sourceLabel = localizeSource(result.source);
     return {
-      summary: "已完成 · 3 步业务核验",
+      summary: t("kinetic.result.summary"),
       steps: [
         {
           id: "scope",
-          label: `身份与站点范围核验（${tenantLabel} · ${wh}）`,
+          label: t("kinetic.result.stepScope", {
+            tenant: tenantLabel,
+            warehouse: wh,
+          }),
           status: "done",
         },
         {
           id: "tool",
-          label: `受控工具实时读取（${toolLabel} · 来源 ${sourceLabel}）`,
+          label: t("kinetic.result.stepTool", {
+            tool: toolLabel,
+            source: sourceLabel,
+          }),
           status: "done",
         },
         {
           id: "output",
-          label: "已输出实时只读视图",
+          label: t("kinetic.result.stepOutput"),
           status: "done",
         },
       ],
@@ -132,17 +131,17 @@ function deriveRealSteps(
     const isErrorState = p.state === "REJECTED" || p.state === "NEEDS_OPERATOR";
     return {
       summary: isVerified
-        ? "已核验入账 · 3 步核验"
-        : "已生成待审批提案 · 3 步核验",
+        ? t("kinetic.proposal.summaryVerified")
+        : t("kinetic.proposal.summaryProposed"),
       steps: [
         {
           id: "scope",
-          label: `身份与发起权限核验（${p.warehouse}）`,
+          label: t("kinetic.proposal.stepScope", { warehouse: p.warehouse }),
           status: "done",
         },
         {
           id: "digest",
-          label: "已生成变更方案并锁定摘要",
+          label: t("kinetic.proposal.stepDigest"),
           status: "done",
           meta: formatShortDigest(p.digest),
         },
@@ -150,8 +149,10 @@ function deriveRealSteps(
           id: "state",
           label:
             p.state === "PROPOSED"
-              ? "等待独立主管确认"
-              : `当前状态：${formatProposalStateLabel(p.state)}`,
+              ? t("kinetic.proposal.stepAwaitingApproval")
+              : t("kinetic.proposal.stepState", {
+                  state: localizeStatus(p.state),
+                }),
           status: isVerified ? "done" : isErrorState ? "error" : "waiting",
           meta: formatShortDigest(p.id, 6, 4),
         },
@@ -162,17 +163,19 @@ function deriveRealSteps(
   if (result.kind === "approval_preview") {
     const p = result.proposal;
     return {
-      summary: "已生成审批预览 · 2 步核验",
+      summary: t("kinetic.approvalPreview.summary"),
       steps: [
         {
           id: "snapshot",
-          label: `已核对单据最新状态与摘要（${p.warehouse}）`,
+          label: t("kinetic.approvalPreview.stepSnapshot", {
+            warehouse: p.warehouse,
+          }),
           status: "done",
           meta: formatShortDigest(p.digest),
         },
         {
           id: "confirm",
-          label: "需在单据详情或右侧面板显式确认",
+          label: t("kinetic.approvalPreview.stepConfirm"),
           status: "waiting",
           meta: formatShortDigest(p.id, 6, 4),
         },
@@ -181,16 +184,16 @@ function deriveRealSteps(
   }
 
   return {
-    summary: "待补充查询要素 · 2 步核验",
+    summary: t("kinetic.clarify.summary"),
     steps: [
       {
         id: "caps",
-        label: `已核对账号可用业务工具范围（${tenantLabel}）`,
+        label: t("kinetic.clarify.stepCaps", { tenant: tenantLabel }),
         status: "done",
       },
       {
         id: "clarify",
-        label: "等待补充必要参数后继续执行",
+        label: t("kinetic.clarify.stepWait"),
         status: "waiting",
       },
     ],
@@ -209,6 +212,8 @@ export function BriefProgressChain({
   defaultExpanded = false,
   className = "",
 }: BriefProgressChainProps) {
+  const i18n = useLocale();
+  const { t, tp } = i18n;
   const [expanded, setExpanded] = useState(defaultExpanded);
   const stepsId = useId();
 
@@ -219,17 +224,27 @@ export function BriefProgressChain({
         summary:
           summaryLabel ||
           (phase === "error"
-            ? "服务端校验未通过"
-            : `已完成 · ${explicitSteps.length} 步业务核验`),
+            ? t("kinetic.serverCheckFailed")
+            : tp(
+                {
+                  "zh-CN": "已完成 {count} 项检查",
+                  "zh-HK": "已完成 {count} 項檢查",
+                  en: {
+                    one: "{count} check completed",
+                    other: "{count} checks completed",
+                  },
+                },
+                explicitSteps.length,
+              )),
         steps: explicitSteps,
       };
     }
-    const auto = deriveRealSteps(phase, actor, result, error);
+    const auto = deriveRealSteps(phase, i18n, actor, result, error);
     return {
       summary: summaryLabel || auto.summary,
       steps: auto.steps,
     };
-  }, [phase, explicitSteps, summaryLabel, actor, result, error]);
+  }, [phase, explicitSteps, summaryLabel, actor, result, error, i18n, t, tp]);
 
   // Whisper-quiet literal single-line status while in-flight (ZERO fake sub-steps or percentages!)
   if (phase === "pending") {
@@ -251,8 +266,8 @@ export function BriefProgressChain({
         </span>
         <span>
           {retryAfter && retryAfter > 0
-            ? `请求正在排队处理（${retryAfter}s 后复查）`
-            : "正在处理请求…"}
+            ? t("kinetic.queuedRetry", { seconds: retryAfter })
+            : t("kinetic.processingRequest")}
         </span>
       </div>
     );

@@ -3,14 +3,16 @@
 import React, { useState } from "react";
 import { DropdownMenu } from "radix-ui";
 import { Check, ChevronDown, RefreshCw, Shield } from "lucide-react";
+import { sortWarehouses } from "@/lib/format";
+import { useLocale, type TranslationKey } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { Avatar } from "@/components/ui/Avatar";
 import type { DemoPersonaId, DemoPersonaMeta } from "@/lib/types";
 
-const GROUP_LABELS: Record<DemoPersonaMeta["group"], string> = {
-  core: "核心演示岗位",
-  specialist: "专岗与只读视图",
-  isolation: "跨仓 / 跨租户隔离验证",
+const GROUP_LABEL_KEYS: Record<DemoPersonaMeta["group"], TranslationKey> = {
+  core: "demo.group.core",
+  specialist: "demo.group.specialist",
+  isolation: "demo.group.isolation",
 };
 
 const GROUP_ORDER: readonly DemoPersonaMeta["group"][] = [
@@ -28,11 +30,25 @@ export function DemoPersonaSwitcher({
 }) {
   const { actor, demoConfig, switchingPersona, switchDemoPersona } =
     useSession();
+  const { t, localizePersona, localizeRole } = useLocale();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   if (!demoConfig?.enabled || !actor) {
     return null;
   }
+
+  const currentMeta = demoConfig.personas.find(
+    (p) => p.subject === actor.subject,
+  );
+  const currentLocalized = localizePersona(actor.subject, currentMeta);
+  const currentDisplayName =
+    currentLocalized.displayName || currentLocalized.label || actor.subject;
+  const sortedActorWarehouses = sortWarehouses(actor.warehouses);
+  const triggerTooltip = `${currentDisplayName} (${actor.subject}) · ${actor.tenant}${
+    sortedActorWarehouses.length > 0
+      ? ` · ${sortedActorWarehouses.join("/")}`
+      : ""
+  }`;
 
   const handleSwitch = async (persona: DemoPersonaId) => {
     if (persona === actor.subject || switchingPersona) return;
@@ -40,7 +56,7 @@ export function DemoPersonaSwitcher({
     try {
       await switchDemoPersona(persona);
     } catch {
-      setErrorMsg("切换身份失败，请重试");
+      setErrorMsg(t("demo.switchFailed"));
     }
   };
 
@@ -51,31 +67,35 @@ export function DemoPersonaSwitcher({
           <button
             type="button"
             disabled={switchingPersona}
-            aria-label="切换本地演示身份"
+            aria-label={t("demo.switcherAria")}
+            title={triggerTooltip}
             className={[
-              "inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 text-[12px] text-[var(--ink-primary)]",
+              "inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-2.5 xl:px-3 text-[12px] text-[var(--ink-primary)]",
               "shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:bg-[var(--bg-surface-tint)]",
               "transition-all duration-[140ms] cursor-pointer disabled:opacity-50",
             ].join(" ")}
           >
             {switchingPersona ? (
               <RefreshCw
-                className="h-3.5 w-3.5 animate-spin text-[var(--accent)]"
+                className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--accent-ink)]"
                 strokeWidth={1.85}
               />
             ) : (
               <Shield
-                className="h-3.5 w-3.5 text-[var(--accent)]"
+                className="h-3.5 w-3.5 shrink-0 text-[var(--accent-ink)]"
                 strokeWidth={1.85}
               />
             )}
-            <span className="font-mono-code font-medium">{actor.subject}</span>
-            <span className="hidden sm:inline text-[var(--ink-muted)] font-mono-code text-[11px]">
-              · {actor.tenant}
-              {actor.warehouses.length > 0 ? ` · ${actor.warehouses.join("/")}` : ""}
+            <span className="max-w-[96px] xl:max-w-[120px] 2xl:max-w-none truncate font-medium">
+              {currentDisplayName}
             </span>
+            {sortedActorWarehouses.length > 0 && (
+              <span className="hidden min-[1360px]:inline shrink-0 font-mono-code text-[11px] text-[var(--ink-muted)]">
+                · {sortedActorWarehouses.join("/")}
+              </span>
+            )}
             <ChevronDown
-              className="h-3.5 w-3.5 text-[var(--ink-muted)]"
+              className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]"
               strokeWidth={1.85}
             />
           </button>
@@ -87,16 +107,16 @@ export function DemoPersonaSwitcher({
             align={align}
             sideOffset={8}
             className={[
-              "z-50 w-[328px] max-h-[min(520px,80dvh)] overflow-auto rounded-lg",
+              "z-50 w-[336px] max-h-[min(520px,80dvh)] overflow-auto rounded-lg",
               "bg-[var(--bg-surface)] p-2 shadow-[var(--shadow-popover)] focus:outline-none",
             ].join(" ")}
           >
             <div className="border-b border-[var(--hairline)] px-2.5 pb-2.5 pt-1">
               <div className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-                本地演示身份切换
+                {t("demo.switcherTitle")}
               </div>
               <div className="mt-0.5 text-[11.5px] text-[var(--ink-muted)]">
-                切换时自动清空会话缓存、草稿与在途请求
+                {t("demo.switcherSubtitle")}
               </div>
               {errorMsg && (
                 <div className="mt-1.5 text-[11.5px] text-[var(--status-crimson)]">
@@ -113,10 +133,12 @@ export function DemoPersonaSwitcher({
               return (
                 <DropdownMenu.Group key={group} className="mt-2">
                   <DropdownMenu.Label className="px-2.5 py-1 text-[11px] font-medium text-[var(--ink-muted)]">
-                    {GROUP_LABELS[group]}
+                    {t(GROUP_LABEL_KEYS[group])}
                   </DropdownMenu.Label>
                   {items.map((item) => {
                     const isCurrent = item.subject === actor.subject;
+                    const localized = localizePersona(item.subject, item);
+                    const sortedItemWarehouses = sortWarehouses(item.warehouses);
                     return (
                       <DropdownMenu.Item
                         key={item.subject}
@@ -132,7 +154,7 @@ export function DemoPersonaSwitcher({
                         ].join(" ")}
                       >
                         <Avatar
-                          name={item.display_name || item.label}
+                          name={localized.displayName || localized.label}
                           fallbackText={item.subject}
                           size="xs"
                         />
@@ -142,19 +164,28 @@ export function DemoPersonaSwitcher({
                               {item.subject}
                             </span>
                             <span className="truncate text-[11.5px] text-[var(--ink-secondary)]">
-                              {item.display_name
-                                ? `${item.display_name} · ${item.label}`
-                                : item.label}
+                              {localized.displayName
+                                ? `${localized.displayName} · ${localized.label}`
+                                : localized.label}
                             </span>
                           </div>
-                          <div className="mt-0.5 font-mono-code text-[10.5px] text-[var(--ink-muted)]">
-                            {item.tenant} · {item.warehouses.join(", ")} ·{" "}
-                            {item.role}
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10.5px] text-[var(--ink-muted)]">
+                            <span className="font-mono-code">{item.tenant}</span>
+                            {sortedItemWarehouses.length > 0 && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-mono-code">
+                                  {sortedItemWarehouses.join(", ")}
+                                </span>
+                              </>
+                            )}
+                            <span aria-hidden="true">·</span>
+                            <span>{localizeRole(item.role)}</span>
                           </div>
                         </div>
                         {isCurrent && (
                           <Check
-                            className="h-4 w-4 shrink-0 text-[var(--accent)]"
+                            className="h-4 w-4 shrink-0 text-[var(--accent-ink)]"
                             strokeWidth={2.2}
                           />
                         )}

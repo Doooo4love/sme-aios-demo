@@ -19,12 +19,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import {
-  formatProposalAction,
-  formatRelativeCountdown,
-  formatShortDigest,
-  formatUnixTime,
-} from "@/lib/format";
+import { formatShortDigest, sortWarehouses } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
@@ -39,6 +35,8 @@ export interface UnifiedQueuesPanelProps {
   /** Optional filter to restrict shown action type (used by Orders module) */
   actionFilter?: TaskItem["action"];
   defaultView?: QueueSubView;
+  /** Optional external lane switch trigger (e.g. clicking Submitted KPI tile) */
+  requestedView?: { view: QueueSubView; seq: number } | null;
   compactHeader?: boolean;
   onCountsLoaded?: (counts: { assigned: number; submitted: number }) => void;
 }
@@ -46,9 +44,12 @@ export interface UnifiedQueuesPanelProps {
 export function UnifiedQueuesPanel({
   actionFilter,
   defaultView,
+  requestedView,
   compactHeader = false,
   onCountsLoaded,
 }: UnifiedQueuesPanelProps) {
+  const { locale, tx, formatDateTime, formatCountdown, localizeAction } =
+    useLocale();
   const { actor, capabilities, authGeneration, handleAccessChanged } =
     useSession();
   const { openDrawer, setAssignedCount } = useWorkbench();
@@ -88,6 +89,12 @@ export function UnifiedQueuesPanel({
       setSubView(hasApprovalRole ? "assigned" : "submitted");
     }
   }, [hasApprovalRole, defaultView, authGeneration]);
+
+  useEffect(() => {
+    if (requestedView) {
+      setSubView(requestedView.view);
+    }
+  }, [requestedView]);
 
   const loadInitialQueues = useCallback(async () => {
     const startGen = getAuthGeneration();
@@ -201,23 +208,24 @@ export function UnifiedQueuesPanel({
 
   const displayedRows = useMemo(() => {
     if (subView === "assigned") {
-      return consolidateTaskItems(filteredAssigned, [], actor?.subject);
+      return consolidateTaskItems(filteredAssigned, [], actor?.subject, locale);
     }
     if (subView === "submitted") {
-      return consolidateTaskItems([], filteredSubmitted, actor?.subject);
+      return consolidateTaskItems([], filteredSubmitted, actor?.subject, locale);
     }
     return consolidateTaskItems(
       filteredAssigned,
       filteredSubmitted,
       actor?.subject,
+      locale,
     );
-  }, [subView, filteredAssigned, filteredSubmitted, actor?.subject]);
+  }, [subView, filteredAssigned, filteredSubmitted, actor?.subject, locale]);
 
   const knownWarehouses = useMemo(() => {
     const set = new Set<string>(actor?.warehouses ?? []);
     for (const i of assignedItems) set.add(i.warehouse);
     for (const i of submittedItems) set.add(i.warehouse);
-    return Array.from(set).sort();
+    return sortWarehouses(Array.from(set));
   }, [actor?.warehouses, assignedItems, submittedItems]);
 
   const toggleExpand = (id: string) => {
@@ -231,9 +239,13 @@ export function UnifiedQueuesPanel({
 
   const unifiedCount = useMemo(
     () =>
-      consolidateTaskItems(filteredAssigned, filteredSubmitted, actor?.subject)
-        .length,
-    [filteredAssigned, filteredSubmitted, actor?.subject],
+      consolidateTaskItems(
+        filteredAssigned,
+        filteredSubmitted,
+        actor?.subject,
+        locale,
+      ).length,
+    [filteredAssigned, filteredSubmitted, actor?.subject, locale],
   );
 
   return (
@@ -245,26 +257,42 @@ export function UnifiedQueuesPanel({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-3.5">
         <div
           role="tablist"
-          aria-label="任务队列视图"
+          aria-label={tx({
+            "zh-CN": "任务队列视图",
+            "zh-HK": "任務佇列檢視",
+            en: "Task queue lanes",
+          })}
           className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
         >
           {(
             [
               {
                 id: "assigned" as const,
-                label: "待我处理",
+                label: tx({
+                  "zh-CN": "待我处理",
+                  "zh-HK": "待我處理",
+                  en: "Assigned to Me",
+                }),
                 count: filteredAssigned.length,
                 testId: "queue-lane-assigned",
               },
               {
                 id: "submitted" as const,
-                label: "已提交",
+                label: tx({
+                  "zh-CN": "已提交",
+                  "zh-HK": "已提交",
+                  en: "Submitted",
+                }),
                 count: filteredSubmitted.length,
                 testId: "queue-lane-submitted",
               },
               {
                 id: "unified" as const,
-                label: "合并视角",
+                label: tx({
+                  "zh-CN": "合并视角",
+                  "zh-HK": "合併檢視",
+                  en: "Consolidated",
+                }),
                 count: unifiedCount,
                 testId: "queue-lane-unified",
               },
@@ -282,12 +310,12 @@ export function UnifiedQueuesPanel({
                 className={[
                   "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] transition-all duration-[165ms] cursor-pointer",
                   active
-                    ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                    ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] font-semibold shadow-[var(--shadow-subtle)]"
                     : "text-[var(--ink-secondary)] font-medium hover:text-[var(--ink-primary)]",
                 ].join(" ")}
               >
                 <span>{tab.label}</span>
-                <span className="font-mono-code tabular-nums text-[11px] opacity-80">
+                <span className="tabular-nums text-[11px] opacity-80">
                   {tab.count}
                 </span>
               </button>
@@ -304,11 +332,15 @@ export function UnifiedQueuesPanel({
                 className={[
                   "h-7 rounded-full px-2.5 text-[11.5px] font-medium transition-all duration-[150ms] cursor-pointer",
                   warehouseFilter === "ALL"
-                    ? "bg-[var(--accent-wash)] text-[var(--accent)] font-semibold"
+                    ? "bg-[var(--accent-wash)] text-[var(--accent-ink)] font-semibold"
                     : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                 ].join(" ")}
               >
-                全部站点
+                {tx({
+                  "zh-CN": "全部仓库",
+                  "zh-HK": "全部倉庫",
+                  en: "All Warehouses",
+                })}
               </button>
               {knownWarehouses.map((wh) => (
                 <button
@@ -318,7 +350,7 @@ export function UnifiedQueuesPanel({
                   className={[
                     "h-7 rounded-full px-2.5 font-mono-code text-[11px] font-medium transition-all duration-[150ms] cursor-pointer",
                     warehouseFilter === wh
-                      ? "bg-[var(--accent-wash)] text-[var(--accent)] font-semibold"
+                      ? "bg-[var(--accent-wash)] text-[var(--accent-ink)] font-semibold"
                       : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                   ].join(" ")}
                 >
@@ -337,7 +369,13 @@ export function UnifiedQueuesPanel({
             data-testid="queue-refresh-btn"
           >
             <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
-            <span>刷新队列</span>
+            <span>
+              {tx({
+                "zh-CN": "刷新队列",
+                "zh-HK": "重新整理佇列",
+                en: "Refresh",
+              })}
+            </span>
           </Button>
         </div>
       </div>
@@ -353,7 +391,11 @@ export function UnifiedQueuesPanel({
 
       {!error && loading && displayedRows.length === 0 && (
         <div className="py-14 text-center text-[13px] text-[var(--ink-muted)]">
-          正在加载当前授权范围内的业务队列…
+          {tx({
+            "zh-CN": "正在加载当前授权范围内的业务队列…",
+            "zh-HK": "正在載入目前授權範圍內的業務佇列…",
+            en: "Loading authorized task queues…",
+          })}
         </div>
       )}
 
@@ -362,15 +404,29 @@ export function UnifiedQueuesPanel({
           className="flex flex-col items-center gap-2.5 py-14 text-center text-[13px] text-[var(--ink-muted)]"
           data-testid="queue-empty-state"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-muted)]">
             <Inbox className="h-5 w-5" strokeWidth={1.6} />
           </span>
           <span>
             {subView === "assigned"
               ? hasApprovalRole
-                ? "当前没有待您审批的业务单据"
-                : "当前账号无待审批任务（经办或只读岗位可切换至「已提交」查看）"
-              : "当前条件下暂无单据记录"}
+                ? tx({
+                    "zh-CN": "当前没有待您审批的业务单据",
+                    "zh-HK": "目前沒有待您審批的業務單據",
+                    en: "No proposals currently awaiting your approval",
+                  })
+                : tx({
+                    "zh-CN":
+                      "当前账号无待审批任务（经办或只读岗位可切换至「已提交」查看）",
+                    "zh-HK":
+                      "目前帳號無待審批任務（經辦或唯讀職位可切換至「已提交」檢視）",
+                    en: "No assigned approvals (operators & viewers can check Submitted)",
+                  })
+              : tx({
+                  "zh-CN": "当前条件下暂无单据记录",
+                  "zh-HK": "目前條件下暫無單據紀錄",
+                  en: "No proposals match the current filter",
+                })}
           </span>
         </div>
       )}
@@ -380,19 +436,50 @@ export function UnifiedQueuesPanel({
           <table className="w-full border-collapse text-left text-[13px]">
             <thead>
               <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
-                <th className="w-10 px-3 py-2.5" aria-label="展开明细" />
-                <th className="px-3.5 py-2.5 font-medium">业务单据</th>
-                <th className="px-3.5 py-2.5 font-medium">站点</th>
-                <th className="px-3.5 py-2.5 font-medium">轮到我的原因</th>
-                <th className="px-3.5 py-2.5 font-medium">状态</th>
-                <th className="px-3.5 py-2.5 font-medium">下一步</th>
-                <th className="px-4 py-2.5 font-medium text-right">操作</th>
+                <th
+                  className="w-10 px-3 py-2.5"
+                  aria-label={tx({
+                    "zh-CN": "展开明细",
+                    "zh-HK": "展開明細",
+                    en: "Expand details",
+                  })}
+                />
+                <th className="px-3.5 py-2.5 font-medium">
+                  {tx({
+                    "zh-CN": "业务单据",
+                    "zh-HK": "業務單據",
+                    en: "Proposal",
+                  })}
+                </th>
+                <th className="px-3.5 py-2.5 font-medium">
+                  {tx({ "zh-CN": "仓库", "zh-HK": "倉庫", en: "Warehouse" })}
+                </th>
+                <th className="px-3.5 py-2.5 font-medium">
+                  {tx({
+                    "zh-CN": "轮到我的原因",
+                    "zh-HK": "輪到我的原因",
+                    en: "Why It's Here",
+                  })}
+                </th>
+                <th className="px-3.5 py-2.5 font-medium">
+                  {tx({ "zh-CN": "状态", "zh-HK": "狀態", en: "Status" })}
+                </th>
+                <th className="px-3.5 py-2.5 font-medium">
+                  {tx({
+                    "zh-CN": "下一步",
+                    "zh-HK": "下一步",
+                    en: "Next Step",
+                  })}
+                </th>
+                <th className="px-4 py-2.5 font-medium text-right">
+                  {tx({ "zh-CN": "操作", "zh-HK": "操作", en: "Actions" })}
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--hairline-subtle)]">
               {displayedRows.map((row) => {
                 const expanded = Boolean(expandedIds[row.id]);
-                const expiry = formatRelativeCountdown(row.expires);
+                const expiry = formatCountdown(row.expires);
                 const isDueSoon =
                   row.state === "PROPOSED" && (expiry.dueSoon || expiry.expired);
                 const badgeStatus =
@@ -400,6 +487,7 @@ export function UnifiedQueuesPanel({
                     ? "returned"
                     : row.state;
                 const shortId = formatShortDigest(row.id, 4, 4);
+                const actionLabel = localizeAction(row.action);
 
                 return (
                   <React.Fragment key={row.id}>
@@ -413,7 +501,14 @@ export function UnifiedQueuesPanel({
                           type="button"
                           onClick={() => toggleExpand(row.id)}
                           aria-expanded={expanded}
-                          aria-label={`展开 ${row.id} 时间与阶段详情`}
+                          aria-label={tx(
+                            {
+                              "zh-CN": "展开 {id} 时间与阶段详情",
+                              "zh-HK": "展開 {id} 時間與階段詳情",
+                              en: "Expand timing and stage details for {id}",
+                            },
+                            { id: row.id },
+                          )}
                           data-testid={`queue-expand-${row.id}`}
                           className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                         >
@@ -430,7 +525,7 @@ export function UnifiedQueuesPanel({
                             href={`/proposals/${encodeURIComponent(row.id)}`}
                             className="font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] transition-colors"
                           >
-                            {formatProposalAction(row.action)} · {row.warehouse}
+                            {actionLabel}
                           </Link>
                           <div className="inline-flex items-center gap-1 text-[11.5px] text-[var(--ink-muted)]">
                             <span
@@ -442,9 +537,23 @@ export function UnifiedQueuesPanel({
                             <button
                               type="button"
                               onClick={() => void handleCopyId(row.id)}
-                              title={`复制完整单号 ${row.id}`}
-                              aria-label={`复制单号 ${row.id}`}
-                              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--ink-faint)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-all cursor-pointer"
+                              title={tx(
+                                {
+                                  "zh-CN": "复制完整单号 {id}",
+                                  "zh-HK": "複製完整單號 {id}",
+                                  en: "Copy full ID {id}",
+                                },
+                                { id: row.id },
+                              )}
+                              aria-label={tx(
+                                {
+                                  "zh-CN": "复制单号 {id}",
+                                  "zh-HK": "複製單號 {id}",
+                                  en: "Copy ID {id}",
+                                },
+                                { id: row.id },
+                              )}
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--ink-muted)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-all cursor-pointer"
                             >
                               {copiedId === row.id ? (
                                 <Check className="h-3 w-3 text-[var(--status-emerald)]" />
@@ -489,7 +598,7 @@ export function UnifiedQueuesPanel({
                       <td className="px-3.5 py-3.5 align-top">
                         <StatusBadge status={badgeStatus} compact />
                         {isDueSoon && (
-                          <div className="mt-1.5 font-mono-code tabular-nums text-[11px] font-medium text-[var(--status-amber-ink)]">
+                          <div className="mt-1.5 tabular-nums text-[11px] font-medium text-[var(--status-amber-ink)]">
                             {expiry.label}
                           </div>
                         )}
@@ -509,7 +618,7 @@ export function UnifiedQueuesPanel({
                                   kind: "proposal",
                                   id: row.id,
                                   warehouse: row.warehouse,
-                                  title: `${formatProposalAction(row.action)} · ${shortId}`,
+                                  title: `${actionLabel} · ${shortId}`,
                                 },
                                 { tab: "current", trigger: e.currentTarget },
                               )
@@ -517,13 +626,25 @@ export function UnifiedQueuesPanel({
                             data-testid={`queue-inspect-${row.id}`}
                           >
                             <PanelRight className="h-3.5 w-3.5" />
-                            <span>面板核对</span>
+                            <span>
+                              {tx({
+                                "zh-CN": "面板核对",
+                                "zh-HK": "面板核對",
+                                en: "Inspect",
+                              })}
+                            </span>
                           </Button>
                           <Link
                             href={`/proposals/${encodeURIComponent(row.id)}`}
                             className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent)] transition-colors duration-[150ms]"
                           >
-                            <span>详情</span>
+                            <span>
+                              {tx({
+                                "zh-CN": "详情",
+                                "zh-HK": "詳情",
+                                en: "Details",
+                              })}
+                            </span>
                             <ArrowUpRight className="h-3.5 w-3.5" />
                           </Link>
                         </div>
@@ -540,7 +661,11 @@ export function UnifiedQueuesPanel({
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 text-[12px]">
                             <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
                               <div className="text-[11px] text-[var(--ink-muted)]">
-                                计划 / 到期时间
+                                {tx({
+                                  "zh-CN": "计划 / 到期时间",
+                                  "zh-HK": "計劃 / 到期時間",
+                                  en: "Expiration",
+                                })}
                               </div>
                               <div
                                 className={[
@@ -550,14 +675,18 @@ export function UnifiedQueuesPanel({
                                     : "text-[var(--ink-primary)]",
                                 ].join(" ")}
                               >
-                                {formatUnixTime(row.expires, {
+                                {formatDateTime(row.expires, {
                                   withSeconds: true,
                                 })}
                               </div>
                             </div>
                             <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
                               <div className="text-[11px] text-[var(--ink-muted)]">
-                                责任阶段
+                                {tx({
+                                  "zh-CN": "责任阶段",
+                                  "zh-HK": "責任階段",
+                                  en: "Role / Stage",
+                                })}
                               </div>
                               <div className="mt-0.5 font-medium text-[var(--ink-primary)]">
                                 {row.hats.map((h) => h.roleLabel).join(" / ")}
@@ -565,18 +694,36 @@ export function UnifiedQueuesPanel({
                             </div>
                             <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
                               <div className="text-[11px] text-[var(--ink-muted)]">
-                                当前指派
+                                {tx({
+                                  "zh-CN": "当前指派",
+                                  "zh-HK": "目前指派",
+                                  en: "Assigned To",
+                                })}
                               </div>
-                              <div className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
-                                {row.assigned_to ?? "未指定"}
+                              <div
+                                className={[
+                                  "mt-0.5 text-[var(--ink-primary)]",
+                                  row.assigned_to ? "font-mono-code" : "",
+                                ].join(" ")}
+                              >
+                                {row.assigned_to ??
+                                  tx({
+                                    "zh-CN": "未指定",
+                                    "zh-HK": "未指定",
+                                    en: "Unassigned",
+                                  })}
                               </div>
                             </div>
                             <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
                               <div className="text-[11px] text-[var(--ink-muted)]">
-                                队列时间
+                                {tx({
+                                  "zh-CN": "队列时间",
+                                  "zh-HK": "佇列時間",
+                                  en: "Queued At",
+                                })}
                               </div>
                               <div className="mt-0.5 font-mono-code tabular-nums text-[var(--ink-primary)]">
-                                {formatUnixTime(row.due, { withSeconds: true })}
+                                {formatDateTime(row.due, { withSeconds: true })}
                               </div>
                             </div>
                           </div>
@@ -603,7 +750,11 @@ export function UnifiedQueuesPanel({
               onClick={() => void handleLoadMore("assigned")}
               data-testid="queue-load-more-assigned"
             >
-              加载更多待我处理
+              {tx({
+                "zh-CN": "加载更多待我处理",
+                "zh-HK": "載入更多待我處理",
+                en: "Load More Assigned",
+              })}
             </Button>
           )}
           {(subView === "submitted" || subView === "unified") &&
@@ -616,7 +767,11 @@ export function UnifiedQueuesPanel({
                 onClick={() => void handleLoadMore("submitted")}
                 data-testid="queue-load-more-submitted"
               >
-                加载更多已提交
+                {tx({
+                  "zh-CN": "加载更多已提交",
+                  "zh-HK": "載入更多已提交",
+                  en: "Load More Submitted",
+                })}
               </Button>
             )}
         </div>
