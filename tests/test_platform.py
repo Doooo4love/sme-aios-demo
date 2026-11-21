@@ -109,6 +109,10 @@ class PlatformTests(unittest.TestCase):
             response = client.post(root + "/reviews/" + qa["id"] + "/decisions", headers=self.auth("quality"),
                                    json={"track": "quality", "action": "approve", "snapshot": qa["snapshot"]})
             self.assertEqual(response.status_code, 409)
+            cases = client.get(root + "/cases?kind=contract", headers=operator)
+            self.assertEqual([item["id"] for item in cases.json()["items"]], ["CT-300"])
+            self.assertNotIn("counterparty_contact", cases.text)
+            self.assertEqual(client.get(root + "/cases?kind=contract", headers=self.auth("finance")).status_code, 403)
             contract = client.post(root + "/cases/CT-300/reviews", headers=operator,
                                    json={"client_id": "ct"}).json()
             self.assertEqual(contract["tracks"], ["legal", "procurement"])
@@ -963,6 +967,19 @@ class PlatformTests(unittest.TestCase):
                                  .fetchone()["allowed"])
                 self.assertFalse(run("SELECT has_any_column_privilege('aios_assurance_attempt', 'SELECT, UPDATE') AS allowed")
                                  .fetchone()["allowed"])
+            saved = client.patch("/v1/profile", headers=self.auth("operator"),
+                                 json={"version": 0, "display_name": "Scoped employee"})
+            self.assertEqual(saved.status_code, 200, saved.text)
+            turn = client.post("/v1/workbench/turns", headers=self.auth("operator"),
+                               json={"text": "Show shipment SHP-1001 in HK01", "client_id": "restricted-history"})
+            self.assertEqual(turn.status_code, 200, turn.text)
+            with api.tx("harbour", write=False) as run:
+                run("SELECT set_config('aios.subject', ?, true)", ("finance",))
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_profile").fetchone()["n"], 0)
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_agent_activity").fetchone()["n"], 0)
+            with api.tx("island", write=False) as run:
+                run("SELECT set_config('aios.subject', ?, true)", ("operator",))
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_agent_activity").fetchone()["n"], 0)
             request = {"orders": [self.wholesale_order()]}
             headers = self.auth("operator")
             path = "/v1/intakes/HK01/structured/batch"
