@@ -9,19 +9,30 @@ import {
   uniqueSuffix,
 } from "./helpers/workbench";
 
-test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", () => {
-  test("1.1 /login renders QZT 3D ArchitecturalRelayCanvas, demo login verifies /v1/me & pinned Agent row", async ({
+test.describe("Phase 1: v2 Porcelain Login, 2-Column macOS Messenger Shell, Profiles & Keyboard Drawer", () => {
+  test("1.1 Root / renders Account+Password LoginView & Porcelain 3D stage, login verifies /v1/me, 2-col /inbox & tiered /work", async ({
     page,
   }) => {
     const audit = attachRuntimeAudit(page);
     try {
-      await page.goto("/login", { waitUntil: "domcontentloaded" });
+      // Unauthenticated root `/` renders Account + Password LoginView directly
+      await page.goto("/", { waitUntil: "domcontentloaded" });
       await expect(
         page.getByRole("heading", { name: "登录企业工作台" }),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId("login-account-input")).toBeVisible();
+      await expect(page.getByTestId("login-password-input")).toBeVisible();
+      await expect(page.getByTestId("login-submit-btn")).toBeVisible();
 
-      // Verify QZT 3D ArchitecturalRelayCanvas renders with valid dimensions on desktop
-      // Note: /login mounts a compact lg:hidden mobile canvas first and the full desktop canvas inside <aside>
+      // Demo quick-fill helper is collapsed by default on v2 LoginView
+      const demoToggle = page.getByTestId("login-demo-helper-toggle");
+      await expect(demoToggle).toBeVisible({ timeout: 15_000 });
+      await expect(demoToggle).toHaveAttribute("aria-expanded", "false");
+
+      // Verify Frosted Porcelain 3D ArchitecturalRelayCanvas renders with valid dimensions (zero obsidian-stage)
+      await expect(page.locator('[data-surface="obsidian-stage"]')).toHaveCount(0);
+      const relayStage = page.locator("aside").getByTestId("architectural-relay-canvas").first();
+      await expect(relayStage).toBeVisible();
       const stageCanvas = page.locator("aside canvas").first();
       await expect(stageCanvas).toBeVisible();
       const box = await stageCanvas.boundingBox();
@@ -29,15 +40,11 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
       expect(box!.width).toBeGreaterThan(200);
       expect(box!.height).toBeGreaterThan(200);
 
-      // Verify interactive stratum tabs exist inside the desktop 3D obsidian stage
-      const obsidianStage = page.locator('aside [data-surface="obsidian-stage"]').first();
-      if ((await obsidianStage.count()) > 0) {
-        await expect(obsidianStage).toBeVisible();
-      }
-
+      // Brief settle for 3D canvas initial draw
+      await page.waitForTimeout(350);
       await saveEvidenceScreenshot(page, "01-login-3d-stage.png");
 
-      // Controlled local demo login as operator
+      // Controlled local demo login as operator (expands collapsed demo helper)
       await loginAsPersona(page, "operator");
       audit.clearExpectedLoginProbeNoise();
 
@@ -60,23 +67,38 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
       expect(capRes.status).toBe(200);
       expect(capRes.body).not.toHaveProperty("planner");
 
-      // Verify /inbox shows pinned Personal Agent row with compact Agent label
+      // Verify /inbox renders native 2-column macOS Messenger (NO old 60px icon rail) + Pinned 3D Agent + Muse header/composer
       await page.goto("/inbox", { waitUntil: "domcontentloaded" });
+      await expect(page.getByTestId("inbox-shell")).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId("inbox-thread-list")).toBeVisible();
       const pinnedAgent = page.getByTestId("inbox-pinned-agent");
       await expect(pinnedAgent).toBeVisible({ timeout: 15_000 });
       await expect(pinnedAgent).toContainText("Agent");
+      await expect(page.getByTestId("assistant-workspace")).toBeVisible();
+      await expect(page.getByTestId("agent-open-workbench-btn")).toBeVisible();
+      await expect(page.getByTestId("assistant-add-context-btn")).toBeVisible();
+      await expect(page.getByTestId("assistant-send-btn")).toBeVisible();
+      await expect(page.getByRole("button", { name: "账号与资料菜单" })).toBeVisible();
 
-      // Operator must NOT see admin ops or employee access admin links in nav
+      // Pure 2-column Messenger has NO redundant global top nav and NO header PanelRight clutter on /inbox
+      await expect(page.getByRole("navigation", { name: "主导航" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "切换右侧业务面板" })).toHaveCount(0);
+
+      await page.waitForTimeout(300);
+      await saveEvidenceScreenshot(page, "02-inbox-assistant.png");
+
+      // Clicking top-right "工作台" enters /work with 56px frosted top bar; operator must NOT see /admin or /admin/people
+      await page.getByTestId("agent-open-workbench-btn").click();
+      await expect(page).toHaveURL(/\/work$/);
       const mainNav = page.getByRole("navigation", { name: "主导航" });
+      await expect(mainNav).toBeVisible({ timeout: 15_000 });
       await expect(mainNav.locator('a[href="/admin"]')).toHaveCount(0);
       await expect(mainNav.locator('a[href="/admin/people"]')).toHaveCount(0);
 
-      await saveEvidenceScreenshot(page, "02-inbox-assistant.png");
-
       await assertDomZeroLeaks(page);
       await assertNoBrowserStorageLeaks(page);
-      expect(audit.consoleErrors, "Zero console errors on /login & /inbox").toEqual([]);
-      expect(audit.pageErrors, "Zero page errors on /login & /inbox").toEqual([]);
+      expect(audit.consoleErrors, "Zero console errors on /, /inbox & /work").toEqual([]);
+      expect(audit.pageErrors, "Zero page errors on /, /inbox & /work").toEqual([]);
       expect(audit.apiViolations, "Zero BFF leak violations").toEqual([]);
     } finally {
       audit.dispose();
@@ -123,7 +145,7 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
     const agentPatchRes = await agentPatchPromise;
     expect(agentPatchRes.status()).toBe(200);
 
-    // 3. Reload and verify persistence across /inbox pinned Agent row and AppShell sidebar
+    // 3. Reload and verify persistence across /inbox pinned Agent hero, Muse header, and bottom dock account menu
     await page.goto("/inbox", { waitUntil: "domcontentloaded" });
     await page.reload({ waitUntil: "domcontentloaded" });
 
@@ -132,19 +154,16 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
     await expect(page.getByTestId("inbox-pinned-agent-name")).toContainText(
       customAgentName,
     );
-
-    // Verify sidebar Agent link reflects updated customAgentName
-    const sidebarAgentLink = page.locator('nav[aria-label="主导航"] a[href="/settings/agent"]');
-    await expect(sidebarAgentLink).toHaveAttribute(
-      "title",
-      new RegExp(customAgentName),
+    await expect(page.getByTestId("assistant-header-name")).toContainText(
+      customAgentName,
     );
 
-    // Open sidebar user dropdown menu and verify customUserName projection
+    // Open bottom sidebar user dock menu and verify both customUserName & customAgentName projection
     const accountMenuBtn = page.getByRole("button", { name: "账号与资料菜单" });
+    await expect(accountMenuBtn).toContainText(customUserName);
     await accountMenuBtn.click();
-    await expect(page.getByText(customUserName)).toBeVisible();
-    await expect(page.getByText(customAgentName).first()).toBeVisible();
+    await expect(page.getByText(customUserName).first()).toBeVisible();
+    await expect(page.getByText(new RegExp(customAgentName)).first()).toBeVisible();
     await page.keyboard.press("Escape");
 
     // Verify backend persisted values directly
@@ -162,7 +181,7 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
     await loginAsPersona(page, "operator");
     await page.goto("/inbox/assistant", { waitUntil: "domcontentloaded" });
 
-    // Type a draft message into the assistant composer
+    // Type a draft message into the Muse floating composer
     const composer = page
       .getByTestId("assistant-composer-input")
       .or(page.locator("[data-composer-input]").first())
@@ -173,40 +192,36 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
     await composer.fill(draftText);
     await expect(composer).toHaveValue(draftText);
 
-    const drawerToggleBtn = page.getByRole("button", { name: "切换右侧业务面板" });
     const drawerAside = page.locator('aside[aria-label="业务核对面板"]');
 
-    // Focus the drawer toggle button so Escape focus restoration can be verified deterministically
-    await drawerToggleBtn.focus();
+    // Muse header omits redundant PanelRight icon; drawer opens/closes strictly via keyboard shortcut
+    await expect(page.getByRole("button", { name: "切换右侧业务面板" })).toHaveCount(0);
+    await composer.focus();
     await expect(drawerAside).toHaveAttribute("aria-hidden", "true");
 
     // Toggle right business drawer via keyboard shortcut (Meta+. on macOS, Control+. elsewhere)
     const shortcut = process.platform === "darwin" ? "Meta+." : "Control+.";
     await page.keyboard.press(shortcut);
     await expect(drawerAside).toHaveAttribute("aria-hidden", "false");
-    await expect(drawerToggleBtn).toHaveAttribute("aria-expanded", "true");
 
-    // Press Escape to close drawer and verify focus returns cleanly
+    // Press Escape to close drawer and verify focus returns cleanly to the composer
     await page.keyboard.press("Escape");
     await expect(drawerAside).toHaveAttribute("aria-hidden", "true");
-    await expect(drawerToggleBtn).toHaveAttribute("aria-expanded", "false");
 
-    // Verify focus was restored asynchronously (via requestAnimationFrame) to either the toggle trigger or composer
+    // Verify focus was restored asynchronously (via requestAnimationFrame) back to composer
     await expect
       .poll(
         async () =>
           page.evaluate(() => {
             const active = document.activeElement;
             if (!active) return false;
-            const ariaLabel = active.getAttribute("aria-label") || "";
             return (
-              ariaLabel === "切换右侧业务面板" ||
               active.hasAttribute("data-composer-input") ||
               active.tagName === "TEXTAREA"
             );
           }),
         {
-          message: "Focus should restore after Escape closes drawer",
+          message: "Focus should restore to composer after Escape closes drawer",
           timeout: 5_000,
         },
       )
@@ -216,13 +231,13 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
     await expect(composer).toHaveValue(draftText);
   });
 
-  test("1.4 @mobile @mobile-only Mobile (390x844) navigation to thread detail and clean Back path", async ({
+  test("1.4 @mobile @mobile-only Mobile (390x844) navigation to iMessage thread detail, clean Back path & Workbench nav", async ({
     page,
   }) => {
-    await page.goto("/login", { waitUntil: "domcontentloaded" });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(
       page.getByRole("heading", { name: "登录企业工作台" }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
 
     // Compact 3D stage renders cleanly on narrow screen without horizontal scroll blowup
     const hasOverflow = await page.evaluate(
@@ -233,16 +248,42 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
     await loginAsPersona(page, "operator");
     await page.goto("/inbox", { waitUntil: "domcontentloaded" });
 
-    // Verify mobile bottom nav is visible on 390px viewport
-    const mobileNav = page.getByRole("navigation", { name: "移动端主导航" });
-    await expect(mobileNav).toBeVisible();
-
-    // Tap pinned Agent thread to open /inbox/assistant
+    // Verify mobile /inbox renders full-width Messenger sidebar with pinned Agent & bottom dock
     const pinnedAgent = page.getByTestId("inbox-pinned-agent");
     await expect(pinnedAgent).toBeVisible({ timeout: 15_000 });
-    await pinnedAgent.click();
+    await expect(page.getByRole("link", { name: "进入工作台" })).toBeVisible();
 
+    // Tap pinned Agent thread to open /inbox/assistant
+    await pinnedAgent.click();
     await expect(page).toHaveURL(/\/inbox\/assistant/);
+    await expect(page.getByTestId("assistant-workspace")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Trigger one real query so the mobile screenshot showcases live iMessage bubbles + 3D result card
+    const composer = page.getByTestId("assistant-composer-input");
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("查看运单 SHP-1001 仓库 HK01");
+    const turnRespPromise = page.waitForResponse(
+      (res) =>
+        new URL(res.url()).pathname === "/v1/workbench/turns" &&
+        res.request().method() === "POST",
+    );
+    await page.getByTestId("assistant-send-btn").click();
+    const turnResp = await turnRespPromise;
+    expect(turnResp.status()).toBe(200);
+    await expect(page.getByTestId("turn-card-result").first()).toBeVisible({
+      timeout: 12_000,
+    });
+
+    const threadOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 4,
+    );
+    expect(threadOverflow, "Mobile assistant thread should not overflow horizontally").toBe(
+      false,
+    );
+
+    await page.waitForTimeout(300);
     await saveEvidenceScreenshot(page, "08-mobile-inbox.png");
 
     // Verify clean mobile Back button returns to /inbox
@@ -250,5 +291,11 @@ test.describe("Phase 1: Auth, QZT 3D Login, Shell, Profiles & Keyboard Drawer", 
     await expect(backLink).toBeVisible();
     await backLink.click();
     await expect(page).toHaveURL(/\/inbox$/);
+
+    // Navigate to /work and verify mobile bottom navigation bar renders cleanly
+    await page.getByRole("link", { name: "进入工作台" }).click();
+    await expect(page).toHaveURL(/\/work$/);
+    const mobileNav = page.getByRole("navigation", { name: "移动端主导航" });
+    await expect(mobileNav).toBeVisible({ timeout: 15_000 });
   });
 });

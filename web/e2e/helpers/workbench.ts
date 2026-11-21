@@ -131,7 +131,7 @@ export function attachRuntimeAudit(page: Page): RuntimeAuditHandle {
 
     const cacheControl = res.headers()["cache-control"] ?? null;
     if (
-      pathname.startsWith("/v1/") &&
+      (pathname.startsWith("/v1/") || pathname.startsWith("/api/")) &&
       (!cacheControl || !cacheControl.toLowerCase().includes("no-store"))
     ) {
       apiViolations.push(`Missing Cache-Control: no-store on ${pathname}`);
@@ -262,25 +262,79 @@ export async function assertDomZeroLeaks(page: Page): Promise<void> {
   }
 }
 
+async function getLiveActorSubject(page: Page): Promise<string | null> {
+  const res = await bffRequest<{ subject?: string }>(page, "/v1/me");
+  if (res.status === 200 && typeof res.body?.subject === "string") {
+    return res.body.subject;
+  }
+  return null;
+}
+
+export async function loginWithPassword(
+  page: Page,
+  username: string,
+  password: string,
+  expectedSubject?: string,
+): Promise<void> {
+  await expect(page.getByTestId("login-account-input")).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByTestId("login-account-input").fill(username);
+  await page.getByTestId("login-password-input").fill(password);
+
+  const loginRespPromise = page.waitForResponse(
+    (res) =>
+      new URL(res.url()).pathname === "/api/auth/login" &&
+      res.request().method() === "POST",
+  );
+  await page.getByTestId("login-submit-btn").click();
+  const loginResp = await loginRespPromise;
+  expect(loginResp.status(), "Account + password login must succeed with 200").toBe(
+    200,
+  );
+
+  await expect(page).toHaveURL(/\/inbox(?:\/|$)/, { timeout: 15_000 });
+  const authenticatedAnchor = page
+    .getByRole("button", { name: "账号与资料菜单" })
+    .or(page.getByRole("button", { name: "切换本地演示身份" }));
+  await expect(authenticatedAnchor.first()).toBeVisible({ timeout: 15_000 });
+  if (expectedSubject) {
+    await expect
+      .poll(() => getLiveActorSubject(page), { timeout: 10_000 })
+      .toBe(expectedSubject);
+  }
+}
+
 export async function loginAsPersona(
   page: Page,
   persona: DemoPersona,
 ): Promise<void> {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
 
-  // If already authenticated, switch via header switcher instead
+  // Wait until either the login heading or an authenticated shell anchor appears
   const switcher = page.getByRole("button", { name: "切换本地演示身份" });
-  const isLoginScreen = await page
-    .getByRole("heading", { name: "登录企业工作台" })
-    .isVisible()
-    .catch(() => false);
+  const accountMenuBtn = page.getByRole("button", { name: "账号与资料菜单" });
+  const loginHeading = page.getByRole("heading", { name: "登录企业工作台" });
 
-  if (!isLoginScreen && (await switcher.isVisible().catch(() => false))) {
-    const currentText = (await switcher.innerText()).trim();
-    if (!new RegExp(`^${persona}\\b`).test(currentText)) {
+  await expect(loginHeading.or(switcher).or(accountMenuBtn).first()).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const isLoginScreen = await loginHeading.isVisible().catch(() => false);
+  if (!isLoginScreen) {
+    const currentSubject = await getLiveActorSubject(page);
+    if (currentSubject !== persona) {
       await switchPersona(page, persona);
     }
     return;
+  }
+
+  // v2 LoginView keeps the local demo persona helper collapsed by default
+  const demoToggle = page.getByTestId("login-demo-helper-toggle");
+  await expect(demoToggle).toBeVisible({ timeout: 15_000 });
+  if ((await demoToggle.getAttribute("aria-expanded")) !== "true") {
+    await demoToggle.click();
+    await expect(demoToggle).toHaveAttribute("aria-expanded", "true");
   }
 
   const byTestId = page.getByTestId(`login-persona-${persona}`);
@@ -293,11 +347,21 @@ export async function loginAsPersona(
 
   const targetButton = (await byTestId.count()) > 0 ? byTestId : exactPersonaBtn;
   await expect(targetButton).toBeVisible({ timeout: 15_000 });
+
+  const demoLoginPromise = page.waitForResponse(
+    (res) =>
+      new URL(res.url()).pathname === "/api/auth/demo-login" &&
+      res.request().method() === "POST",
+  );
   await targetButton.click();
+  const demoLoginResp = await demoLoginPromise;
+  expect(demoLoginResp.status()).toBe(200);
 
   await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 15_000 });
-  await expect(switcher).toBeVisible({ timeout: 15_000 });
-  await expect(switcher).toContainText(persona);
+  await expect(accountMenuBtn.or(switcher).first()).toBeVisible({
+    timeout: 15_000,
+  });
+  expect(await getLiveActorSubject(page)).toBe(persona);
 }
 
 export async function switchPersona(
@@ -305,10 +369,33 @@ export async function switchPersona(
   persona: DemoPersona,
 ): Promise<void> {
   const switcher = page.getByRole("button", { name: "切换本地演示身份" });
-  await expect(switcher).toBeVisible({ timeout: 15_000 });
+  const accountMenuBtn = page.getByRole("button", { name: "账号与资料菜单" });
+
+  // Wait for AppShell hydration before inspecting which shell variant is active
+  await expect(switcher.or(accountMenuBtn).first()).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const pathname = new URL(page.url()).pathname;
+  const isInboxRoute = pathname === "/inbox" || pathname.startsWith("/inbox/");
+
+  // On /inbox* routes, DemoPersonaSwitcher is folded inside the bottom account popover;
+  // on all Workbench/Admin/Calendar/Settings routes, it is directly visible in the top bar.
+  let openedAccountPopover = false;
+  if (isInboxRoute && !(await switcher.isVisible().catch(() => false))) {
+    await expect(accountMenuBtn).toBeVisible({ timeout: 15_000 });
+    await accountMenuBtn.click();
+    await expect(switcher).toBeVisible({ timeout: 10_000 });
+    openedAccountPopover = true;
+  } else {
+    await expect(switcher).toBeVisible({ timeout: 15_000 });
+  }
 
   const currentLabel = (await switcher.innerText()).trim();
   if (new RegExp(`^${persona}\\b`).test(currentLabel)) {
+    if (openedAccountPopover) {
+      await page.keyboard.press("Escape");
+    }
     return;
   }
 
@@ -324,11 +411,34 @@ export async function switchPersona(
 
   const option = (await byTestId.count()) > 0 ? byTestId : byMenuItem;
   await expect(option).toBeVisible({ timeout: 10_000 });
+
+  // Wait for the server-side persona swap & fresh capabilities hydration BEFORE reading /v1/me
+  const demoLoginPromise = page.waitForResponse(
+    (res) =>
+      new URL(res.url()).pathname === "/api/auth/demo-login" &&
+      res.request().method() === "POST",
+  );
+  const capsPromise = page.waitForResponse(
+    (res) =>
+      new URL(res.url()).pathname === "/v1/workbench/capabilities" &&
+      res.request().method() === "GET",
+  );
   await option.click();
 
-  await expect(switcher).toContainText(persona, { timeout: 15_000 });
-  // Wait briefly for post-switch capabilities/profile hydration
-  await expect(switcher).toBeEnabled({ timeout: 10_000 });
+  const demoLoginResp = await demoLoginPromise;
+  expect(demoLoginResp.status()).toBe(200);
+  const capsResp = await capsPromise;
+  expect(capsResp.status()).toBe(200);
+
+  // If switcher remains directly visible (non-inbox top bar), wait for it to reflect persona & re-enable
+  if (!openedAccountPopover) {
+    await expect(switcher).toContainText(persona, { timeout: 15_000 });
+    await expect(switcher).toBeEnabled({ timeout: 10_000 });
+  } else if (await switcher.isVisible().catch(() => false)) {
+    await expect(switcher).toContainText(persona, { timeout: 15_000 });
+    await expect(switcher).toBeEnabled({ timeout: 10_000 });
+    await page.keyboard.press("Escape");
+  }
 }
 
 export interface BffResponse<T = unknown> {

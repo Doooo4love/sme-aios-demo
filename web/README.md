@@ -2,21 +2,29 @@
 
 Next.js 16 (App Router) + TypeScript strict + Tailwind CSS v4 + unified `radix-ui` enterprise workbench frontend and same-origin BFF for `aios_platform`.
 
-> 完整中文交付文档、API 核对清单、真假数据对照与最小成本部署指南请参见 [docs/workbench-frontend.zh-CN.md](../docs/workbench-frontend.zh-CN.md)。
+> 完整中文交付文档、API 核对清单、MCP 环境变量接入指南、真假数据对照、Opus 5.5 视觉审计与 Polish Round 2 总结、19/19 自动化验收报告与低成本部署指南请参见 [docs/workbench-frontend.zh-CN.md](../docs/workbench-frontend.zh-CN.md)。
 
-## Stack Highlights
+## Stack & v2 Architecture Highlights
 
-- **Runtime & UI**: Next.js `16.4.x` (`output: "standalone"`), React `19.3.x`, TypeScript `5.9.x` (`strict: true`, `noUncheckedIndexedAccess: true`), Tailwind CSS `v4`, unified `radix-ui`, `lucide-react`, `zod`.
-- **Same-Origin BFF (`src/app/v1/[...path]/route.ts`, `src/lib/bff/*`)**:
-  - Proxies strictly allowlisted `/v1/*`, `/healthz`, and `/readyz` routes to `aios_platform`.
-  - Supports optional split-upstream routing via `AIOS_ASSURANCE_API_BASE_URL` so `/v1/assurance/*` can run on a dedicated Assurance process (`:8761`) while the main workbench uses `AIOS_WORKBENCH_PLANNER=pydantic-ai` (`:8760`).
-  - Enforces server-side `Origin` checks, relays HttpOnly cookies (`aios_demo_session` / `__Host-aios_session`) via `getSetCookie()`, strips `capabilities.planner` and forbidden internal/LLM keys, normalizes all `404` responses to uniform `RECORD_UNAVAILABLE`, sanitizes `422`/`5xx` payloads, and sets `Cache-Control: no-store`.
-- **Client Auth & Anti-Leak Hygiene (`src/lib/api-client.ts`, `src/lib/session-context.tsx`)**:
-  - `csrf_token`, drafts, and business objects live strictly in memory (zero `localStorage` / `sessionStorage` business payloads, zero `NEXT_PUBLIC_*` secrets).
-  - `authGeneration` + `AbortController` registry immediately aborts in-flight fetches, drops late responses from previous personas, and revokes transient `blob:` preview URLs on `401`, logout, or demo persona switch.
-- **Anti-AI-Slop Visual System & QZT 3D Stage (`src/styles/tokens.css`, `src/components/kinetic/*`)**:
-  - Warm paper canvas (`#F4F3EF`), crisp sheets (`#FFFFFF`), warm secondary plane (`#ECEAE4`), deep graphite ink (`#14181F`), single cool cyan-blue accent (`#0C6E91`), `1px` hairlines, `.tabular-nums`, and `prefers-reduced-motion` support.
-  - Obsidian 3D Canvas 2D stage (`ArchitecturalRelayCanvas`) confined strictly to `/login`; real-state `StatePulseBeacon` and `ExecutionTopologyRibbon` with zero fake progress bars.
+- **Runtime & UI**: Next.js `16.4.6` (`output: "standalone"`), React `19.3.x`, TypeScript `5.9.x` (`strict: true`, `noUncheckedIndexedAccess: true`), Tailwind CSS `v4`, unified `radix-ui`, `lucide-react`, `zod`.
+- **Unified Frosted Alabaster & Porcelain Design System (`src/styles/tokens.css`, `src/components/kinetic/*`)**:
+  - Single cohesive cool-neutral light system across every route (`/` → `/inbox` → `/work` → `/proposals/[id]` → `/calendar` → `/admin` → `/admin/people` → mobile `390×844`): alabaster canvas (`#F5F6F8`), macOS Sequoia frosted vibrancy sidebar (`blur(20px) saturate(180%)`), luminous white sheets (`#FFFFFF`), deep obsidian ink (`#111318`), single AA Oceanic Cobalt accent (`#1668E3`), tokenized radii (`rounded-xs`/`sm`/`tile`/`card`/`xl`/`full`), ambient layered shadows, `.tabular-nums`, and strict `prefers-reduced-motion` freeze.
+  - **Calibrated 3D & Truthful Motion**: Porcelain 3D `ArchitecturalRelayCanvas` on `/` & `/login`; size-damped `Interactive3DCard` (`maxTilt <= 3°`, `interactive={false}` sheen-only for static cards); `BriefProgressChain` (truthful single-line `正在处理请求…` while pending, collapsible real-state business checklist on done/error, zero fake CoT); flush 5-stage `ExecutionTopologyRibbon`.
+- **Root `/` Account + Password Login (`src/app/page.tsx`, `src/features/auth/LoginView.tsx`, `POST /api/auth/login`)**:
+  - Unauthenticated `/` renders the Account + Password login form + Porcelain 3D showcase directly (with collapsed-by-default 11-persona local demo quick-fill helper and optional enterprise OIDC `/v1/session/login`); authenticated `/` redirects directly to `/inbox`.
+  - Constant-time password verification, anti-enumeration `401`, sliding-window `429` brute-force guard, and same-origin HttpOnly session cookie exchange.
+- **Native macOS 2-Column Messenger + Company Contacts Directory (`src/features/inbox/*`, `/api/directory/*`)**:
+  - Full-height 2-column macOS Sequoia split layout (zero legacy 60px far-left rail or redundant top chrome on `/inbox*`), unified `⌘K` search across rooms and live tenant-scoped colleagues, **Company Contacts Directory** modal (`GET /api/directory/contacts`, `POST /api/directory/direct-room`, strict tenant boundary, 1-click 1:1 room), Pinned 3D Agent hero tile, live room previews + compact timestamps, and serene single-row bottom dock (demo persona switcher folded cleanly inside the account popover).
+- **Pure Muse Personal Agent Canvas (`src/features/inbox/AssistantWorkspace.tsx`)**:
+  - Ultra-clean 60px frosted header showing **only** custom Agent avatar/name on the left and top-right `"工作台"` pill (`⌘.` toggles the frosted right slide-over inspector drawer).
+  - Seamless iMessage spring bubbles with SVG tails, unboxed serene empty state, and floating capsule composer with strictly two footer controls: `+ 添加上下文` popover (today brief, frosted History Verification Modal with real-time `403`/`404` scrub, NL Zoom booking, structured tool form) and circular Cobalt `↑` Send.
+- **Permission-Tiered Workbench Hub (`src/features/workbench/*`, `/work`)**:
+  - 4 capability-gated tiers (`执行与进件层`, `专业复核层`, `审批与经营层`, `管理与治理层`), real live KPI tiles, humanized business titles + copyable short IDs, localized audit timelines (`自审批已拦截`, etc.), formatted Assurance currency (`HKD 12,000.00`), and calm 5-control frosted top bar.
+- **Server-Side MCP Calendar & Natural-Language Zoom Booking (`src/lib/mcp/*`, `/api/integrations/*`, `/api/calendar/ics`)**:
+  - Supports real Streamable HTTP MCP connectors for **Google Calendar**, **Apple iCloud CalDAV**, **Outlook / M365 Graph**, and **Zoom** (MCP → Zoom S2S OAuth → honest `sandbox_preview`), real RFC 5545 / RFC 7986 `.ics` export (`GET /api/calendar/ics`) with zero API keys required, and bilingual ZH/EN two-step NL Zoom booking (`POST /api/integrations/zoom/book`: `parse`/`preview` → explicit `confirm` → real internal `/v1/calendar/events` + room notification + external MCP fan-out + `.ics`).
+- **Same-Origin BFF & Zero-Leak Security Hygiene (`src/app/v1/[...path]/route.ts`, `src/lib/bff/*`, `src/lib/api-client.ts`)**:
+  - Allowlisted proxy to `aios_platform` with optional split-upstream `/v1/assurance/*` via `AIOS_ASSURANCE_API_BASE_URL`.
+  - Strips `capabilities.planner` and all forbidden internal/LLM JSON keys (`provider`, `prompt`, `planner`, `reasoning`, `chain_of_thought`, `api_key`, `secret`, etc.), normalizes `404` to uniform `RECORD_UNAVAILABLE`, enforces `Cache-Control: no-store` on all `/v1/*` and `/api/*` routes, stores `csrf_token`/drafts/objects strictly in memory (zero `localStorage`/`sessionStorage`, zero `NEXT_PUBLIC_*` secrets), and drops late responses across `authGeneration` resets.
 
 ---
 
@@ -30,7 +38,7 @@ From repository root (`/Users/rexzheng/Documents/AIOS`):
 ./deploy/demo/start-local-demo.sh
 ```
 
-Open **http://localhost:3000/login** and pick any of the 11 controlled demo personas (`operator`, `manager`, `finance`, `access-admin`, `admin`, `other-manager`, `island-manager`, `viewer`, `quality`, `legal`, `executive`).
+Open **http://localhost:3000/** and sign in with Account + Password (e.g. `operator` / `aios2026`, or `manager` / `aios2026`), or expand **「测试演示账号快速填入」** to switch across all 11 controlled demo personas (`operator`, `manager`, `finance`, `access-admin`, `admin`, `other-manager`, `island-manager`, `viewer`, `quality`, `legal`, `executive`).
 
 ### Option B · One-Command `$0` Public HTTPS Demo (Local Mac + Cloudflare Quick Tunnel)
 
@@ -80,16 +88,31 @@ pnpm dev
 
 ## Environment Variables (`web/`)
 
-All variables are **server-only**. Never prefix any secret or backend URL with `NEXT_PUBLIC_`.
+All variables are **server-only**. Never prefix any secret, backend URL, or MCP credential with `NEXT_PUBLIC_`.
+
+### Core BFF & Authentication
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `AIOS_API_BASE_URL` | Yes | `http://127.0.0.1:8760` | Internal FastAPI base URL for `/v1/*`, `/healthz`, `/readyz`. |
 | `AIOS_ASSURANCE_API_BASE_URL` | Optional | *(falls back to `AIOS_API_BASE_URL`)* | Dedicated Assurance backend URL (e.g. `http://127.0.0.1:8761`) in dual-port Cloud LLM + Assurance setups. |
 | `AIOS_BROWSER_ORIGIN` | Yes | `http://localhost:3000` | Exact browser origin (`scheme://host[:port]`) validated on all mutations and forwarded to FastAPI. Must match FastAPI's `AIOS_BROWSER_ORIGIN`. |
-| `AIOS_ENABLE_DEMO_AUTH` | Demo only | `0` | Set to `1` ONLY in local/demo environments to enable `/api/auth/demo-login`. |
+| `AIOS_ENABLE_DEMO_AUTH` | Demo only | `0` | Set to `1` ONLY in local/demo environments to enable `/api/auth/login` and `/api/auth/demo-login`. |
 | `AIOS_DEMO_SECRET` | Demo only | — | Must match FastAPI `AIOS_DEMO_SECRET` (`>= 32` chars, no `.`). Held exclusively on the BFF server. |
-| `AIOS_OIDC_LOGIN_ENABLED` | Optional | `1` when demo auth is disabled | Controls visibility of the enterprise OIDC (`/v1/session/login`) button on `/login`. |
+| `AIOS_DEMO_LOGIN_PASSWORD` | Demo only | `aios2026` | Local Account + Password demo secret for `POST /api/auth/login` when `AIOS_ENABLE_DEMO_AUTH=1`. |
+| `AIOS_OIDC_LOGIN_ENABLED` | Optional | `1` when demo auth is disabled | Controls visibility of the enterprise OIDC (`/v1/session/login`) button on `/` & `/login`. |
+
+### Optional External Calendar & Zoom MCP Connectors (Zero Keys Required by Default)
+
+Without these variables, AIOS runs 100% live internal calendar persistence, honest MCP sandbox status, and real RFC 5545 / RFC 7986 `.ics` export (`GET /api/calendar/ics`). Setting the server-side variables below seamlessly upgrades each connector to live sync:
+
+| Connector | Server-Only Environment Variables |
+|---|---|
+| **Google Calendar MCP** (`@cocal/google-calendar-mcp`) | `AIOS_MCP_GOOGLE_CALENDAR_URL`, `AIOS_MCP_GOOGLE_CALENDAR_TOKEN`, `AIOS_MCP_GOOGLE_CALENDAR_ID` (default `primary`), `AIOS_MCP_GOOGLE_CALENDAR_TOOL` (default `create-event`) |
+| **Apple iCloud CalDAV MCP** (`caldav-mcp --http`) | `AIOS_MCP_ICLOUD_CALENDAR_URL`, `AIOS_MCP_ICLOUD_CALENDAR_TOKEN`, `AIOS_MCP_ICLOUD_CALENDAR_TOOL` (default `create_event`) |
+| **Outlook / M365 Graph MCP** (`@softeria/ms-365-mcp-server`) | `AIOS_MCP_OUTLOOK_CALENDAR_URL`, `AIOS_MCP_OUTLOOK_CALENDAR_TOKEN`, `AIOS_MCP_OUTLOOK_CALENDAR_TOOL` (default `create-calendar-event`) |
+| **Zoom Video Meetings** (Option A: MCP) | `AIOS_MCP_ZOOM_URL`, `AIOS_MCP_ZOOM_TOKEN`, `AIOS_MCP_ZOOM_TOOL` (default `create_meeting`) |
+| **Zoom Video Meetings** (Option B: S2S OAuth) | `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ZOOM_HOST_USER_ID` (default `me`) |
 
 ---
 
@@ -100,12 +123,12 @@ pnpm --dir web install       # Install dependencies (pnpm 11 + Node 26)
 pnpm --dir web dev           # Local dev server on 127.0.0.1:3000
 pnpm --dir web typecheck     # Strict TypeScript check (`tsc --noEmit`)
 pnpm --dir web build         # Production Turbopack standalone build (`.next/standalone/server.js`)
-pnpm --dir web test:e2e      # Run full Playwright E2E + security regression suite (15 tests, desktop + mobile)
+pnpm --dir web test:e2e      # Run full Playwright E2E + security regression suite (19 tests, desktop + mobile)
 ```
 
 > **Production Standalone Runtime**: Because `next.config.ts` enables `output: "standalone"`, run production servers with `cp -R web/.next/static web/.next/standalone/.next/ && HOSTNAME=127.0.0.1 PORT=3000 node web/.next/standalone/server.js` (handled automatically by `./deploy/demo/start-local-demo.sh --prod` and `deploy/demo/aios-demo-web.service`).
 >
-> **First-time Playwright setup**: Install Chromium once via `pnpm --dir web exec playwright install chromium`. Run E2E tests against a live FastAPI + Next.js stack (`PLAYWRIGHT_BASE_URL=http://localhost:3000 pnpm --dir web test:e2e`). Latest full live verification: **15/15 PASS** (desktop `1440x900` + mobile `390x844` + live Assurance `PO-100` + zero-leak audit), curated screenshots saved in `web/e2e/screenshots/`.
+> **First-time Playwright setup**: Install Chromium once via `pnpm --dir web exec playwright install chromium`. Run E2E tests against a live FastAPI + Next.js stack (`PLAYWRIGHT_BASE_URL=http://localhost:3000 pnpm --dir web test:e2e`). Latest full live verification after Polish Round 2: **19 / 19 PASS** (desktop `1440×900` + mobile `390×844` + live Assurance `PO-100` + Contacts tenant isolation + MCP/Zoom `.ics` + zero-leak audit), with 12 fresh screenshots saved in `web/e2e/screenshots/`.
 
 ---
 
@@ -115,25 +138,33 @@ pnpm --dir web test:e2e      # Run full Playwright E2E + security regression sui
 web/
 ├── playwright.config.ts        # Desktop (1440x900) + Mobile (390x844) sequential E2E config
 ├── e2e/
-│   ├── helpers/workbench.ts    # Login/switch helpers, BFF fetcher, zero-leak runtime auditor
+│   ├── helpers/workbench.ts    # Account+Password/demo login, persona switch, BFF fetcher, zero-leak auditor
 │   ├── 01-auth-shell-profile.spec.ts
 │   ├── 02-order-approval-receipt.spec.ts
 │   ├── 03-module-access-and-isolation.spec.ts
 │   ├── 04-collaboration-roles-calendar.spec.ts
 │   ├── 05-security-errors-resilience.spec.ts
-│   └── screenshots/            # Key-flow verification screenshots
+│   ├── 06-v2-login-contacts-mcp-zoom.spec.ts
+│   └── screenshots/            # 12 curated v2 verification screenshots
 └── src/
     ├── app/
+    │   ├── page.tsx            # Root `/` SSR session check -> <LoginView /> or redirect /inbox
+    │   ├── login/              # Direct login route -> <LoginView />
     │   ├── v1/[...path]/       # Same-origin sanitized BFF proxy
     │   ├── healthz/ & readyz/  # Public health/readiness passthrough
-    │   ├── api/auth/           # Controlled server-side demo login & persona metadata
-    │   ├── login/              # Split authentication view + QZT 3D ArchitecturalRelayCanvas
+    │   ├── api/auth/           # Account+Password login, controlled demo-login & persona metadata
+    │   ├── api/directory/      # Tenant-scoped Company Contacts Directory & 1:1 direct-room BFF
+    │   ├── api/integrations/   # MCP connector status, NL Zoom booking & external calendar sync BFF
+    │   ├── api/calendar/ics/   # RFC 5545 / RFC 7986 .ics generator
     │   └── (app)/              # Authenticated AppShell routes (/inbox, /work, /orders/new, /proposals/[id], /calendar, /admin, /admin/people, /settings/*)
     ├── components/
-    │   ├── kinetic/            # ArchitecturalRelayCanvas, StatePulseBeacon, ExecutionTopologyRibbon
-    │   ├── shell/              # AppShell, WorkbenchDrawerSlot, DemoPersonaSwitcher, NoticesPopover
-    │   └── ui/                 # Button, StatusBadge, ConfirmDialog, Modal, AccessNoticeCard, Avatar, SourceTag
-    ├── features/               # Feature modules (inbox, chat, calendar, settings, workbench, orders, proposals, admin, people)
-    ├── lib/                    # BFF config/proxy/sanitize, api-client (authGeneration/CSRF), contexts, types
-    └── styles/tokens.css       # Anti-AI-Slop v2 harmonized tokens
+    │   ├── kinetic/            # ArchitecturalRelayCanvas, Interactive3DCard, BriefProgressChain, StatePulseBeacon, ExecutionTopologyRibbon
+    │   ├── shell/              # AppShell (2-col Messenger + 5-control Workbench top bar), WorkbenchDrawerSlot, DemoPersonaSwitcher, NoticesPopover
+    │   └── ui/                 # Button (w/ quiet variant), Avatar, StatusBadge, ConfirmDialog, Modal, AccessNoticeCard, SourceTag
+    ├── features/               # Feature modules (auth, inbox, chat, calendar, settings, workbench, orders, proposals, admin, people)
+    ├── lib/
+    │   ├── bff/                # config, proxy, sanitize, demo-auth, directory
+    │   ├── mcp/                # client (Streamable HTTP JSON-RPC), connectors, nl-meeting, ics
+    │   └── ...                 # api-client (authGeneration/CSRF), session-context, workbench-context, types
+    └── styles/tokens.css       # Unified Frosted Alabaster & Porcelain v2 design tokens & spring physics
 ```

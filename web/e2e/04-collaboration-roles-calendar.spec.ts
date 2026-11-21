@@ -255,9 +255,12 @@ test.describe("Phase 4: Roles (Finance), Human Chat, Meeting Idempotency, Notice
           timeout: 15_000,
         });
         await page.getByTestId("assurance-case-row-PO-100").click();
-        await expect(page.getByTestId("assurance-detail-PO-100")).toBeVisible({
+        const poDetail = page.getByTestId("assurance-detail-PO-100");
+        await expect(poDetail).toBeVisible({
           timeout: 12_000,
         });
+        await expect(poDetail).toContainText("HKD 12,000.00");
+        await expect(poDetail).not.toContainText("(true)");
         await saveEvidenceScreenshot(page, "09-assurance-po100.png");
 
         // Initiate PO-100 review as operator with unique client_id

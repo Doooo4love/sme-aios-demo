@@ -28,7 +28,9 @@ test.describe("Phase 3: Employee Module Access Lifecycle, Cross-Warehouse & Cros
 
       // ── Step 2: Verify regular ops `admin` CANNOT access /admin/people (workbench.access.manage gate) ──
       await switchPersona(page, "admin");
+      await page.goto("/admin", { waitUntil: "domcontentloaded" });
       const adminNav = page.getByRole("navigation", { name: "主导航" });
+      await expect(adminNav).toBeVisible({ timeout: 15_000 });
       await expect(adminNav.locator('a[href="/admin/people"]')).toHaveCount(0);
 
       await page.goto("/admin/people", { waitUntil: "domcontentloaded" });
@@ -92,6 +94,8 @@ test.describe("Phase 3: Employee Module Access Lifecycle, Cross-Warehouse & Cros
       const grantPutResp = await grantPutPromise;
       expect(grantPutResp.status()).toBe(200);
 
+      // Allow 150ms pill/checkbox color transition to settle before evidence capture
+      await page.waitForTimeout(300);
       await saveEvidenceScreenshot(page, "07-admin-people-access.png");
 
       // ── Step 4: Switch to `operator` -> /inbox/assistant queries INV-100 in HK01 -> succeeds ──
@@ -169,6 +173,8 @@ test.describe("Phase 3: Employee Module Access Lifecycle, Cross-Warehouse & Cros
 
       // ── Step 6: Switch to `island-manager` (second tenant island) -> Harbour deep-link uniform 404 zero existence leak ──
       await switchPersona(page, "island-manager");
+      // Navigate away from the previous proposal page first so waitForResponse captures the fresh deep-link request cleanly
+      await page.goto("/work", { waitUntil: "domcontentloaded" });
       const islandDeepLinkRespPromise = page.waitForResponse(
         (res) =>
           new URL(res.url()).pathname ===
@@ -215,19 +221,31 @@ test.describe("Phase 3: Employee Module Access Lifecycle, Cross-Warehouse & Cros
       await switchPersona(page, "operator");
       await page.goto("/inbox/assistant", { waitUntil: "domcontentloaded" });
 
-      // 8a. Reloading old Agent history record via UI AND BFF fails cleanly (404 RECORD_UNAVAILABLE or 403 ACCESS_CHANGED)
+      // 8a. Reloading old Agent history record via v2 `+ 添加上下文` -> `context-menu-history` AND BFF fails cleanly (404 RECORD_UNAVAILABLE or 403 ACCESS_CHANGED)
       if (latestHistoryId) {
-        const histToggle = page.getByTestId("assistant-history-toggle");
-        if ((await histToggle.count()) > 0 && (await histToggle.isVisible())) {
-          await histToggle.click();
-          const expandBtn = page.getByTestId(`history-expand-${latestHistoryId}`);
-          if ((await expandBtn.count()) > 0 && (await expandBtn.isVisible())) {
-            await expandBtn.click();
-            await expect(
-              page.getByText(/当前账号无法访问这条记录。|访问权限已变更/).first(),
-            ).toBeVisible({ timeout: 12_000 });
-          }
-        }
+        const addCtxBtn = page.getByTestId("assistant-add-context-btn");
+        await expect(addCtxBtn).toBeVisible({ timeout: 15_000 });
+        await addCtxBtn.click();
+        const historyMenuBtn = page.getByTestId("context-menu-history");
+        await expect(historyMenuBtn).toBeVisible({ timeout: 10_000 });
+        await historyMenuBtn.click();
+
+        await expect(page.getByTestId("assistant-history-section")).toBeVisible({
+          timeout: 12_000,
+        });
+        const expandBtn = page.getByTestId(`history-expand-${latestHistoryId}`);
+        await expect(expandBtn).toBeVisible({ timeout: 12_000 });
+        await expandBtn.click();
+        await expect(
+          page.getByText(/当前账号无法访问这条记录。|访问权限已变更/).first(),
+        ).toBeVisible({ timeout: 12_000 });
+
+        // Close frosted History Verification Modal cleanly before continuing to composer
+        await page.keyboard.press("Escape");
+        await expect(page.getByTestId("assistant-history-section")).toBeHidden({
+          timeout: 8_000,
+        });
+
         const oldHistRes = await bffRequest<{ detail?: { code?: string } }>(
           page,
           `/v1/workbench/history/${encodeURIComponent(latestHistoryId)}`,

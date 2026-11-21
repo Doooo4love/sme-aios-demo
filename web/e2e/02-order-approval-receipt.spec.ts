@@ -82,7 +82,6 @@ test.describe("Phase 2: Structured Order -> Self-Approval Block -> Manager Appro
         { timeout: 15_000 },
       );
       await expect(page.getByText(/待审批|已生成提案/).first()).toBeVisible();
-      await saveEvidenceScreenshot(page, "03-proposal-detail-operator.png");
 
       // ── Step 2: Operator attempts self-approval -> rejected with 403 ACTION_NOT_ALLOWED while staying viewable ──
       const selfTurnRes = await bffRequest<{ detail?: { code?: string; next_step?: string } }>(
@@ -139,9 +138,20 @@ test.describe("Phase 2: Structured Order -> Self-Approval Block -> Manager Appro
         `Manager approvals queue should include ${proposalId}`,
       ).toBe(true);
 
-      // Open Approvals module in /work and confirm proposal appears
+      // Verify permission-tiered Workbench with 3D KPI cards renders cleanly for manager
+      await expect(page.getByTestId("workbench-page")).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId("work-tier-execution")).toBeVisible();
+      await expect(page.getByTestId("work-tier-approval_decision")).toBeVisible();
       const approvalsTab = page.getByTestId("work-tab-approvals");
       await expect(approvalsTab).toBeVisible({ timeout: 15_000 });
+      // Wait for unified queues to finish hydrating live KPI counts & humanized row before screenshot
+      await expect(page.getByTestId(`queue-expand-${proposalId}`)).toBeVisible({
+        timeout: 15_000,
+      });
+      await page.waitForTimeout(300);
+      await saveEvidenceScreenshot(page, "03-workbench-tiered.png");
+
+      // Open Approvals module in /work and confirm proposal appears
       await approvalsTab.click();
       await expect(
         page.getByTestId(`approval-open-link-${proposalId}`),
@@ -164,6 +174,7 @@ test.describe("Phase 2: Structured Order -> Self-Approval Block -> Manager Appro
       await expect(page.getByTestId("proposal-diff-view")).toBeVisible();
       await expect(page.getByText(poNumber).first()).toBeVisible();
       await expect(page.getByText(/48|EACH|CASE/).first()).toBeVisible();
+      await expect(page.getByText("自审批已拦截").first()).toBeVisible();
 
       await saveEvidenceScreenshot(page, "04-manager-approval-diff.png");
 
