@@ -1,0 +1,43 @@
+# ==============================================================================
+# IntegrAI Daily WAL-Safe SQLite Hot Backup Service
+# ==============================================================================
+# Runs `04-sqlite-backup.sh` to create consistent `.backup` snapshots of both
+# `store.sqlite` and `erp.sqlite` with SHA-256 verification, retention pruning,
+# and free disk space threshold alerting.
+#
+# Note on ReadWritePaths:
+#   `/var/lib/aios/state` is listed in ReadWritePaths ONLY because SQLite WAL
+#   mode requires mapping/coordinating the `-shm` index file during `.backup`.
+#   `04-sqlite-backup.sh` never mutates or deletes any live state database.
+# ==============================================================================
+
+[Unit]
+Description=IntegrAI SQLite WAL-Safe Hot Backup (store.sqlite + erp.sqlite)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios
+Environment=AIOS_STATE_DIR=/var/lib/aios/state
+Environment=AIOS_BACKUP_DIR=/var/backups/aios
+Environment=AIOS_BACKUP_RETENTION_DAYS=14
+Environment=AIOS_BACKUP_MIN_FREE_PCT=15
+ExecStart=/opt/aios/deploy/integrai/04-sqlite-backup.sh
+ReadWritePaths=/var/lib/aios/state /var/backups/aios
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+UMask=0077
+MemoryMax=128M

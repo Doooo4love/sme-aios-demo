@@ -1,0 +1,231 @@
+name: Build IntegrAI Web Release (Linux x86_64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Optional pinned 40-char commit SHA, branch, or tag to build (defaults to dispatched ref)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-linux-x64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-web-linux-x64:
+    name: Next.js Standalone Build (linux-x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      CI: "true"
+    steps:
+      - name: Assert Linux x86_64 runner architecture
+        run: |
+          set -euo pipefail
+          os_name="$(uname -s)"
+          arch_name="$(uname -m)"
+          echo "Runner kernel=${os_name} arch=${arch_name}"
+          if [[ "${os_name}" != "Linux" || "${arch_name}" != "x86_64" ]]; then
+            echo "::error::This workflow must run on Linux x86_64 (got ${os_name}/${arch_name})."
+            exit 1
+          fi
+
+      - name: Checkout source (zero credentials persisted)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Record exact commit SHA metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          full_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          if [[ ! "${full_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Failed to resolve 40-char commit SHA (got: ${full_sha})."
+            exit 1
+          fi
+          echo "full_sha=${full_sha}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${short_sha}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved commit SHA: ${full_sha} (short: ${short_sha})"
+
+      - name: Setup pnpm 11
+        uses: pnpm/action-setup@v4
+        with:
+          version: "11"
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: "web/pnpm-lock.yaml"
+
+      - name: Verify Node 22 and pnpm 11 versions
+        run: |
+          set -euo pipefail
+          node_ver="$(node -v)"
+          pnpm_ver="$(pnpm --version)"
+          echo "Node=${node_ver} pnpm=${pnpm_ver}"
+          if [[ ! "${node_ver}" =~ ^v22\. ]]; then
+            echo "::error::Expected Node.js v22.x (got ${node_ver})."
+            exit 1
+          fi
+          if [[ ! "${pnpm_ver}" =~ ^11\. ]]; then
+            echo "::error::Expected pnpm 11.x (got ${pnpm_ver})."
+            exit 1
+          fi
+
+      - name: Install web dependencies (frozen lockfile)
+        run: pnpm --dir web install --frozen-lockfile
+
+      - name: TypeScript typecheck (tsc --noEmit)
+        run: pnpm --dir web typecheck
+
+      - name: Build Next.js standalone bundle (zero secrets)
+        env:
+          NODE_ENV: production
+        run: pnpm --dir web build
+
+      - name: Package and verify Linux x86_64 standalone release tarball
+        env:
+          FULL_SHA: ${{ steps.meta.outputs.full_sha }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+          SOURCE_REF: ${{ inputs.ref || github.ref }}
+        run: |
+          set -euo pipefail
+
+          standalone_root="web/.next/standalone"
+          if [[ ! -d "${standalone_root}" ]]; then
+            echo "::error::Missing ${standalone_root}; check next.config.ts output: 'standalone'."
+            exit 1
+          fi
+
+          # Inspect real standalone server.js layout (root vs nested workspace path)
+          if [[ -f "${standalone_root}/server.js" ]]; then
+            server_rel="server.js"
+            server_rel_dir="."
+          else
+            mapfile -t found_servers < <(find "${standalone_root}" -maxdepth 3 -name "server.js" -not -path "*/node_modules/*" | sort)
+            if [[ "${#found_servers[@]}" -ne 1 ]]; then
+              echo "::error::Expected exactly 1 standalone server.js, found ${#found_servers[@]}: ${found_servers[*]:-none}"
+              exit 1
+            fi
+            server_rel="${found_servers[0]#${standalone_root}/}"
+            server_rel_dir="$(dirname "${server_rel}")"
+          fi
+          echo "Detected standalone server entry: ${server_rel} (dir: ${server_rel_dir})"
+
+          stage_dir="${RUNNER_TEMP}/aios-web-stage"
+          dist_dir="${RUNNER_TEMP}/release-dist"
+          rm -rf "${stage_dir}" "${dist_dir}"
+          mkdir -p "${stage_dir}" "${dist_dir}"
+
+          cp -a "${standalone_root}/." "${stage_dir}/"
+
+          if [[ "${server_rel_dir}" == "." ]]; then
+            static_target="${stage_dir}/.next/static"
+            public_target="${stage_dir}/public"
+          else
+            static_target="${stage_dir}/${server_rel_dir}/.next/static"
+            public_target="${stage_dir}/${server_rel_dir}/public"
+          fi
+
+          if [[ ! -d "web/.next/static" ]]; then
+            echo "::error::Missing web/.next/static after build."
+            exit 1
+          fi
+          mkdir -p "$(dirname "${static_target}")"
+          rm -rf "${static_target}"
+          cp -a "web/.next/static" "${static_target}"
+
+          if [[ -d "web/public" ]]; then
+            rm -rf "${public_target}"
+            cp -a "web/public" "${public_target}"
+          fi
+
+          # If Next.js emitted server.js under a nested directory, add a thin root launcher
+          # so systemd ExecStart=/usr/bin/node /opt/aios-web/current/server.js stays uniform.
+          if [[ "${server_rel}" != "server.js" ]]; then
+            cat > "${stage_dir}/server.js" <<EOF
+          // Auto-generated standalone entry shim for nested Next.js output layout
+          const path = require("node:path");
+          process.chdir(path.join(__dirname, "${server_rel_dir}"));
+          require(path.join(__dirname, "${server_rel}"));
+          EOF
+          fi
+
+          # Syntax-verify server.js and verify every native .node addon is Linux x86_64 ELF
+          node --check "${stage_dir}/server.js"
+          if [[ "${server_rel}" != "server.js" ]]; then
+            node --check "${stage_dir}/${server_rel}"
+          fi
+
+          native_count=0
+          while IFS= read -r -d '' addon; do
+            native_count=$((native_count + 1))
+            desc="$(file -b "${addon}")"
+            echo "Native addon: ${addon#${stage_dir}/} -> ${desc}"
+            if [[ "${desc}" != *"ELF 64-bit"* || "${desc}" != *"x86-64"* ]]; then
+              echo "::error::Non-Linux-x86_64 native addon detected: ${addon} (${desc})"
+              exit 1
+            fi
+          done < <(find "${stage_dir}" -type f -name "*.node" -print0)
+          echo "Verified ${native_count} native .node addon(s) for Linux x86_64."
+
+          # Also ensure no macOS/darwin sharp binary folders snuck in
+          if find "${stage_dir}" -iname "*darwin*" -print -quit | grep -q .; then
+            echo "::error::Unexpected darwin/macOS binary path detected in Linux release bundle."
+            exit 1
+          fi
+
+          # Write machine-readable release metadata (zero secrets)
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          node_ver="$(node -v)"
+          pnpm_ver="$(pnpm --version)"
+          python3 - "${stage_dir}/RELEASE_METADATA.json" "${FULL_SHA}" "${SHORT_SHA}" "${SOURCE_REF}" "${node_ver}" "${pnpm_ver}" "${built_at}" "${server_rel}" <<'PY'
+          import json, sys
+          out_path, full_sha, short_sha, source_ref, node_ver, pnpm_ver, built_at, server_rel = sys.argv[1:]
+          payload = {
+              "product": "integrai-workbench-web",
+              "commit_sha": full_sha,
+              "short_sha": short_sha,
+              "source_ref": source_ref,
+              "arch": "linux-x86_64",
+              "node_version": node_ver,
+              "pnpm_version": pnpm_ver,
+              "built_at_utc": built_at,
+              "standalone_server_rel": server_rel,
+              "entry_script": "server.js",
+          }
+          with open(out_path, "w", encoding="utf-8") as fh:
+              json.dump(payload, fh, indent=2, sort_keys=True)
+              fh.write("\n")
+          PY
+          cp "${stage_dir}/RELEASE_METADATA.json" "${dist_dir}/RELEASE_METADATA.json"
+
+          tarball_name="aios-web-linux-x64-${SHORT_SHA}.tar.gz"
+          tar -C "${stage_dir}" -czf "${dist_dir}/${tarball_name}" .
+
+          (
+            cd "${dist_dir}"
+            sha256sum "${tarball_name}" "RELEASE_METADATA.json" > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+          ls -lh "${dist_dir}"
+
+      - name: Upload Linux x86_64 web release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aios-web-linux-x64-${{ steps.meta.outputs.short_sha }}
+          path: ${{ runner.temp }}/release-dist/*
+          retention-days: 30
+          if-no-files-found: error

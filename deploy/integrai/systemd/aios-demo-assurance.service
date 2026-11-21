@@ -1,0 +1,62 @@
+# ==============================================================================
+# IntegrAI Demo Governed Assurance Companion (127.0.0.1:8761, Loopback Only)
+# ==============================================================================
+# Dual-process architecture (Section 5 of IntegrAI Alibaba Cloud HK Runbook):
+#   - Runs strictly with `AIOS_WORKBENCH_PLANNER=local` and NO external LLM key.
+#   - Shares `/etc/aios/demo-common.env` (`AIOS_PLATFORM_STATE_DIR`,
+#     `AIOS_BROWSER_SESSION_KEY`, `AIOS_BROWSER_ORIGIN`, `AIOS_DEMO_SECRET`)
+#     with `:8760` so browser sessions authenticate identically across both ports.
+#   - Loads `/etc/aios/secrets/assurance-demo-key.json` (0600 aios-demo:aios-demo),
+#     installed atomically by `02-init-secrets.sh`.
+#   - Next.js BFF routes `/v1/assurance/*` exclusively here via
+#     `AIOS_ASSURANCE_API_BASE_URL=http://127.0.0.1:8761`.
+#
+# Environment files (both root:aios-demo 0640, created by 02-init-secrets.sh):
+#   /etc/aios/demo-common.env
+#   /etc/aios/demo-assurance.env (AIOS_PLANNER=demo, AIOS_WORKBENCH_PLANNER=local,
+#                                 AIOS_ASSURANCE_DEMO_KEY_FILE=/etc/aios/secrets/assurance-demo-key.json)
+#
+# MemoryMax tuning guidance (2 GiB RAM + 2 GiB Swap VPS):
+#   - Initial ceiling: 192M (lightweight FastAPI + cryptography Ed25519/AESGCM).
+#   - Measure peak memory after Assurance review & checkpoint exercises:
+#       systemctl show -p MemoryCurrent -p MemoryPeak aios-demo-assurance.service
+#   - Tune via `systemctl edit aios-demo-assurance.service` based on observed peak.
+# ==============================================================================
+
+[Unit]
+Description=IntegrAI Demo Governed Assurance Companion (127.0.0.1:8761)
+After=network-online.target aios-demo-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/aios/demo-common.env
+EnvironmentFile=/etc/aios/demo-assurance.env
+ExecStart=/opt/aios/.venv/bin/uvicorn aios_platform.api:create_app --factory --no-access-log --host 127.0.0.1 --port 8761
+ReadWritePaths=/var/lib/aios/state
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+# Initial tunable limit (see header comments for MemoryPeak measurement guidance)
+MemoryMax=192M
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

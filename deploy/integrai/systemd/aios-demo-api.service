@@ -1,0 +1,62 @@
+# ==============================================================================
+# IntegrAI Demo Core API — Cloud LLM Primary (127.0.0.1:8760, Loopback Only)
+# ==============================================================================
+# Dual-process architecture (Section 5 of IntegrAI Alibaba Cloud HK Runbook):
+#   - This service runs `AIOS_WORKBENCH_PLANNER=pydantic-ai` (DeepSeek) on :8760.
+#   - It MUST NEVER load `AIOS_ASSURANCE_DEMO_KEY_FILE` or `AIOS_ASSURANCE_KEY_FILE`
+#     (`aios_platform/api.py` enforces strict process isolation).
+#   - Governed Assurance runs separately in `aios-demo-assurance.service` (:8761).
+#
+# Environment files (both root:aios-demo 0640, created by 02-init-secrets.sh):
+#   /etc/aios/demo-common.env  (AIOS_PROFILE, AIOS_PLATFORM_STATE_DIR,
+#                               AIOS_BROWSER_ORIGIN, AIOS_DEMO_SECRET,
+#                               AIOS_BROWSER_SESSION_KEY)
+#   /etc/aios/demo-api.env     (AIOS_PLANNER=demo, AIOS_WORKBENCH_PLANNER=pydantic-ai,
+#                               AIOS_LLM_BASE_URL, AIOS_LLM_MODEL,
+#                               AIOS_LLM_API_KEY_FILE=/etc/aios/secrets/llm-api-key)
+#
+# MemoryMax tuning guidance (2 GiB RAM + 2 GiB Swap VPS):
+#   - Initial ceiling: 256M (headroom for FastAPI + pydantic-ai + OCR bursts).
+#   - After live load (including OCR intake + Cloud LLM turns), measure peak usage:
+#       systemctl show -p MemoryCurrent -p MemoryPeak aios-demo-api.service
+#   - Adjust MemoryMax cleanly via `systemctl edit aios-demo-api.service` if
+#     MemoryPeak approaches 80% of 256M (or tighten if peak stays well below).
+# ==============================================================================
+
+[Unit]
+Description=IntegrAI Demo Core API Gateway - Cloud LLM (127.0.0.1:8760)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/aios/demo-common.env
+EnvironmentFile=/etc/aios/demo-api.env
+ExecStart=/opt/aios/.venv/bin/uvicorn aios_platform.api:create_app --factory --no-access-log --host 127.0.0.1 --port 8760
+ReadWritePaths=/var/lib/aios/state
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+# Initial tunable limit (see header comments for MemoryPeak measurement guidance)
+MemoryMax=256M
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,62 @@
+# ==============================================================================
+# IntegrAI Enterprise Workbench Next.js Standalone BFF (127.0.0.1:3000)
+# ==============================================================================
+# Serves the Same-Origin BFF on loopback ONLY; external traffic enters ONLY
+# through Cloudflare Zero Trust Access -> Cloudflare Tunnel (`hk-aios-demo`).
+#
+# Release layout managed by `03-deploy-release.sh`:
+#   /opt/aios-web/releases/<short-sha>-<utc-ts>/   (immutable Linux x86_64 bundle)
+#   /opt/aios-web/current  -> active release dir   (atomic symlink swap)
+#   /opt/aios-web/previous -> prior release dir    (instant rollback target)
+#
+# Environment file (root:aios-demo 0640, created by 02-init-secrets.sh):
+#   /etc/aios/demo-web.env (AIOS_API_BASE_URL, AIOS_ASSURANCE_API_BASE_URL,
+#                           AIOS_BROWSER_ORIGIN, AIOS_ENABLE_DEMO_AUTH=1,
+#                           AIOS_DEMO_SECRET, AIOS_DEMO_LOGIN_PASSWORD,
+#                           AIOS_OIDC_LOGIN_ENABLED=0)
+#
+# MemoryMax tuning guidance (2 GiB RAM + 2 GiB Swap VPS):
+#   - Initial ceiling: 256M (Node.js 22 + Next.js standalone BFF).
+#   - Measure peak memory under concurrent stakeholder navigation:
+#       systemctl show -p MemoryCurrent -p MemoryPeak aios-demo-web.service
+#   - Tune via `systemctl edit aios-demo-web.service` based on observed peak.
+# ==============================================================================
+
+[Unit]
+Description=IntegrAI Enterprise Workbench Next.js Standalone BFF (127.0.0.1:3000)
+After=network-online.target aios-demo-api.service aios-demo-assurance.service
+Wants=aios-demo-api.service aios-demo-assurance.service
+
+[Service]
+Type=simple
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios-web/current
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+Environment=NEXT_TELEMETRY_DISABLED=1
+EnvironmentFile=/etc/aios/demo-web.env
+ExecStart=/usr/bin/node /opt/aios-web/current/server.js
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+# Initial tunable limit (see header comments for MemoryPeak measurement guidance)
+MemoryMax=256M
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
