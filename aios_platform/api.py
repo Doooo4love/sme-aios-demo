@@ -25,7 +25,10 @@ from .assurance import Assurance, assurance_routes
 from .assurance_audit import AuditKeys, SignedAudit
 from .assurance_gateway import ReviewGateway
 from .assurance_policy import DemoCaseSource
+from .browser import BrowserConfig, BrowserOIDC, BrowserSessions, browser_routes
+from .calendar import calendar_routes
 from .chat import DirectoryLookup, chat_routes
+from .collaboration import InvalidCollaborationRequest, MissingResource
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
 from .erp import ERPRejected
 from .identity import Identity
@@ -35,9 +38,12 @@ from .providers import (
     DemoPlanner, OPA, Planner, action_sites, allowed, approval_sites, can_approve, can_use_action,
     order_read_sites,
 )
+from .profile import profile_routes
 from .purchase import OrderIssue, PurchaseOrder, draft_order, from_ocr
 from .service import Services, identity_for, optional_opa, planner_for, services, setting
+from .tasks import task_routes
 from .workflow import Conflict, tick
+from .workspace_source import DirectoryUnavailable, WorkspaceSource
 from .workbench import WorkbenchPlanner, workbench_routes
 from .workbench_tools import SyntheticWorkData, WorkData
 
@@ -77,7 +83,8 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
               *, planner_limit: int = 60, metrics_token: str | None = None,
               chat_directory: DirectoryLookup | None = None,
               workbench_data: WorkData | None = None, workbench_planner: WorkbenchPlanner | None = None,
-              assurance: Assurance | None = None, assurance_concurrency: int = 8) -> FastAPI:
+              assurance: Assurance | None = None, assurance_concurrency: int = 8,
+              browser: BrowserConfig | None = None, directory_actor=None) -> FastAPI:
     if assurance is not None:
         if not isinstance(planner, DemoPlanner) or workbench_planner is not None:
             raise ValueError("Assurance requires disabling planners outside the governed provider gateway")
@@ -94,6 +101,30 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     erp = runtime.erp
     bearer = HTTPBearer(auto_error=False)
     module_access = ModuleAccess(workflow)
+    if browser is not None and browser.demo != runtime.demo:
+        raise ValueError("Browser session profile must match the service profile")
+    sessions = BrowserSessions(workflow, browser, runtime.profiles) if browser else None
+
+    @app.exception_handler(MissingResource)
+    async def missing_resource(_request: Request, _error: MissingResource):
+        return JSONResponse(status_code=404, content={"detail": {"code": "RECORD_UNAVAILABLE"}})
+
+    @app.exception_handler(InvalidCollaborationRequest)
+    async def invalid_collaboration(_request: Request, error: InvalidCollaborationRequest):
+        return JSONResponse(status_code=422, content={"detail": str(error)})
+
+    @app.exception_handler(Conflict)
+    async def conflict(_request: Request, error: Conflict):
+        return JSONResponse(status_code=409, content={"detail": str(error)})
+
+    @app.exception_handler(DirectoryUnavailable)
+    async def directory_unavailable(_request: Request, _error: DirectoryUnavailable):
+        return JSONResponse(status_code=503, headers={"Retry-After": "2"},
+                            content={"detail": {"code": "DIRECTORY_UNAVAILABLE"}})
+
+    @app.exception_handler(PermissionError)
+    async def permission_error(_request: Request, _error: PermissionError):
+        return JSONResponse(status_code=403, content={"detail": {"code": "ACCESS_RESTRICTED"}})
 
     @app.exception_handler(ModuleScopeChanged)
     async def scope_changed(_request: Request, _error: ModuleScopeChanged):
@@ -123,11 +154,11 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         return JSONResponse(status_code=503, headers={"Retry-After": "2"},
                             content={"detail": {"code": "STORAGE_UNAVAILABLE"}})
 
-    def authenticate(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Actor:
+    def identify(token, *, cookie_tenant=None):
         try:
-            if credentials is None:
-                raise ValueError("Missing access token")
-            actor = identity.authenticate(credentials.credentials)
+            actor = identity.authenticate(token)
+            if cookie_tenant is not None and actor.tenant != cookie_tenant:
+                raise ValueError("Browser session tenant changed")
             profile = runtime.profiles.get(actor.tenant)
             if profile is None:
                 raise ValueError("Tenant is unavailable")
@@ -139,6 +170,15 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             return module_access.authenticate(actor)
         except PermissionError as error:
             raise HTTPException(403, "AIOS access is suspended") from error
+
+    def authenticate(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Actor:
+        if credentials is not None:
+            return identify(credentials.credentials)
+        if sessions is not None:
+            tenant, token = sessions.credentials(request)
+            request.state.browser_session = True
+            return identify(token, cookie_tenant=tenant)
+        raise HTTPException(401, "A valid access token is required", headers={"WWW-Authenticate": "Bearer"})
 
     def require_scope(actor: Actor, action: str, warehouse: str):
         if warehouse not in runtime.profiles[actor.tenant].warehouses or not allowed(actor, action, warehouse):
@@ -466,8 +506,11 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             raise HTTPException(403, str(error)) from error
         return visible_proposal(actor, proposal_id)
 
-    if chat_directory is None and runtime.demo:
-        chat_directory = getattr(identity, "known_subject", None)
+    if runtime.demo:
+        if chat_directory is None:
+            chat_directory = getattr(identity, "known_subject", None)
+        if directory_actor is None:
+            directory_actor = getattr(identity, "directory_actor", None)
     if runtime.demo and workbench_data is None:
         workbench_data = SyntheticWorkData()
     if not runtime.demo and isinstance(workbench_data, SyntheticWorkData):
@@ -478,6 +521,11 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                                        planner=workbench_planner, planner_limit=planner_limit))
     app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
     app.include_router(assurance_routes(authenticate, assurance, concurrency=assurance_concurrency))
+    app.include_router(profile_routes(workflow, authenticate, chat_available=chat_directory is not None))
+    app.include_router(calendar_routes(workflow, authenticate, chat_directory))
+    app.include_router(task_routes(workflow, authenticate, visible_proposal, require_policy, directory_actor))
+    if sessions is not None:
+        app.include_router(browser_routes(sessions, authenticate, bearer, identify))
     return app
 
 
@@ -485,7 +533,18 @@ def create_app() -> FastAPI:
     runtime = services()
     metrics = (setting("AIOS_METRICS_TOKEN")
                if os.getenv("AIOS_METRICS_TOKEN") or os.getenv("AIOS_METRICS_TOKEN_FILE") else None)
+    workspace_source = None
+    if not runtime.demo and (os.getenv("AIOS_WORKSPACE_SOURCE_URL") or os.getenv("AIOS_WORKSPACE_SOURCE_URL_FILE")):
+        workspace_source = WorkspaceSource(setting("AIOS_WORKSPACE_SOURCE_URL"),
+                                           setting("AIOS_WORKSPACE_SOURCE_TOKEN"),
+                                           setting("AIOS_CONNECTOR_TENANT"))
     assurance = None
+    if not runtime.demo and os.getenv("AIOS_ASSURANCE_KEY_FILE"):
+        if workspace_source is None:
+            raise ValueError("Production Assurance requires a workspace source")
+        audit = SignedAudit(runtime.workflow, AuditKeys.from_file(Path(os.environ["AIOS_ASSURANCE_KEY_FILE"])))
+        assurance = Assurance(workspace_source, ReviewGateway(audit, setting("AIOS_ASSURANCE_ZONE")),
+                              review_ttl=int(setting("AIOS_ASSURANCE_REVIEW_TTL", "3600")))
     if key_file := os.getenv("AIOS_ASSURANCE_DEMO_KEY_FILE"):
         if not runtime.demo:
             raise ValueError("Demo assurance keys require the demo profile")
@@ -501,7 +560,18 @@ def create_app() -> FastAPI:
             *(setting(name) for name in ("AIOS_LLM_BASE_URL", "AIOS_LLM_MODEL", "AIOS_LLM_API_KEY")))
     elif planner_kind != "local":
         raise ValueError("Unknown AIOS workbench planner")
+    browser = None
+    if os.getenv("AIOS_BROWSER_ORIGIN") or os.getenv("AIOS_BROWSER_ORIGIN_FILE"):
+        oidc = None
+        if not runtime.demo and (os.getenv("AIOS_BFF_OIDC_CLIENT_ID") or os.getenv("AIOS_BFF_OIDC_CLIENT_ID_FILE")):
+            oidc = BrowserOIDC(setting("AIOS_OIDC_ISSUER"), setting("AIOS_BFF_OIDC_CLIENT_ID"),
+                               setting("AIOS_BFF_OIDC_CLIENT_SECRET"))
+        browser = BrowserConfig(setting("AIOS_BROWSER_ORIGIN"), bytes.fromhex(setting("AIOS_BROWSER_SESSION_KEY")),
+                                demo=runtime.demo, oidc=oidc)
     return build_app(runtime, identity_for(runtime.demo), planner_for(runtime.demo), optional_opa(),
                      planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")),
                      metrics_token=metrics, assurance=assurance, workbench_planner=workbench_planner,
-                     assurance_concurrency=int(setting("AIOS_ASSURANCE_CONCURRENCY", "8")))
+                     assurance_concurrency=int(setting("AIOS_ASSURANCE_CONCURRENCY", "8")), browser=browser,
+                     chat_directory=workspace_source.known_subject if workspace_source else None,
+                     directory_actor=workspace_source.directory_actor if workspace_source else None,
+                     workbench_data=workspace_source)

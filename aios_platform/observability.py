@@ -14,6 +14,7 @@ JSON_LIMIT = 65_536
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 BOUNDED_JSON_PATHS = (
     "/v1/actions", "/v1/intakes/", "/v1/proposals/", "/v1/operations/", "/v1/workbench/", "/v1/chat/", "/v1/assurance/",
+    "/v1/calendar/", "/v1/profile", "/v1/agent-profile", "/v1/session",
 )
 
 
@@ -48,6 +49,8 @@ class RequestEnvelope:
             content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
             image = content_type == b"application/octet-stream" and raw_path.startswith("/v1/intakes/") \
                 and raw_path.count("/") == 3
+            image = image or (content_type == b"application/octet-stream" and
+                              raw_path in {"/v1/profile/avatar", "/v1/agent-profile/avatar"})
             if method in {"POST", "PUT", "PATCH"} and not image and raw_path.startswith(BOUNDED_JSON_PATHS):
                 body = bytearray()
                 while True:
