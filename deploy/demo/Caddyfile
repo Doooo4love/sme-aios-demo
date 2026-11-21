@@ -1,0 +1,57 @@
+# ==============================================================================
+# SME AIOS Enterprise Workbench — Minimal-RAM Caddy 2 HTTPS Reverse Proxy
+# ==============================================================================
+# Target: Tier 1 24/7 Demo VPS (2C2G / 2C4G Ubuntu 24.04 LTS, ~350 MB total RAM)
+# Install: sudo cp deploy/demo/Caddyfile /etc/caddy/Caddyfile
+#          Set AIOS_DOMAIN in /etc/systemd/system/caddy.service.d/override.conf
+#          (or replace {$AIOS_DOMAIN:demo.example.com} directly with your hostname)
+#
+# Security guarantees:
+#   - Automatic Let's Encrypt HTTPS (TLS 1.2/1.3) for __Host-aios_session cookies
+#   - Proxies ONLY to Next.js Same-Origin BFF on 127.0.0.1:3000
+#     (FastAPI :8760 / :8761 and /openapi.json are NEVER exposed publicly)
+#   - Redacts query strings (OIDC code/state) and Cookie/Authorization headers
+#     from access logs per docs/workbench-collaboration.zh-CN.md
+# ==============================================================================
+
+{$AIOS_DOMAIN:demo.example.com} {
+	encode zstd gzip
+
+	# Allow PO image uploads up to 8 MB + multipart/framing headroom
+	request_body {
+		max_size 10MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/aios-access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete
+				}
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				request>headers>X-Csrf-Token delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
+
+	# Forward all browser traffic exclusively through Next.js Same-Origin BFF
+	reverse_proxy 127.0.0.1:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}

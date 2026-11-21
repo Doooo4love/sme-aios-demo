@@ -1,0 +1,61 @@
+# ==============================================================================
+# SME AIOS Enterprise Workbench Next.js Standalone BFF (Port 3000, Loopback Only)
+# ==============================================================================
+# Build once on CI/Mac or VPS (`pnpm --dir web build`) and sync standalone output:
+#   rsync -a web/.next/standalone/ /opt/aios-web/
+#   rsync -a web/.next/static/     /opt/aios-web/.next/static/
+#   rsync -a web/public/           /opt/aios-web/public/   # if public/ exists
+#
+# Expected /etc/aios/demo-web.env (chmod 0640 root:aios-demo):
+#   AIOS_API_BASE_URL=http://127.0.0.1:8760
+#   # Optional (dual-port Cloud LLM + Assurance mode only):
+#   # AIOS_ASSURANCE_API_BASE_URL=http://127.0.0.1:8761
+#   AIOS_BROWSER_ORIGIN=https://demo.example.com
+#   AIOS_ENABLE_DEMO_AUTH=1
+#   AIOS_DEMO_SECRET=<same 32+ char secret as demo-common.env>
+#   AIOS_OIDC_LOGIN_ENABLED=0
+#
+# Total Tier 1 VPS RAM budget (~350 MB):
+#   Caddy (~35 MB) + Next.js standalone (~140 MB) + FastAPI API (~95 MB)
+#   [+ optional Assurance companion (~80 MB)]
+#
+# Recommended Nightly SQLite Backup Cron (/etc/cron.d/aios-demo-backup):
+#   15 3 * * * aios-demo mkdir -p /var/backups/aios && \
+#     sqlite3 /var/lib/aios/state/store.sqlite ".backup '/var/backups/aios/store-$(date +\%F).sqlite'" && \
+#     sqlite3 /var/lib/aios/state/erp.sqlite   ".backup '/var/backups/aios/erp-$(date +\%F).sqlite'" && \
+#     find /var/backups/aios -name '*.sqlite' -mtime +14 -delete
+# ==============================================================================
+
+[Unit]
+Description=SME AIOS Enterprise Workbench Next.js Standalone BFF (127.0.0.1:3000)
+After=network-online.target aios-demo-api.service
+Wants=aios-demo-api.service
+
+[Service]
+Type=simple
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios-web
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+Environment=NEXT_TELEMETRY_DISABLED=1
+EnvironmentFile=/etc/aios/demo-web.env
+ExecStart=/usr/bin/node /opt/aios-web/server.js
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+MemoryMax=220M
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

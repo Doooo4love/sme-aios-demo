@@ -1,0 +1,61 @@
+# ==============================================================================
+# SME AIOS Demo Core API (Port 8760, Loopback Only)
+# ==============================================================================
+# Supports either:
+#   - Single-process local mode (AIOS_WORKBENCH_PLANNER=local + AIOS_ASSURANCE_DEMO_KEY_FILE)
+#   - Dual-port Cloud LLM mode (AIOS_WORKBENCH_PLANNER=pydantic-ai; pair with
+#     aios-demo-assurance.service on :8761 and omit AIOS_ASSURANCE_DEMO_KEY_FILE here)
+#
+# Expected /etc/aios/demo-common.env (chmod 0640 root:aios-demo):
+#   AIOS_PROFILE=demo
+#   AIOS_PLATFORM_STATE_DIR=/var/lib/aios/state
+#   AIOS_BROWSER_ORIGIN=https://demo.example.com
+#   AIOS_DEMO_SECRET=<32+ chars without period>
+#   AIOS_BROWSER_SESSION_KEY=<64 hex chars = 32 bytes>
+#
+# Expected /etc/aios/demo-api.env (chmod 0640 root:aios-demo):
+#   # Option A (Keyless single-process with Assurance):
+#   AIOS_PLANNER=demo
+#   AIOS_WORKBENCH_PLANNER=local
+#   AIOS_ASSURANCE_DEMO_KEY_FILE=/etc/aios/secrets/assurance-demo-key.json
+#
+#   # Option B (Dual-port Cloud LLM on :8760 — remove AIOS_ASSURANCE_DEMO_KEY_FILE):
+#   # AIOS_PLANNER=demo
+#   # AIOS_WORKBENCH_PLANNER=pydantic-ai
+#   # AIOS_LLM_BASE_URL=https://api.deepseek.com
+#   # AIOS_LLM_MODEL=deepseek-chat
+#   # AIOS_LLM_API_KEY_FILE=/etc/aios/secrets/llm-api-key
+# ==============================================================================
+
+[Unit]
+Description=SME AIOS Demo Core API Gateway (127.0.0.1:8760)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/aios/demo-common.env
+EnvironmentFile=/etc/aios/demo-api.env
+ExecStart=/opt/aios/.venv/bin/uvicorn aios_platform.api:create_app --factory --no-access-log --host 127.0.0.1 --port 8760
+ReadWritePaths=/var/lib/aios/state
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+MemoryMax=180M
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

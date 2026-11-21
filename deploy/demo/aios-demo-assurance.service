@@ -1,0 +1,50 @@
+# ==============================================================================
+# SME AIOS Demo Governed Assurance Companion (Port 8761, Loopback Only)
+# ==============================================================================
+# Enable ONLY in dual-port mode when :8760 runs `AIOS_WORKBENCH_PLANNER=pydantic-ai`.
+# Why: `aios_platform/api.py` enforces strict process isolation between external
+# LLM planners and Governed Assurance. By sharing `/etc/aios/demo-common.env`
+# (`AIOS_PLATFORM_STATE_DIR`, `AIOS_BROWSER_SESSION_KEY`, `AIOS_BROWSER_ORIGIN`,
+# `AIOS_DEMO_SECRET`), this lightweight process validates the exact same browser
+# session cookies while serving `/v1/assurance/*` via Next.js BFF's
+# `AIOS_ASSURANCE_API_BASE_URL=http://127.0.0.1:8761`.
+#
+# Generate private key once as aios-demo user (strict 0600 required):
+#   sudo -u aios-demo /opt/aios/.venv/bin/python -m aios_platform.assurance_audit \
+#     keygen /etc/aios/secrets/assurance-demo-key.json
+# ==============================================================================
+
+[Unit]
+Description=SME AIOS Demo Governed Assurance Service (127.0.0.1:8761)
+After=network-online.target aios-demo-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=AIOS_PLANNER=demo
+Environment=AIOS_WORKBENCH_PLANNER=local
+Environment=AIOS_ASSURANCE_DEMO_KEY_FILE=/etc/aios/secrets/assurance-demo-key.json
+EnvironmentFile=/etc/aios/demo-common.env
+ExecStart=/opt/aios/.venv/bin/uvicorn aios_platform.api:create_app --factory --no-access-log --host 127.0.0.1 --port 8761
+ReadWritePaths=/var/lib/aios/state
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+MemoryMax=140M
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
