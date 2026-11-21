@@ -7,7 +7,7 @@ from typing import Annotated, Literal, Protocol
 from pydantic import Field, TypeAdapter
 
 from .contracts import Actor, Clarify, Grant, Identifier, Strict
-from .providers import can_use_action
+from .providers import action_sites
 from .purchase import Currency, Money
 
 
@@ -59,11 +59,15 @@ class Tool:
     action: str | None = None
 
     def allowed(self, actor: Actor, *, warehouse: str | None = None) -> bool:
-        return (
-            self.grant in actor.grants
-            and (warehouse is None or warehouse in actor.warehouses)
-            and (self.action is None or can_use_action(actor, self.action))
-        )
+        if self.domain == "mail":
+            return self.grant in actor.grants
+        sites = self.sites(actor)
+        return bool(sites) if warehouse is None else warehouse in sites
+
+    def sites(self, actor: Actor) -> frozenset[str]:
+        if self.action is not None:
+            return action_sites(actor, self.action)
+        return actor.sites_for(self.grant)
 
 
 TOOLS = {

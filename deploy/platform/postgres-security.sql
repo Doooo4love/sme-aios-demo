@@ -146,3 +146,22 @@ CREATE POLICY aios_assurance_tenant ON aios_assurance_attempt TO aios_api
 REVOKE ALL ON aios_assurance_attempt FROM PUBLIC, aios_worker, aios_api;
 GRANT SELECT, INSERT ON aios_assurance_attempt TO aios_api;
 GRANT UPDATE (run_id, started_at, expires_at, state) ON aios_assurance_attempt TO aios_api;
+
+ALTER TABLE aios_employee ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_employee FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_employee_tenant ON aios_employee;
+CREATE POLICY aios_employee_tenant ON aios_employee TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_module_access ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_module_access FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_module_tenant ON aios_module_access;
+CREATE POLICY aios_module_tenant ON aios_module_access TO aios_api, aios_worker
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+REVOKE ALL ON aios_employee, aios_module_access FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_employee, aios_module_access TO aios_api;
+GRANT UPDATE (grants, warehouses, expires_at, version) ON aios_module_access TO aios_api;
+GRANT SELECT ON aios_module_access TO aios_worker;

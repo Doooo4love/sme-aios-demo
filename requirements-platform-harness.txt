@@ -1,2 +1,2 @@
 -r requirements-platform.txt
-pydantic-ai-slim[openai]>=1,<2
+pydantic-ai-slim[openai]==1.107.10

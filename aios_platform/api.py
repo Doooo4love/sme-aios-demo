@@ -29,8 +29,12 @@ from .chat import DirectoryLookup, chat_routes
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
 from .erp import ERPRejected
 from .identity import Identity
+from .module_access import ModuleAccess, ModuleScopeChanged, module_routes
 from .observability import instrument
-from .providers import DemoPlanner, OPA, Planner, allowed, can_approve, can_use_action
+from .providers import (
+    DemoPlanner, OPA, Planner, action_sites, allowed, approval_sites, can_approve, can_use_action,
+    order_read_sites,
+)
 from .purchase import OrderIssue, PurchaseOrder, draft_order, from_ocr
 from .service import Services, identity_for, optional_opa, planner_for, services, setting
 from .workflow import Conflict, tick
@@ -89,6 +93,17 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     workflow = runtime.workflow
     erp = runtime.erp
     bearer = HTTPBearer(auto_error=False)
+    module_access = ModuleAccess(workflow)
+
+    @app.exception_handler(ModuleScopeChanged)
+    async def scope_changed(_request: Request, _error: ModuleScopeChanged):
+        return JSONResponse(status_code=403, content={"detail": {"code": "ACCESS_CHANGED"}})
+
+    def refresh_actor(actor: Actor) -> Actor:
+        try:
+            return module_access.refresh(actor)
+        except PermissionError as error:
+            raise ModuleScopeChanged from error
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_request: Request, error: RequestValidationError):
@@ -120,9 +135,10 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         except (ValueError, OSError) as error:
             raise HTTPException(401, "A valid access token is required",
                                 headers={"WWW-Authenticate": "Bearer"}) from error
-        if workflow.is_suspended(actor):
-            raise HTTPException(403, "AIOS access is suspended")
-        return actor
+        try:
+            return module_access.authenticate(actor)
+        except PermissionError as error:
+            raise HTTPException(403, "AIOS access is suspended") from error
 
     def require_scope(actor: Actor, action: str, warehouse: str):
         if warehouse not in runtime.profiles[actor.tenant].warehouses or not allowed(actor, action, warehouse):
@@ -137,9 +153,15 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def visible_proposal(actor: Actor, proposal_id: str, *, include_events: bool = True) -> dict:
         try:
             result = workflow.get(actor.tenant, proposal_id, include_events=include_events)
-            if not allowed(actor, result["plan"]["action"], result["warehouse"]) or (
-                result["requester"] != actor.subject and actor.role not in {"manager", "admin"}
-            ):
+            action, warehouse = result["plan"]["action"], result["warehouse"]
+            if action == "sales_order.create_draft":
+                sites = order_read_sites(actor)
+            elif "shipment.read" in actor.module_scopes:
+                sites = actor.sites_for("shipment.read")
+            else:
+                sites = action_sites(actor, action)
+            can_read = warehouse in sites and (result["requester"] == actor.subject or actor.role in {"manager", "admin"})
+            if not can_read and warehouse not in approval_sites(actor, action):
                 raise KeyError(proposal_id)
             return result
         except KeyError as error:
@@ -148,7 +170,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def visible_intake(actor: Actor, intake_id: str) -> dict:
         try:
             record = workflow.intake(actor.tenant, intake_id)
-            if not allowed(actor, "sales_order.create_draft", record["warehouse"]):
+            if record["warehouse"] not in order_read_sites(actor):
                 raise KeyError(intake_id)
             return record
         except KeyError as error:
@@ -207,7 +229,10 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
 
     @app.get("/v1/me")
     def me(actor: Actor = Depends(authenticate)):
-        return actor
+        grants = (actor.grants - actor.module_scopes.keys()) | {
+            grant for grant, sites in actor.module_scopes.items() if sites
+        }
+        return actor.model_copy(update={"grants": frozenset(grants)})
 
     @app.get("/v1/operations/summary")
     def operations(actor: Actor = Depends(authenticate)):
@@ -336,7 +361,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         body: ActionRequest, actor: Actor = Depends(authenticate),
         key: Annotated[str | None, Header(alias="Idempotency-Key", pattern=r"^[A-Za-z0-9._:-]{1,128}$")] = None,
     ):
-        if not actor.grants.intersection({"shipment.read", "order.work"}):
+        if not any(can_use_action(actor, action) for action in ("shipment.read", "sales_order.create_draft")):
             raise HTTPException(403, "Operational action permission required")
         fingerprint = digest_of(body.model_dump(mode="json"))
         if key is not None:
@@ -352,6 +377,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             intent = planner.plan(body.text)
         except (httpx.HTTPError, OSError, ValueError, KeyError, TypeError, IndexError) as error:
             raise HTTPException(503, "Planner unavailable") from error
+        actor = refresh_actor(actor)
         if isinstance(intent, Clarify):
             return {"status": "clarify", "question": intent.question}
         if not can_use_action(actor, intent.action):
@@ -366,6 +392,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                 raise HTTPException(404, "Shipment not found") from error
             except (httpx.HTTPError, OSError, ValueError) as error:
                 raise HTTPException(503, "ERP read unavailable") from error
+            actor = refresh_actor(actor)
             if shipment is None or shipment.shipment_id != intent.shipment_id or (
                 not allowed(actor, "shipment.read", shipment.warehouse)
             ):
@@ -445,7 +472,8 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         workbench_data = SyntheticWorkData()
     if not runtime.demo and isinstance(workbench_data, SyntheticWorkData):
         raise ValueError("Synthetic workbench data requires the demo profile")
-    app.include_router(workbench_routes(runtime, authenticate, require_policy, visible_proposal, prepare_order,
+    app.include_router(module_routes(module_access, authenticate, runtime.profiles))
+    app.include_router(workbench_routes(runtime, authenticate, refresh_actor, require_policy, visible_proposal, prepare_order,
                                        data=workbench_data, chat_available=chat_directory is not None,
                                        planner=workbench_planner, planner_limit=planner_limit))
     app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
@@ -464,7 +492,16 @@ def create_app() -> FastAPI:
         audit = SignedAudit(runtime.workflow, AuditKeys.from_file(Path(key_file)))
         assurance = Assurance(DemoCaseSource(), ReviewGateway(audit, "hk-factory"),
                               review_ttl=int(setting("AIOS_ASSURANCE_REVIEW_TTL", "3600")))
+    workbench_planner = None
+    planner_kind = os.getenv("AIOS_WORKBENCH_PLANNER", "local")
+    if planner_kind == "pydantic-ai":
+        from .workbench_planner import PydanticWorkbenchPlanner
+
+        workbench_planner = PydanticWorkbenchPlanner(
+            *(setting(name) for name in ("AIOS_LLM_BASE_URL", "AIOS_LLM_MODEL", "AIOS_LLM_API_KEY")))
+    elif planner_kind != "local":
+        raise ValueError("Unknown AIOS workbench planner")
     return build_app(runtime, identity_for(runtime.demo), planner_for(runtime.demo), optional_opa(),
                      planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")),
-                     metrics_token=metrics, assurance=assurance,
+                     metrics_token=metrics, assurance=assurance, workbench_planner=workbench_planner,
                      assurance_concurrency=int(setting("AIOS_ASSURANCE_CONCURRENCY", "8")))

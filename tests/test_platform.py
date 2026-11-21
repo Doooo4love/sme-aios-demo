@@ -441,6 +441,139 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual(client.post(path, headers=self.auth("operator"), json=body).status_code, 429)
             self.assertEqual(planner.plan.call_count, 1)
 
+    def module_assignment(self, subject, module, version, grants=(), warehouses=(), **fields):
+        path = f"/v1/workbench/module-access/employees/{subject}/{module}"
+        return self.client.put(path, headers=self.auth("access-admin"), json={
+            "version": version, "grants": list(grants), "warehouses": list(warehouses), **fields,
+        })
+
+    def test_module_access_grant_expire_revoke_and_audit(self):
+        client = self.client
+        catalog = "/v1/workbench/module-access/catalog"
+        self.assertEqual(client.get(catalog, headers=self.auth("admin")).status_code, 403)
+        self.assertIn("orders", client.get(catalog, headers=self.auth("access-admin")).json()["modules"])
+        client.get("/v1/me", headers=self.auth("operator"))
+        client.get("/v1/me", headers=self.auth("island-manager"))
+        self.assertEqual(self.module_assignment("island-manager", "orders", 0).status_code, 404)
+        self.assertEqual(self.module_assignment("access-admin", "orders", 0).status_code, 403)
+        self.assertEqual(self.module_assignment("operator", "orders", 0, ["order.work"], ["HK01"]).status_code, 422)
+        self.assertEqual(self.module_assignment("operator", "invoice-review", 0, ["finance.read"], ["ZZ"]).status_code, 422)
+        expires = time.time() + 90
+        response = self.module_assignment(
+            "operator", "invoice-review", 0, ["finance.read"], ["HK01"], expires_at=expires,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["version"], 1)
+        self.assertEqual(self.module_assignment("operator", "invoice-review", 0).status_code, 409)
+        invoice = {"tool": "finance.invoice.read", "warehouse": "HK01", "invoice_id": "INV-100"}
+        self.assertEqual(self.work_call(invoice).status_code, 200)
+        offsite = self.work_call(dict(invoice, warehouse="HK02"))
+        self.assertEqual(offsite.json()["detail"]["code"], "ACCESS_RESTRICTED")
+        with patch("aios_platform.module_access.time", SimpleNamespace(time=lambda: expires + 1)):
+            self.assertEqual(self.work_call(invoice).status_code, 403)
+        self.assertEqual(self.module_assignment("operator", "invoice-review", 1).status_code, 200)
+        turn = client.post("/v1/workbench/turns", headers=self.auth("operator"),
+                           json={"text": "Show invoice INV-100 in HK01"})
+        self.assertEqual(turn.status_code, 403)
+        self.assertEqual(turn.json()["detail"], {"code": "ACCESS_RESTRICTED"})
+        with self.runtime.workflow.tx("harbour", write=False) as run:
+            rows = run("SELECT event FROM aios_audit WHERE target = ? ORDER BY at",
+                       ("module-access:operator",)).fetchall()
+        self.assertEqual([json.loads(row["event"])["version"] for row in rows], [1, 2])
+
+    def test_explicit_approval_module_is_action_scoped_and_text_only_previews(self):
+        client = self.client
+        client.get("/v1/me", headers=self.auth("executive"))
+        assigned = self.module_assignment(
+            "executive", "approvals", 0, ["workbench.approve.orders"], ["HK01"],
+        )
+        self.assertEqual(assigned.status_code, 200, assigned.text)
+        order = client.post("/v1/intakes/HK01/structured/batch", headers=self.auth("operator"),
+                            json={"orders": [self.wholesale_order()]}).json()["items"][0]
+        shipment = self.work_call({"tool": "shipment.reschedule", "warehouse": "HK01",
+                                   "shipment_id": "SHP-1001", "delivery_date": self.day}, key="mod-s").json()["proposal"]
+        queue = client.get("/v1/workbench/approvals", headers=self.auth("executive")).json()["items"]
+        self.assertEqual([row["id"] for row in queue], [order["proposal_id"]])
+        self.assertEqual(client.get(f"/v1/proposals/{shipment['id']}", headers=self.auth("executive")).status_code, 404)
+        prompt = {"text": f"Approve proposal {order['proposal_id']}"}
+        path = "/v1/workbench/turns"
+        denied = client.post(path, headers=self.auth("operator"), json=prompt)
+        self.assertEqual(denied.json()["detail"], {"code": "ACTION_NOT_ALLOWED", "next_step": "view_proposal"})
+        denied = client.post(path, headers=self.auth("island-manager"), json=prompt)
+        self.assertEqual(denied.json()["detail"], {"code": "RECORD_UNAVAILABLE"})
+        preview = client.post(path, headers=self.auth("executive"), json=prompt)
+        self.assertEqual(preview.json()["kind"], "approval_preview")
+        self.assertEqual(preview.json()["proposal"]["state"], "PROPOSED")
+        identifier = order["proposal_id"]
+        endpoint = f"/v1/proposals/{identifier}/approve"
+        self.assertEqual(client.post(endpoint, headers=self.auth("executive"),
+                                     json={"digest": order["digest"]}).status_code, 202)
+        self.assertEqual(self.module_assignment("executive", "approvals", 1).status_code, 200)
+        with patch.object(self.runtime.erp, "apply", side_effect=AssertionError("Revoked write must not dispatch")):
+            self.assertTrue(tick(self.runtime.workflow, self.runtime.erp, "harbour"))
+        record = self.runtime.workflow.get("harbour", identifier)
+        self.assertEqual(record["state"], "REJECTED")
+        self.assertEqual(record["events"][-1]["event"], "MODULE_ACCESS_REVOKED_BEFORE_SEND")
+
+    def test_module_revocation_blocks_typed_text_and_legacy_intake_paths(self):
+        client = self.client
+        headers = self.auth("operator")
+        path = "/v1/intakes/HK01/structured"
+        result = client.post(path, headers=headers, json=self.wholesale_order()).json()
+        reference = result["intake_id"]
+        deep_link = f"/v1/intakes/{reference}"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            edits = [pool.submit(self.module_assignment, "operator", "orders", 0, ["order.read"], ["HK01"])
+                     for _ in range(2)]
+            self.assertEqual(sorted(call.result().status_code for call in edits), [200, 409])
+        self.assertEqual(client.get(deep_link, headers=headers).status_code, 200)
+        self.assertEqual(client.post(path, headers=headers, json=self.wholesale_order()).status_code, 403)
+        proposal = {"tool": "order.draft.prepare", "warehouse": "HK01", "intake_id": reference}
+        self.assertEqual(self.work_call(proposal).status_code, 403)
+        self.assertEqual(self.action(f"Create draft for intake {reference}", "operator").status_code, 403)
+        self.assertEqual(self.module_assignment("operator", "orders", 1).status_code, 200)
+        self.assertEqual(client.get(deep_link, headers=headers).status_code, 404)
+
+    def test_scope_is_refreshed_after_the_configured_model_returns(self):
+        client = self.client
+        client.get("/v1/me", headers=self.auth("operator"))
+        self.assertEqual(self.module_assignment("operator", "dispatch", 0,
+                                                ["shipment.read"], ["HK01"]).status_code, 200)
+
+        def plan(text, tools):
+            self.assertIn("shipment.read", tools)
+            self.assertEqual(self.module_assignment("operator", "dispatch", 1).status_code, 200)
+            return {"tool": "shipment.read", "warehouse": "HK01", "shipment_id": "SHP-1001"}
+
+        mock_planner = SimpleNamespace(plan=plan)
+        with TestClient(build_app(self.runtime, self.identity, DemoPlanner(),
+                                  workbench_planner=mock_planner)) as chat:
+            with patch.object(self.runtime.erp, "shipment", side_effect=AssertionError("Do not read after revocation")):
+                response = chat.post("/v1/workbench/turns", headers=self.auth("operator"),
+                                     json={"text": "Tell me where our shipment is now, please"})
+            self.assertEqual(response.json()["detail"], {"code": "ACCESS_RESTRICTED"})
+
+    def test_pydantic_ai_returns_validated_intent_without_executable_tools(self):
+        import asyncio
+        from importlib.util import find_spec
+
+        if find_spec("pydantic_ai") is None:
+            self.skipTest("Optional Pydantic AI harness is not installed")
+        from pydantic_ai.messages import ModelResponse, TextPart
+        from pydantic_ai.models.function import FunctionModel
+
+        from aios_platform.workbench_planner import plan_with_model
+
+        def model_reply(_messages, info):
+            self.assertFalse(info.function_tools)
+            self.assertFalse(info.output_tools)
+            return ModelResponse(parts=[TextPart(
+                '{"intent":{"tool":"shipment.read","warehouse":"HK01","shipment_id":"SHP-1001"}}'
+            )])
+
+        result = asyncio.run(plan_with_model(FunctionModel(model_reply), "Where is the shipment?", ("shipment.read",)))
+        self.assertEqual(result, {"tool": "shipment.read", "warehouse": "HK01", "shipment_id": "SHP-1001"})
+
     def test_chat_history_membership_and_concurrent_retry(self):
         rooms = "/v1/chat/rooms"
         room = self.client.post(rooms, headers=self.auth("operator"),
@@ -824,6 +957,7 @@ class PlatformTests(unittest.TestCase):
                 self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_assurance_attempt").fetchone()["n"], 1)
             with api.tx("island", write=False) as run:
                 self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_assurance_attempt").fetchone()["n"], 0)
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_employee").fetchone()["n"], 0)
             with worker.tx("harbour", write=False) as run:
                 self.assertFalse(run("SELECT has_table_privilege('aios_assurance_audit', 'INSERT') AS allowed")
                                  .fetchone()["allowed"])
@@ -838,6 +972,14 @@ class PlatformTests(unittest.TestCase):
             identifier = record["proposal_id"]
             replay = client.post(path, json=request, headers=headers)
             self.assertEqual(replay.json()["items"][0]["proposal_id"], identifier)
+            assignment = client.put("/v1/workbench/module-access/employees/manager/approvals",
+                                    headers=self.auth("access-admin"),
+                                    json={"version": 0, "grants": ["workbench.approve.orders"], "warehouses": ["HK01"]})
+            self.assertEqual(assignment.status_code, 200, assignment.text)
+            with worker.tx("harbour", write=False) as run:
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_module_access").fetchone()["n"], 1)
+            with worker.tx("island", write=False) as run:
+                self.assertEqual(run("SELECT COUNT(*) AS n FROM aios_module_access").fetchone()["n"], 0)
             response = client.post("/v1/proposals/approve-batch",
                                    json={"proposals": [{"proposal_id": identifier, "digest": record["digest"]}]},
                                    headers=self.auth("manager"))

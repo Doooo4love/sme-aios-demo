@@ -7,8 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 Capability = Literal["shipment.read", "shipment.reschedule", "sales_order.create_draft"]
 Grant = Literal[
-    "shipment.read", "shipment.reschedule", "order.work", "finance.read",
+    "shipment.read", "shipment.reschedule", "order.read", "order.work", "finance.read",
     "mail.read", "decision.read", "chat.use", "operations.manage",
+    "workbench.access.manage", "workbench.approve.orders", "workbench.approve.shipments",
     "assurance.purchase", "assurance.incoming", "assurance.contract", "assurance.procurement",
     "assurance.finance", "assurance.quality", "assurance.legal", "assurance.audit",
 ]
@@ -24,6 +25,15 @@ class Actor(Strict):
     role: Literal["viewer", "operator", "manager", "admin"]
     warehouses: frozenset[Identifier]
     grants: frozenset[Grant] = frozenset()
+    module_scopes: dict[Grant, frozenset[Identifier]] = Field(default_factory=dict, exclude=True)
+
+    def sites_for(self, grant: Grant) -> frozenset[str]:
+        if grant in self.module_scopes:
+            return self.module_scopes[grant]
+        if grant in self.grants or (grant in {"workbench.approve.orders", "workbench.approve.shipments"}
+                                    and self.role in {"manager", "admin"}):
+            return self.warehouses
+        return frozenset()
 
 
 class ShipmentRead(Strict):
