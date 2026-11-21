@@ -19,11 +19,30 @@ def verify_database(database: Database, *, worker: bool):
                   'aios_request_key', 'aios_write_control', 'aios_suspension', 'aios_planner_budget',
                   'aios_chat_room', 'aios_chat_member', 'aios_chat_message',
                   'aios_assurance_head', 'aios_assurance_audit', 'aios_assurance_review',
-                  'aios_assurance_attempt', 'aios_employee', 'aios_module_access')
+                  'aios_assurance_attempt', 'aios_employee', 'aios_module_access',
+                  'aios_profile', 'aios_agent_activity', 'aios_proposal_review', 'aios_calendar_event',
+                  'aios_calendar_member', 'aios_internal_notice', 'aios_browser_session')
         """).fetchall()
-        if len(tables) != 16 or any(row["owner_member"] or not row["relrowsecurity"]
+        if len(tables) != 23 or any(row["owner_member"] or not row["relrowsecurity"]
                                 or not row["relforcerowsecurity"] for row in tables):
             raise RuntimeError("Apply platform migrations and forced row-level security as the migration owner")
+        collaboration = run("""
+            SELECT c.relname,
+                   has_table_privilege(c.oid, 'SELECT') AS can_read,
+                   has_table_privilege(c.oid, 'INSERT') AS can_insert,
+                   has_any_column_privilege(c.oid, 'UPDATE') AS can_update,
+                   has_table_privilege(c.oid, 'DELETE') AS can_delete
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema() AND c.relname IN (
+                'aios_profile', 'aios_agent_activity', 'aios_proposal_review', 'aios_calendar_event',
+                'aios_calendar_member', 'aios_internal_notice', 'aios_browser_session')
+        """).fetchall()
+        for entry in collaboration:
+            name = entry["relname"]
+            expected = (False, name == "aios_internal_notice", False, False) if worker else (
+                True, True, name not in {"aios_calendar_member", "aios_browser_session"}, name == "aios_browser_session")
+            if tuple(entry[key] for key in ("can_read", "can_insert", "can_update", "can_delete")) != expected:
+                raise RuntimeError("Platform PostgreSQL grants do not match collaboration roles")
         privileges = run("""
             SELECT has_table_privilege('aios_audit', 'UPDATE, DELETE, TRUNCATE') AS audit_mutable,
                    has_column_privilege('aios_proposal', 'receipt', 'UPDATE') AS receipt_writable,

@@ -2,16 +2,17 @@
 import re
 from typing import Annotated, Literal, Protocol
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import Field
 
 from aios_demo.storage import digest_of
 
+from .agent_history import AgentHistory, TurnInProgress
 from .contracts import Actor, Clarify, Identifier, Plan, Strict
 from .erp import ERPRejected, ERP_TRANSPORT_ERRORS
 from .providers import approval_sites, can_approve, order_read_sites
 from .service import Services
-from .workbench_tools import OrderDraft, ShipmentChange, ToolCall, TOOLS, WorkData, scoped_data, local_turn
+from .workbench_tools import CALL, OrderDraft, ShipmentChange, ToolCall, TOOLS, WorkData, scoped_data, local_turn
 from .workflow import Conflict
 
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key", pattern=r"^[A-Za-z0-9._:-]{1,128}$")]
@@ -23,6 +24,7 @@ class WorkbenchPlanner(Protocol):
 
 class Turn(Strict):
     text: Annotated[str, Field(min_length=1, max_length=500)]
+    client_id: Identifier | None = None
 
 
 class WorkResult(Strict):
@@ -66,6 +68,7 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
                      planner_limit: int) -> APIRouter:
     router = APIRouter(prefix="/v1/workbench", tags=["Employee workbench"])
     workflow = runtime.workflow
+    history = AgentHistory(workflow)
 
     def source(name):
         domain = TOOLS[name].domain
@@ -141,16 +144,18 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
         return [name for name, spec in TOOLS.items() if spec.allowed(actor)]
 
     @router.get("/capabilities")
-    def capabilities(actor: Actor = Depends(authenticate)):
-        return {"tools": [
+    def capabilities(request: Request, actor: Actor = Depends(authenticate)):
+        result = {"tools": [
             {"id": name, "mode": TOOLS[name].mode, "available": source(name) != "unconfigured",
              "source": source(name),
              "warehouses": sorted(TOOLS[name].sites(actor)) if TOOLS[name].domain != "mail" else []}
             for name in offered_tools(actor)
         ], "order_read_warehouses": sorted(order_read_sites(actor)), "approval_warehouses": {
             action: sorted(approval_sites(actor, action)) for action in ("sales_order.create_draft", "shipment.reschedule")
-        }, "planner": "local_rules" if planner is None else "configured",
-           "chat_available": chat_available and "chat.use" in actor.grants}
+        }, "chat_available": chat_available and "chat.use" in actor.grants}
+        if not getattr(request.state, "browser_session", False):
+            result["planner"] = "local_rules" if planner is None else "configured"
+        return result
 
     @router.get("/approvals")
     def approvals(actor: Actor = Depends(authenticate), limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -170,8 +175,12 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
     def calls(body: ToolCall, actor: Actor = Depends(authenticate), key: IdempotencyKey = None):
         return execute(actor, body, key)
 
-    @router.post("/turns", response_model=TurnResult)
-    def turns(body: Turn, actor: Actor = Depends(authenticate), key: IdempotencyKey = None):
+    def may_preview_approval(actor, proposal):
+        review = proposal.get("review") or {}
+        return (proposal["state"] == "PROPOSED" and review.get("assigned_to") in {None, actor.subject}
+                and can_approve(actor, proposal["requester"], Plan.model_validate(proposal["plan"])))
+
+    def perform_turn(body: Turn, actor: Actor, key: str | None):
         match = APPROVAL_TEXT.fullmatch(body.text.strip())
         request = ApprovalIntent(kind="approval_intent", proposal_id=match[1]) if match else local_turn(body.text)
         if isinstance(request, Clarify):
@@ -195,8 +204,7 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
         try:
             if isinstance(request, ApprovalIntent):
                 proposal = visible_proposal(actor, request.proposal_id, include_events=False)
-                plan = Plan.model_validate(proposal["plan"])
-                if not can_approve(actor, proposal["requester"], plan):
+                if not may_preview_approval(actor, proposal):
                     workflow.audit(actor, "approval.preview", "WORKBENCH_DENIED")
                     raise HTTPException(403, {"code": "ACTION_NOT_ALLOWED", "next_step": "view_proposal"})
                 return ApprovalPreview(proposal=proposal)
@@ -205,5 +213,64 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
             if error.status_code == 404:
                 raise HTTPException(404, {"code": "RECORD_UNAVAILABLE"}) from error
             raise
+
+    def historical_result(actor, identifier):
+        outcome, reference = history.get(actor, identifier)
+        try:
+            if outcome == "read":
+                # A historical entry can only reissue a typed read, never a proposal.
+                request = CALL.validate_python(reference)
+                if TOOLS[request.tool].mode == "read":
+                    return execute(actor, request, None)
+            if outcome in {"proposal", "approval_preview"}:
+                proposal = visible_proposal(actor, reference["proposal_id"], include_events=False)
+                if outcome == "proposal":
+                    return WorkProposal(tool=reference["tool"], proposal=proposal)
+                if may_preview_approval(actor, proposal):
+                    return ApprovalPreview(proposal=proposal)
+        except HTTPException as error:
+            if error.status_code not in {403, 404}:
+                raise
+        if outcome in {"proposal", "approval_preview", "read", "unavailable"}:
+            raise HTTPException(404, {"code": "RECORD_UNAVAILABLE"})
+        if outcome is None:
+            raise HTTPException(409, {"code": "TURN_IN_PROGRESS"}, headers={"Retry-After": "2"})
+        if outcome == "clarification":
+            return Clarification(question="Choose an available operation and include the reference or warehouse.")
+        return Clarification(question="This activity has no saved result. Start a new request to continue.")
+
+    @router.get("/history")
+    def list_history(actor: Actor = Depends(authenticate), limit: Annotated[int, Query(ge=1, le=100)] = 50,
+                     before_at: Annotated[float | None, Query(ge=0, le=1e12)] = None,
+                     before_id: Identifier | None = None):
+        if (before_at is None) != (before_id is None):
+            raise HTTPException(422, "Both cursor values are required")
+        after = None if before_at is None else (before_at, before_id)
+        return history.page(actor, limit, after)
+
+    @router.get("/history/{identifier}", response_model=TurnResult)
+    def get_history(identifier: Identifier, actor: Actor = Depends(authenticate)):
+        return historical_result(refresh_actor(actor), identifier)
+
+    @router.post("/turns", response_model=TurnResult)
+    def turns(body: Turn, actor: Actor = Depends(authenticate), key: IdempotencyKey = None):
+        if body.client_id is None:
+            return perform_turn(body, actor, key)
+        if key is not None:
+            raise HTTPException(422, "Persistent turns use client_id as their idempotency key")
+        try:
+            attempt = history.begin(actor, body.client_id, body.text)
+            if attempt is None:
+                return historical_result(refresh_actor(actor), body.client_id)
+            reserved_key = "activity/" + digest_of([actor.subject, body.client_id])
+            try:
+                result = perform_turn(body, actor, reserved_key)
+            except HTTPException as error:
+                history.complete(actor, body.client_id, attempt, status=error.status_code)
+                raise
+            history.complete(actor, body.client_id, attempt, result=result)
+            return result
+        except TurnInProgress as error:
+            raise HTTPException(409, {"code": "TURN_IN_PROGRESS"}, headers={"Retry-After": "2"}) from error
 
     return router

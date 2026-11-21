@@ -41,7 +41,12 @@ class DemoIdentity:
             raise ValueError("Invalid access token")
         if name not in self.PEOPLE:
             raise ValueError("Invalid access token")
-        tenant, role, warehouses = self.PEOPLE[name]
+        return self.directory_actor(self.PEOPLE[name][0], name)
+
+    def directory_actor(self, tenant: str, name: str) -> Actor | None:
+        if not self.known_subject(tenant, name):
+            return None
+        _, role, warehouses = self.PEOPLE[name]
         grants = {"chat.use", "mail.read"}
         if name == "finance":
             grants.update(("finance.read", "assurance.finance", "assurance.purchase"))

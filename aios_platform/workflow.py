@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from aios_demo.storage import Database, canonical, digest_of
 
+from .collaboration import notify
 from .contracts import Actor, Plan, Receipt
 from .erp import ERP, ERPRejected, ERP_TRANSPORT_ERRORS, plan_digest
 from .module_access import ModuleScopeChanged, dispatch_permitted, lock_employee, refresh_scope
@@ -25,7 +26,7 @@ class Workflow:
     def initialize(self):
         with self.db.transaction() as run:
             sources = ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql",
-                       "assurance_runtime.sql", "module_access.sql")
+                       "assurance_runtime.sql", "module_access.sql", "collaboration.sql")
             for name in sources:
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():
@@ -213,6 +214,8 @@ class Workflow:
                       (tenant, proposal_id)).fetchone()
             if not row:
                 raise KeyError(proposal_id)
+            review = run("""SELECT assigned_to, decided_by, decision, reason FROM aios_proposal_review
+                            WHERE tenant = ? AND proposal_id = ?""", (tenant, proposal_id)).fetchone()
             events = []
             if include_events:
                 events = run("""SELECT subject, event, at FROM aios_audit
@@ -220,7 +223,8 @@ class Workflow:
                              (tenant, proposal_id)).fetchall()
         return {**dict(row), "plan": json.loads(row["plan"]),
                 "receipt": json.loads(row["receipt"]) if row["receipt"] else None,
-                "events": [dict(event) for event in events]}
+                "events": [dict(event) for event in events],
+                "review": dict(review) if review else None}
 
     def summary(self, actor: Actor) -> dict[str, int]:
         if not actor.warehouses:
@@ -256,34 +260,41 @@ class Workflow:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def proposal_action_field(self, column):
+        return (f"CASE WHEN {column} IS JSON THEN CAST({column} AS JSONB) ->> 'action' END" if self.db.dsn
+                else f"CASE WHEN json_valid({column}) THEN json_extract({column}, '$.action') END")
+
     def pending_approvals(self, actor: Actor, limit: int, after: tuple[float, str] | None) -> list[dict]:
         scopes = [(action, sorted(approval_sites(actor, action)))
                   for action in ("shipment.reschedule", "sales_order.create_draft")]
-        action_field = ("CASE WHEN plan IS JSON THEN CAST(plan AS JSONB) ->> 'action' END" if self.db.dsn
-                        else "CASE WHEN json_valid(plan) THEN json_extract(plan, '$.action') END")
+        action_field = self.proposal_action_field("p.plan")
         predicates, params = [], []
         for action, warehouses in scopes:
             if warehouses:
                 marks = ",".join("?" for _ in warehouses)
-                predicates.append(f"({action_field} = ? AND warehouse IN ({marks}))")
+                predicates.append(f"({action_field} = ? AND p.warehouse IN ({marks}))")
                 params.extend([action, *warehouses])
         if not predicates:
             return []
         action_scope = " OR ".join(predicates)
-        cursor = "AND (due, id) > (?, ?)" if after else ""
+        cursor = "AND (p.due, p.id) > (?, ?)" if after else ""
         with self.tx(actor.tenant, write=False) as run:
             rows = run(
-                f"""SELECT id, warehouse, state, expires, due, {action_field} AS action
-                    FROM aios_proposal WHERE tenant = ? AND state = 'PROPOSED'
-                      AND requester != ? AND expires > ? AND ({action_scope}) {cursor}
-                    ORDER BY due, id LIMIT ?""",
-                (actor.tenant, actor.subject, time.time(), *params, *(after or ()), limit),
+                f"""SELECT p.id, p.warehouse, p.state, p.expires, p.due, {action_field} AS action
+                    FROM aios_proposal p LEFT JOIN aios_proposal_review r
+                        ON r.tenant = p.tenant AND r.proposal_id = p.id
+                    WHERE p.tenant = ? AND p.state = 'PROPOSED'
+                      AND p.requester != ? AND p.expires > ?
+                      AND (r.assigned_to IS NULL OR r.assigned_to = ?) AND ({action_scope}) {cursor}
+                    ORDER BY p.due, p.id LIMIT ?""",
+                (actor.tenant, actor.subject, time.time(), actor.subject, *params, *(after or ()), limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
     def approve(self, actor: Actor, proposal_id: str, digest: str):
         with self.tx(actor.tenant, bounded=True) as run:
-            row = run("SELECT * FROM aios_proposal WHERE tenant = ? AND id = ?",
+            lock = " FOR UPDATE" if self.db.dsn else ""
+            row = run("SELECT * FROM aios_proposal WHERE tenant = ? AND id = ?" + lock,
                       (actor.tenant, proposal_id)).fetchone()
             if not row:
                 raise KeyError(proposal_id)
@@ -297,6 +308,10 @@ class Workflow:
                 raise Conflict("Preview digest changed")
             if row["approver"] == actor.subject:
                 return
+            review = run("SELECT assigned_to FROM aios_proposal_review WHERE tenant = ? AND proposal_id = ?",
+                         (actor.tenant, proposal_id)).fetchone()
+            if review and review["assigned_to"] not in {None, actor.subject}:
+                raise Conflict("Proposal is assigned to another approver")
             now = time.time()
             result = run("""UPDATE aios_proposal SET state = 'QUEUED', approver = ?, due = ?, expires = ?
                             WHERE tenant = ? AND id = ? AND state = 'PROPOSED' AND expires > ?""",
@@ -304,6 +319,7 @@ class Workflow:
             if result.rowcount != 1:
                 raise Conflict("Proposal expired or was already acted on")
             self._audit(run, actor.tenant, actor.subject, proposal_id, "APPROVED_AND_QUEUED")
+            notify(run, actor.tenant, [row["requester"]], "proposal_approved", proposal_id)
 
     def reopen_verification(self, actor: Actor, proposal_id: str):
         if actor.role not in {"manager", "admin"}:
@@ -394,6 +410,8 @@ class Workflow:
             )
             if result.rowcount == 1:
                 self._audit(run, job["tenant"], "worker", job["id"], event or state)
+                if state in {"VERIFIED", "REJECTED", "NEEDS_OPERATOR"}:
+                    notify(run, job["tenant"], [job["requester"]], "proposal_" + state.lower(), job["id"])
 
 
 def tick(workflow: Workflow, erp: ERP, tenant: str) -> bool:

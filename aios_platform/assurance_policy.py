@@ -30,6 +30,7 @@ class Case(Strict):
     zone: Identifier
     kind: Kind
     values: dict[str, int | str | bool]
+    submitted_at: Annotated[float, Field(ge=0, le=4_102_444_800)] | None = None
 
 
 class CaseSource(Protocol):
@@ -163,6 +164,13 @@ def snapshot_digest(case: Case, facts: dict) -> str:
 
 
 class DemoCaseSource:
+    references = ("CT-300", "PO-100", "PO-401", "QA-200")
+
+    def cases(self, tenant, sites, kind, after, limit):
+        visible = [case for identifier in self.references if identifier > after
+                   and (case := self.get(tenant, identifier, sites)) is not None and case.kind == kind]
+        return visible[:limit]
+
     def get(self, tenant: str, reference: str, sites: frozenset[str]) -> Case | None:
         fixtures = {
             "PO-100": ("HK01", "purchase", {"amount_minor": 1_200_000, "currency": "HKD",

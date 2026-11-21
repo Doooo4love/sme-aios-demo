@@ -13,7 +13,7 @@ from aios_demo.storage import canonical, digest_of
 from .assurance_gateway import GateFailure, ReviewGateway
 from .assurance_policy import (
     HARD_HOLDS, SCHEMA_VERSION, TRACK_GRANTS, Case, CaseRestrictions, CaseSource, Track,
-    may_read, project, route, snapshot_digest,
+    Kind, KindGrant, may_read, project, route, snapshot_digest,
 )
 from .contracts import Actor, Identifier, Strict
 from .workflow import Conflict
@@ -57,6 +57,25 @@ class Assurance:
     def projection(self, actor: Actor, case: Case, *, audience):
         rule = self.restrictions(actor, case) if self.restrictions else None
         return project(actor, case, audience=audience, restrictions=rule)
+
+    def case_list(self, actor: Actor, kind: Kind, limit: int, after: str):
+        if KindGrant[kind] not in actor.grants:
+            raise PermissionError("This case type is unavailable")
+        source = getattr(self.source, "cases", None)
+        if source is None:
+            raise GateFailure("ASSURANCE_LIST_UNAVAILABLE", 503)
+        try:
+            rows = source(actor.tenant, actor.warehouses, kind, after, limit + 1)
+        except (TimeoutError, ConnectionError) as error:
+            raise GateFailure("ASSURANCE_SOURCE_UNAVAILABLE", 503, retry_after=2) from error
+        ids = [case.id for case in rows]
+        if (ids != sorted(set(ids)) or ids and ids[0] <= after or len(rows) > limit + 1
+                or any(case.kind != kind or case.zone != self.gateway.zone or not may_read(actor, case)
+                       for case in rows)):
+            raise GateFailure("ASSURANCE_LIST_INVALID", 503, retry_after=2)
+        items = [{"id": case.id, "kind": case.kind, "site": case.site, "revision": case.revision,
+                  "submitted_at": case.submitted_at} for case in rows[:limit]]
+        return {"items": items, "next": items[-1]["id"] if len(rows) > limit else None}
 
     def case_view(self, actor: Actor, reference: str) -> dict:
         case = self.case(actor, reference)
@@ -272,6 +291,11 @@ def assurance_routes(authenticate, service: Assurance | None, *, concurrency: in
             raise HTTPException(422, {"code": "EVIDENCE_INVALID_OR_RESTRICTED"}) from error
         finally:
             slots.release()
+
+    @router.get("/cases")
+    def case_list(kind: Kind, actor: Actor = Depends(authenticate),
+                  limit: Annotated[int, Query(ge=1, le=100)] = 50, after: Identifier | None = None):
+        return call(current().case_list, actor, kind, limit, after or "")
 
     @router.get("/cases/{reference}")
     def case_view(reference: Identifier, actor: Actor = Depends(authenticate)):
