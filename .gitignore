@@ -4,3 +4,8 @@ __pycache__/
 .env
 .state/
 *.sqlite*
+web/node_modules/
+web/.next/
+web/.env.local
+web/playwright-report/
+web/test-results/

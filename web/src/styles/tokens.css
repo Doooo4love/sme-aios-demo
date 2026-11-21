@@ -1,0 +1,214 @@
+/* ==========================================================================
+   SME AIOS Design Tokens — QZT Precision Industrial Editorial v2.0
+   ========================================================================== */
+:root {
+  color-scheme: light;
+
+  /* --- Core Workspace Light Surfaces (Default across all app routes) --- */
+  --bg-canvas: #F4F3EF;                  /* Warm architectural paper base */
+  --bg-sheet: #FFFFFF;                   /* Crisp elevated document / chat / drawer sheet */
+  --bg-plane: #ECEAE4;                   /* Secondary structural plane (rail, thread list, table thead) */
+  --bg-plane-hover: #E4E1D9;             /* Subtle hover on secondary plane */
+  --bg-subtle: #F9F8F5;                  /* Zebra/recessed row plane inside #FFFFFF sheets */
+
+  /* --- Ink & Typography Hierarchy --- */
+  --ink-primary: #14181F;                /* Deep graphite primary copy & numbers */
+  --ink-secondary: #343C4A;              /* Secondary labels & table headers */
+  --ink-muted: #566070;                  /* Slate muted metadata, timestamps, secondary descriptions */
+  --ink-faint: #6E7889;                  /* Placeholders & disabled labels */
+
+  /* --- 1px Architectural Hairlines --- */
+  --hairline: rgba(20, 24, 31, 0.10);
+  --hairline-strong: rgba(20, 24, 31, 0.18);
+  --hairline-subtle: rgba(20, 24, 31, 0.06);
+  --crosshair-mark: rgba(20, 24, 31, 0.22);
+
+  /* --- Single Cool Cyan-Blue Accent --- */
+  --accent: #0C6E91;
+  --accent-hover: #095774;
+  --accent-active: #07445B;
+  --accent-fg: #FFFFFF;
+  --accent-wash: rgba(12, 110, 145, 0.08);
+  --accent-wash-strong: rgba(12, 110, 145, 0.14);
+  --accent-border: rgba(12, 110, 145, 0.34);
+
+  /* --- Semantic Status Tokens (ALWAYS pair with icon + text) --- */
+  --status-amber: #B86E00;               /* Due-soon / held / outcome unknown / review required */
+  --status-amber-ink: #8F5500;           /* High-contrast 12px text on light surfaces */
+  --status-amber-wash: rgba(184, 110, 0, 0.09);
+  --status-amber-border: rgba(184, 110, 0, 0.28);
+
+  --status-crimson: #C03235;             /* Blocked / failed / rejected / revoked / suspended */
+  --status-crimson-wash: rgba(192, 50, 53, 0.08);
+  --status-crimson-border: rgba(192, 50, 53, 0.28);
+
+  --status-emerald: #1A7F4B;             /* Verified / healthy / approved / active grant */
+  --status-emerald-wash: rgba(26, 127, 75, 0.08);
+  --status-emerald-border: rgba(26, 127, 75, 0.28);
+
+  --status-neutral: #566070;             /* Proposed / queued / inherited / inactive */
+  --status-neutral-wash: rgba(86, 96, 112, 0.08);
+  --status-neutral-border: rgba(86, 96, 112, 0.22);
+
+  /* --- Sharp Industrial Geometry (ZERO puffy 24px cards) --- */
+  --radius-none: 0px;
+  --radius-xs: 2px;                      /* Inline codes, OCR bbox, checkboxes, kbd caps */
+  --radius-sm: 4px;                      /* Buttons, inputs, list items, Agent tag */
+  --radius-md: 6px;                      /* Structured turn cards, modals, inspector sub-panels */
+
+  /* --- Elevation (Hairlines replace drop shadows; popover shadow strictly bounded) --- */
+  --shadow-none: none;
+  --shadow-popover: 0 2px 8px rgba(20, 24, 31, 0.08);
+  --shadow-modal: 0 8px 24px rgba(20, 24, 31, 0.12);
+  --scrim: rgba(20, 24, 31, 0.32);
+
+  /* --- Typography Stack --- */
+  --font-sans: "SF Pro Display", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont,
+               "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular,
+               Menlo, Consolas, monospace;
+
+  /* --- Type Scale & CJK Optical Line Heights --- */
+  --fs-display: 1.5rem;                  /* 24px: Page / Login title */
+  --fs-h2: 1.125rem;                     /* 18px: Section / Drawer header */
+  --fs-title: 0.9375rem;                 /* 15px: Card / Thread title */
+  --fs-body: 0.875rem;                   /* 14px: Primary UI & message body */
+  --fs-meta: 0.75rem;                    /* 12px: Table headers, timestamps, captions */
+  --fs-micro: 0.6875rem;                 /* 11px: Monospace index codes & Agent marker */
+
+  /* --- Layout Architecture --- */
+  --rail-w: 60px;                        /* Far-left primary navigation strip */
+  --thread-list-w: 280px;                /* Left pane: 会话列表 / Queue list */
+  --drawer-w: clamp(360px, 31vw, 440px); /* Right pane: 按需打开的业务面板 */
+  --topbar-h: 48px;                      /* Compact workspace context header */
+  --tap-min: 44px;                       /* Mobile minimum touch target */
+
+  /* --- Kinetic Timing & QZT Deceleration Curve --- */
+  --ease-snap: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;                    /* Row hover, focus ring, highlight */
+  --dur-fade: 150ms;                     /* Content fade / status swap */
+  --dur-drawer: 165ms;                   /* < 180ms hard cap for drawer slide/expand */
+  --dur-trace: 320ms;                    /* Topology SVG connector draw */
+}
+
+/* ==========================================================================
+   Obsidian Dark Stage Tokens — STRICTLY reserved for /login 3D Stage ONLY.
+   NEVER apply to /inbox, /work, /proposals, /admin, /settings, or /calendar.
+   ========================================================================== */
+[data-surface="obsidian-stage"] {
+  color-scheme: dark;
+  --stage-obsidian: #070B12;
+  --stage-carbon: #0D1420;
+  --stage-carbon-elevated: #121C2D;
+  --stage-fg: #EEF1F5;
+  --stage-fg-2: rgba(238, 241, 245, 0.78);
+  --stage-fg-muted: rgba(238, 241, 245, 0.56);
+  --stage-hairline: rgba(238, 241, 245, 0.09);
+  --stage-optical-blue: #3898E2;
+  --stage-optical-cyan: #1CA8C9;
+  --stage-optical-emerald: #34D058;
+}
+
+/* ==========================================================================
+   Tabular Numerals, Focus Accessibility & Kinetic Keyframes
+   ========================================================================== */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.font-mono-code {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes aios-beacon-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes aios-beacon-prism {
+  0%,
+  100% {
+    opacity: 0.52;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes aios-topology-trace {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes aios-check-reveal {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.aios-beacon-arc {
+  transform-origin: center;
+  animation: aios-beacon-sweep 1.1s linear infinite;
+}
+
+.aios-beacon-core {
+  animation: aios-beacon-prism 1.6s var(--ease-io) infinite;
+}
+
+.aios-topology-trace {
+  stroke-dasharray: 100;
+  animation: aios-topology-trace var(--dur-trace) var(--ease-snap) forwards;
+}
+
+.aios-check-reveal {
+  stroke-dasharray: 24;
+  animation: aios-check-reveal var(--dur-fade) var(--ease-snap) forwards;
+}
+
+.aios-drawer-transition {
+  transition:
+    width var(--dur-drawer) var(--ease-snap),
+    transform var(--dur-drawer) var(--ease-snap),
+    opacity var(--dur-fade) ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .aios-beacon-arc {
+    animation: none !important;
+    transform: rotate(-45deg);
+  }
+
+  .aios-beacon-core {
+    animation: none !important;
+    opacity: 0.9;
+  }
+}
