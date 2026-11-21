@@ -88,6 +88,8 @@ class Calendar:
         return {**event, "cancelled": bool(event["cancelled"]), "source": "internal"}
 
     def create(self, actor, body):
+        if body.room_id is not None and "chat.use" not in actor.grants:
+            raise PermissionError("Chat permission required for room scheduling")
         participants = sorted(body.attendees | {actor.subject})
         if len(participants) > 1 and body.room_id is None:
             raise InvalidCollaborationRequest("Use an authorized chat room to invite employees")
