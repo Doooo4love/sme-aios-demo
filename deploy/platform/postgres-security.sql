@@ -165,3 +165,79 @@ REVOKE ALL ON aios_employee, aios_module_access FROM PUBLIC, aios_api, aios_work
 GRANT SELECT, INSERT ON aios_employee, aios_module_access TO aios_api;
 GRANT UPDATE (grants, warehouses, expires_at, version) ON aios_module_access TO aios_api;
 GRANT SELECT ON aios_module_access TO aios_worker;
+
+-- Collaboration records. Profile and workbench history queries propagate the verified subject.
+ALTER TABLE aios_profile ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_profile FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_profile_read ON aios_profile;
+CREATE POLICY aios_profile_read ON aios_profile FOR SELECT TO aios_api USING (
+    tenant = current_setting('aios.tenant', true) AND (
+        subject = current_setting('aios.subject', true) OR (kind = 'employee' AND EXISTS (
+            SELECT 1 FROM aios_chat_member target_member JOIN aios_chat_member own_member
+            ON target_member.tenant = own_member.tenant AND target_member.room_id = own_member.room_id
+            WHERE target_member.tenant = aios_profile.tenant AND target_member.subject = aios_profile.subject
+              AND own_member.subject = current_setting('aios.subject', true)
+        ))
+    )
+);
+DROP POLICY IF EXISTS aios_profile_write ON aios_profile;
+CREATE POLICY aios_profile_write ON aios_profile FOR ALL TO aios_api
+    USING (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true));
+
+ALTER TABLE aios_agent_activity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_agent_activity FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_agent_subject ON aios_agent_activity;
+CREATE POLICY aios_agent_subject ON aios_agent_activity TO aios_api
+    USING (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true));
+
+ALTER TABLE aios_proposal_review ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_proposal_review FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_review_tenant ON aios_proposal_review;
+CREATE POLICY aios_review_tenant ON aios_proposal_review TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_calendar_event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_calendar_event FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_calendar_tenant ON aios_calendar_event;
+CREATE POLICY aios_calendar_tenant ON aios_calendar_event TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_calendar_member ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_calendar_member FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_calendar_tenant ON aios_calendar_member;
+CREATE POLICY aios_calendar_tenant ON aios_calendar_member TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_internal_notice ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_internal_notice FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_notice_subject ON aios_internal_notice;
+CREATE POLICY aios_notice_subject ON aios_internal_notice TO aios_api
+    USING (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true));
+DROP POLICY IF EXISTS aios_notice_append ON aios_internal_notice;
+CREATE POLICY aios_notice_append ON aios_internal_notice FOR INSERT TO aios_api, aios_worker
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+ALTER TABLE aios_browser_session ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_browser_session FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_session_tenant ON aios_browser_session;
+CREATE POLICY aios_session_tenant ON aios_browser_session TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+
+REVOKE ALL ON aios_profile, aios_agent_activity, aios_proposal_review, aios_calendar_event,
+    aios_calendar_member, aios_internal_notice, aios_browser_session FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_profile, aios_agent_activity, aios_proposal_review, aios_calendar_event,
+    aios_calendar_member, aios_internal_notice, aios_browser_session TO aios_api;
+GRANT UPDATE (display_name, avatar, version) ON aios_profile TO aios_api;
+GRANT UPDATE (attempt, outcome, reference, lease_until) ON aios_agent_activity TO aios_api;
+GRANT UPDATE (assigned_to, decided_by, decision, reason) ON aios_proposal_review TO aios_api;
+GRANT UPDATE (title, starts_at, ends_at, revision, cancelled) ON aios_calendar_event TO aios_api;
+GRANT UPDATE (read_at) ON aios_internal_notice TO aios_api;
+GRANT DELETE ON aios_browser_session TO aios_api;
+GRANT INSERT ON aios_internal_notice TO aios_worker;
