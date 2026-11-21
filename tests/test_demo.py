@@ -44,6 +44,32 @@ class ParseAndRouteTests(TestCase):
             order_payload(evidence, {key: "8"})
         self.assertEqual(order_payload(evidence, {key: "2"})["items"][0]["erp_quantity"], 48)
 
+    def test_generated_orders_have_pixel_evidence_for_all_fields(self):
+        for name in ("harbour-po.png", "harbour-review.png", "harbour-shorthand.png"):
+            with self.subTest(name=name):
+                fixture = FIXTURES / name
+                self.assertEqual(fixture.read_bytes(), (FIXTURES / "generated" / name).read_bytes())
+                parsed = parse_image(fixture)
+                self.assertTrue(parsed.complete)
+                self.assertEqual(len(parsed.fields), 15)
+                expected = FixtureVision(name).answers
+                for key in parsed.required:
+                    reading = parsed.fields[key]
+                    if name == "harbour-review.png" and key == "line.1.quantity":
+                        # Handwriting is disputed across engines. Keep its real anchor.
+                        self.assertTrue(reading.value)
+                    else:
+                        self.assertEqual(reading.value, expected[key], key)
+                    l, t, r, b = reading.bbox
+                    self.assertTrue(0 <= l < r <= parsed.page.width)
+                    self.assertTrue(0 <= t < b <= parsed.page.height)
+                    low, high = parsed.page.crop(reading.bbox).convert("L").getextrema()
+                    self.assertGreater(high - low, 50, key)
+                for row in range(1, parsed.row_count + 1):
+                    boxes = [parsed.fields[f"line.{row}.{field}"].bbox for field in
+                             ("sku", "quantity", "unit", "unit_price", "amount")]
+                    self.assertTrue(all(a[2] <= b[0] for a, b in zip(boxes, boxes[1:])))
+
     def test_cannot_override_uncontested_fields(self):
         evidence = self.parsed("harbour-po.png")
         with self.assertRaisesRegex(ValueError, "Only unresolved"):

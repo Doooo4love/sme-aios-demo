@@ -1,81 +1,188 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>Order intake | SME AIOS</title>
-  <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" defer></script>
-</head>
-<body>
-  <header class="shell">
-    <div class="wrap top">
-      <span class="brand"><span class="mark" aria-hidden="true">A.</span> SME AIOS</span>
-      <span class="top-label">Wholesale operations</span>
-      <span class="environment"><i></i> Local demo</span>
-    </div>
-  </header>
-  <main class="wrap">
-    <div class="heading">
-      <div><div class="crumb">Operations <span>/</span> Orders</div>
-        <h1>Order intake</h1>
-        <p>Read the source, resolve exceptions, and verify the ERP draft.</p>
-      </div>
-      <div class="scenarios" aria-label="Sample scenarios">
-        <button type="button" data-sample="standard" aria-pressed="true">Standard PO</button>
-        <button type="button" data-sample="review" aria-pressed="false">Quantity conflict</button>
-      </div>
-    </div>
-
-    <section class="intake-bar panel" aria-label="Intake inbox">
-      <form id="upload-form" class="upload-form">
-        <label class="upload-label" for="document">Upload a purchase order</label>
-        <input id="document" type="file" accept="image/png,image/jpeg" required>
-        <label class="vision-option"><input id="live-vision" type="checkbox"> Use configured vision for disputed crops</label>
-        <button id="upload-submit" type="submit" class="secondary">Extract fields</button>
-      </form>
-      <label class="inbox-label" for="recent-intakes">Recent intakes
-        <select id="recent-intakes"><option value="">Open a saved intake</option></select>
-      </label>
-    </section>
-
-    <div id="message" role="status" aria-live="polite" hidden></div>
-
-    <div class="workspace">
-      <section class="panel source" aria-labelledby="source-title">
-        <header class="panel-head">
-          <div>
-            <h2 id="source-title">Source document</h2>
-            <span class="muted" id="source-filename">Page 1</span>
-          </div>
-          <span class="tag" id="source-status">Loading</span>
-        </header>
-        <div class="page-area">
-          <div class="page"><img id="source" alt="Purchase order source" width="1200" height="940">
-            <div id="bbox" hidden></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f8f9f5" />
+    <meta name="description" content="Turn customer purchase orders into verified ERP sales drafts with source-linked evidence." />
+    <title>Order Intake · Linevouch</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23245b4c'/%3E%3Cpath d='M12 10v20h9m1-6 4 4 7-8' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#screen">Skip to workspace</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Workspace navigation">
+        <a class="wordmark" href="/" aria-label="Linevouch home"
+          ><span class="brand-icon" aria-hidden="true"
+            ><svg viewBox="0 0 30 30" fill="none">
+              <path
+                d="M7 7v16h7m2-4 3 3 6-7"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              /></svg></span
+          ><span
+            >Line<b>vouch<span class="wordmark-dot">.</span></b></span
+          ></a
+        >
+        <div class="workspace-label">Workspace</div>
+        <nav aria-label="Main navigation">
+          <a class="nav-item active" href="/" aria-current="page"
+            ><svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+              <path
+                d="M7 3h7l4 4v14H6V3h1Zm7 0v5h4M9 12h6M9 16h6"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              /></svg
+            ><span>Order intake<small>PO to ERP draft</small></span
+            ><span class="nav-indicator" aria-hidden="true"></span
+          ></a>
+        </nav>
+        <details class="sidebar-journey">
+          <summary class="workspace-label">Intake steps</summary>
+          <ol>
+            <li><span>01</span> Read &amp; locate</li>
+            <li><span>02</span> Review &amp; rules</li>
+            <li><span>03</span> Approved</li>
+          </ol>
+        </details>
+        <div class="sidebar-bottom">
+          <div class="demo-note"><span class="status-dot"></span> Wholesale demo</div>
+          <details class="sidebar-tools">
+            <summary>Demo tools</summary>
+            <button id="reset-memory" type="button">Reset saved aliases</button>
+          </details>
+          <div class="sidebar-footer">
+            <span class="avatar" aria-hidden="true">OP</span>
+            <div><strong>Order clerk</strong><small>Wholesale desk</small></div>
           </div>
         </div>
-        <footer><span>Evidence region</span><strong id="active-field">—</strong></footer>
-      </section>
-      <section class="panel fields" aria-labelledby="fields-title">
-        <header class="panel-head">
-          <div><h2 id="fields-title">Field evidence</h2><span class="muted" id="reader-mode">Running local OCR…</span></div>
-          <span class="tag" id="decision">Reading</span>
+      </aside>
+      <div class="workspace">
+        <header class="topbar">
+          <div class="breadcrumb">
+            <span>Workspace</span><span class="breadcrumb-slash">/</span><strong>Order intake</strong>
+          </div>
+          <div class="top-actions">
+            <span class="local-badge"><i class="status-dot"></i> Local demo</span
+            ><button id="tour-start" class="secondary compact" type="button">
+              Take the tour <span aria-hidden="true">↗</span></button
+            ><button id="mode-open" class="secondary compact" type="button">
+              Switch mode <span aria-hidden="true">⇄</span>
+            </button>
+          </div>
         </header>
-        <div id="fields"></div>
-        <div id="review" hidden></div>
-        <div id="preview" hidden></div>
-      </section>
+        <main>
+          <div class="workspace-caption"><span>ORDER INTAKE</span></div>
+          <nav id="stepper" class="stepper" aria-label="Intake progress"></nav>
+          <div id="message" role="status" aria-live="polite" hidden></div>
+          <section id="screen" aria-label="Order workspace" tabindex="-1"></section>
+          <details id="audit" class="audit">
+            <summary>
+              <span class="audit-icon" aria-hidden="true">⌘</span
+              ><span>Technical audit<small>Evidence hash, reader trace, and ERP receipt log</small></span
+              ><span class="audit-arrow" aria-hidden="true">⌄</span>
+            </summary>
+            <pre id="audit-data" aria-label="Technical audit JSON">No order loaded yet.</pre>
+          </details>
+          <footer class="page-footer">
+            <span>Linevouch <span class="footer-separator">/</span> Wholesale Order Intake</span>
+          </footer>
+        </main>
+      </div>
     </div>
-
-    <section class="panel ledger" aria-labelledby="ledger-title">
-      <header class="panel-head">
-        <div><h2 id="ledger-title">ERP write ledger</h2><span class="muted" id="ledger-context">Approval creates a durable outbox job.</span></div>
-        <div class="ledger-right"><span class="tag" id="command-state">Waiting for approval</span><button id="tick" class="secondary" disabled>Run worker step</button></div>
-      </header>
-      <div id="events" class="events"></div>
-    </section>
-  </main>
-</body>
+    <div id="tour-dock" hidden></div>
+    <dialog id="welcome" aria-labelledby="welcome-title" aria-describedby="welcome-intro">
+      <div class="welcome-body">
+        <div class="welcome-kicker">
+          <span class="status-dot"></span> Linevouch · Showcase <span class="duration">2 min</span>
+        </div>
+        <h1 id="welcome-title">Wholesale Order Intake</h1>
+        <p id="welcome-intro" class="welcome-intro">Turn a customer purchase order into a verified ERP sales draft.</p>
+        <p class="welcome-description">
+          Every extracted value links back to its position on the page. Unclear numbers pause for a clerk, and every
+          approved draft is read back from the ERP.
+        </p>
+        <div
+          class="welcome-visual"
+          role="img"
+          aria-label="Source purchase order flows through field checks into a verified ERP sales draft"
+        >
+          <div class="visual-document">
+            <div class="visual-label"><span class="visual-number">01</span> Source order</div>
+            <div class="mini-paper">
+              <img src="/sample/standard" alt="Sample Harbour purchase order" width="1200" height="940" /><span
+                class="paper-corner"
+              ></span>
+            </div>
+            <span class="document-caption">Photo, scan, or forwarded PO</span>
+          </div>
+          <span class="visual-connector" aria-hidden="true">→</span>
+          <div class="visual-review">
+            <div class="visual-label"><span class="visual-number">02</span> Read &amp; check</div>
+            <div class="mini-field"><span>PO number</span><b>PO-1042</b><i>✓</i></div>
+            <div class="mini-field"><span>Order total</span><b>HKD 804.00</b><i>✓</i></div>
+            <div class="mini-review"><span class="review-ring">!</span><span>Disputed? Clerk confirms</span></div>
+            <span class="document-caption">Rules check AI and clerk entries alike</span>
+          </div>
+          <span class="visual-connector" aria-hidden="true">→</span>
+          <div class="visual-erp">
+            <div class="visual-label"><span class="visual-number">03</span> ERP draft</div>
+            <div class="erp-check" aria-hidden="true">
+              <svg viewBox="0 0 32 32" fill="none">
+                <path
+                  d="m9 16 5 5 10-11"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </div>
+            <strong>Written &amp; verified</strong><span>Approve → Write → Read back</span>
+            <div class="erp-verified"><span class="status-dot"></span> One matching draft confirmed</div>
+          </div>
+        </div>
+        <div class="welcome-bottom">
+          <p>
+            <strong>Walk through one order cycle.</strong><span>Clean printed PO, handwritten conflict, or a new buyer alias.</span>
+          </p>
+          <span class="welcome-trust">Evidence linked <span aria-hidden="true">✓</span></span>
+        </div>
+        <div class="welcome-actions">
+          <button id="start-tour" class="primary" type="button">
+            Take the 2-min tour <span aria-hidden="true">→</span></button
+          ><button id="start-explore" class="secondary" type="button">Upload your own order</button>
+        </div>
+      </div>
+    </dialog>
+    <svg id="spotlight" width="100%" height="100%" aria-hidden="true" hidden>
+      <defs>
+        <mask id="spot-mask">
+          <rect width="100%" height="100%" fill="white" />
+          <rect id="spot-hole" x="0" y="0" width="0" height="0" rx="12" fill="black" />
+          <rect id="spot-context" x="0" y="0" width="0" height="0" rx="10" fill="black" />
+        </mask>
+      </defs>
+      <rect width="100%" height="100%" fill="rgba(17,39,30,.50)" mask="url(#spot-mask)" />
+    </svg>
+    <aside id="coach" role="dialog" aria-labelledby="coach-title" aria-describedby="coach-text" hidden>
+      <div class="coach-top">
+        <span id="coach-index"></span
+        ><button id="coach-close" type="button">Exit tour <span aria-hidden="true">×</span></button>
+      </div>
+      <h2 id="coach-title"></h2>
+      <p id="coach-text"></p>
+      <div class="coach-hint"><span class="status-dot"></span> Follow the highlighted area</div>
+    </aside>
+  </body>
 </html>
