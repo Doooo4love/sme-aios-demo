@@ -3,7 +3,19 @@ import {
   onAuthReset,
   type ApiError,
 } from "@/lib/api-client";
-import type { TurnResult } from "@/lib/types";
+import type {
+  BriefResponse,
+  TurnResult,
+  ZoomBookingConfirmResponse,
+  ZoomBookingPreviewResponse,
+} from "@/lib/types";
+
+export interface AssistantZoomBookingState {
+  phase: "parsing" | "preview" | "confirmed" | "error";
+  preview?: ZoomBookingPreviewResponse;
+  confirmed?: ZoomBookingConfirmResponse;
+  errorMessage?: string | null;
+}
 
 export interface AssistantTurnEntry {
   id: string;
@@ -13,8 +25,10 @@ export interface AssistantTurnEntry {
   status: "pending" | "done" | "error";
   waitingRetryAfter?: number | null;
   result?: TurnResult;
+  brief?: BriefResponse;
+  zoomBooking?: AssistantZoomBookingState;
   error?: ApiError;
-  sourceKind: "turn" | "tool_call";
+  sourceKind: "turn" | "tool_call" | "zoom_booking" | "brief_card";
 }
 
 export interface ExpandedHistoryRecord {

@@ -26,6 +26,8 @@ export type KnownStatus =
   | "healthy"
   | "paused"
   | "unavailable"
+  | "connected"
+  | "sandbox_ready"
   | "OPEN"
   | "CLOSED"
   | "PAID"
@@ -44,7 +46,7 @@ interface StatusDescriptor {
 
 const STATUS_MAP: Record<string, StatusDescriptor> = {
   // Proposal states
-  PROPOSED: { label: "待审批", tone: "neutral", icon: Clock },
+  PROPOSED: { label: "待审批", tone: "amber", icon: Clock },
   QUEUED: { label: "已批准 · 待派发", tone: "accent", icon: Clock },
   SENDING: { label: "ERP 写入中", tone: "accent", icon: Send },
   VERIFYING: { label: "回执核验中", tone: "accent", icon: Loader2, spin: true },
@@ -66,10 +68,12 @@ const STATUS_MAP: Record<string, StatusDescriptor> = {
   revoked: { label: "已撤销", tone: "crimson", icon: ShieldOff },
   expired: { label: "已到期", tone: "amber", icon: AlertTriangle },
 
-  // System health / write control / domain states
+  // System health / integrations / domain states
   healthy: { label: "运行正常", tone: "emerald", icon: CheckCircle2 },
   paused: { label: "写入已暂停", tone: "crimson", icon: PauseCircle },
   unavailable: { label: "服务暂不可用", tone: "amber", icon: AlertTriangle },
+  connected: { label: "已连接", tone: "emerald", icon: CheckCircle2 },
+  sandbox_ready: { label: "待接入凭证", tone: "neutral", icon: Clock },
   OPEN: { label: "进行中", tone: "accent", icon: Clock },
   CLOSED: { label: "已关闭", tone: "neutral", icon: CheckCircle2 },
   PAID: { label: "已结算", tone: "emerald", icon: CheckCircle2 },
@@ -79,15 +83,15 @@ const STATUS_MAP: Record<string, StatusDescriptor> = {
 
 const TONE_STYLES: Record<Tone, string> = {
   emerald:
-    "text-[var(--status-emerald)] bg-[var(--status-emerald-wash)] border-[var(--status-emerald-border)]",
+    "text-[var(--status-emerald)] bg-[var(--status-emerald-wash)]",
   amber:
-    "text-[var(--status-amber-ink)] bg-[var(--status-amber-wash)] border-[var(--status-amber-border)]",
+    "text-[var(--status-amber-ink)] bg-[var(--status-amber-wash)]",
   crimson:
-    "text-[var(--status-crimson)] bg-[var(--status-crimson-wash)] border-[var(--status-crimson-border)]",
+    "text-[var(--status-crimson)] bg-[var(--status-crimson-wash)]",
   accent:
-    "text-[var(--accent)] bg-[var(--accent-wash)] border-[var(--accent-border)]",
+    "text-[var(--accent)] bg-[var(--accent-wash)]",
   neutral:
-    "text-[var(--status-neutral)] bg-[var(--status-neutral-wash)] border-[var(--status-neutral-border)]",
+    "text-[var(--status-neutral)] bg-[var(--status-neutral-wash)]",
 };
 
 export interface StatusBadgeProps {
@@ -114,8 +118,8 @@ export function StatusBadge({
   return (
     <span
       className={[
-        "inline-flex items-center gap-1.5 border rounded-[4px] font-medium whitespace-nowrap leading-none",
-        compact ? "px-1.5 py-0.5 text-[11px]" : "px-2 py-1 text-[12px]",
+        "inline-flex items-center gap-1.5 rounded-full font-medium whitespace-nowrap leading-none",
+        compact ? "px-2 py-1 text-[11px]" : "px-2.5 py-1 text-[12px]",
         TONE_STYLES[desc.tone],
         className,
       ].join(" ")}
@@ -126,7 +130,7 @@ export function StatusBadge({
           "shrink-0",
           desc.spin ? "animate-spin" : "",
         ].join(" ")}
-        strokeWidth={1.75}
+        strokeWidth={1.85}
         aria-hidden="true"
       />
       <span>{text}</span>

@@ -42,19 +42,19 @@ export function Modal({
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-[var(--scrim)]" />
+        <Dialog.Overlay className="aios-modal-scrim fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-[6px]" />
         <Dialog.Content
           className={[
-            "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 flex flex-col",
-            "bg-[var(--bg-sheet)] border border-[var(--hairline-strong)] shadow-[var(--shadow-modal)] focus:outline-none",
+            "aios-modal-content fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 flex flex-col",
+            "bg-[var(--bg-surface)] shadow-[var(--shadow-modal)] focus:outline-none overflow-hidden",
             expanded
-              ? "h-[calc(100dvh-24px)] w-[calc(100vw-24px)] rounded-[4px]"
-              : `${SIZE_CLASSES[size]} max-h-[calc(100dvh-48px)] rounded-[6px]`,
+              ? "h-[calc(100dvh-24px)] w-[calc(100vw-24px)] rounded-lg"
+              : `${SIZE_CLASSES[size]} max-h-[calc(100dvh-48px)] rounded-lg`,
           ].join(" ")}
         >
-          <div className="flex items-start justify-between gap-3 border-b border-[var(--hairline)] px-5 py-3.5 shrink-0">
+          <div className="flex items-start justify-between gap-3 border-b border-[var(--hairline)] px-6 py-4 shrink-0">
             <div className="min-w-0">
-              <Dialog.Title className="text-[15px] font-semibold text-[var(--ink-primary)] truncate">
+              <Dialog.Title className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)] truncate">
                 {title}
               </Dialog.Title>
               {subtitle && (
@@ -70,12 +70,12 @@ export function Modal({
                   onClick={() => setExpanded((v) => !v)}
                   aria-label={expanded ? "还原窗口尺寸" : "全屏展开"}
                   title={expanded ? "还原窗口尺寸" : "全屏展开"}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)] cursor-pointer"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                 >
                   {expanded ? (
-                    <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.8} />
                   ) : (
-                    <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.8} />
                   )}
                 </button>
               )}
@@ -83,18 +83,18 @@ export function Modal({
                 <button
                   type="button"
                   aria-label="关闭窗口"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)] cursor-pointer"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                 >
-                  <X className="h-4 w-4" strokeWidth={1.75} />
+                  <X className="h-4 w-4" strokeWidth={1.8} />
                 </button>
               </Dialog.Close>
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto px-5 py-4">{children}</div>
+          <div className="flex-1 overflow-auto px-6 py-5">{children}</div>
 
           {footer && (
-            <div className="flex items-center justify-end gap-2 border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-5 py-3 shrink-0 rounded-b-[6px]">
+            <div className="flex items-center justify-end gap-2.5 border-t border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-6 py-3.5 shrink-0">
               {footer}
             </div>
           )}

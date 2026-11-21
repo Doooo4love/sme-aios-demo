@@ -14,6 +14,7 @@ export async function GET(): Promise<Response> {
   return new Response(
     JSON.stringify({
       enabled,
+      password_login_enabled: enabled,
       oidc_login_enabled: oidcLoginEnabled,
       personas: enabled ? DEMO_PERSONAS : [],
     }),

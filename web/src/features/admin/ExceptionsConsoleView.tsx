@@ -7,7 +7,6 @@ import {
   ArrowUpRight,
   CheckCircle2,
   Eye,
-  Info,
   Play,
   RefreshCw,
   RotateCcw,
@@ -192,7 +191,7 @@ export function ExceptionsConsoleView() {
         if (err.status === 409) {
           setActionNotice({
             kind: "conflict",
-            message: `提案 ${targetId} 状态已变更，当前不可发起回执核查（409），已刷新最新队列。`,
+            message: `提案 ${targetId} 状态已变更，当前不可发起回执核查，已刷新最新队列。`,
           });
           await loadExceptions();
         } else {
@@ -214,8 +213,8 @@ export function ExceptionsConsoleView() {
       const res = await runDemoWorkerTick();
       setTickNotice(
         res.worked
-          ? `worker-tick: worked=true — 已推进 1 条任务并刷新异常队列。`
-          : `worker-tick: worked=false — 当前无待执行的队列任务（或写入已暂停）。`,
+          ? "已推进 1 条队列任务并刷新异常队列。"
+          : "当前无待执行的队列任务（或写入已暂停）。",
       );
       await loadExceptions();
     } catch (err) {
@@ -232,7 +231,7 @@ export function ExceptionsConsoleView() {
   if (!canAccessAdminOps) {
     return (
       <div
-        className="mx-auto max-w-[820px] p-4 sm:p-6"
+        className="mx-auto max-w-[820px] px-4 py-8 sm:px-6"
         data-testid="exceptions-access-denied"
       >
         <AccessNoticeCard
@@ -248,29 +247,43 @@ export function ExceptionsConsoleView() {
 
   return (
     <div
-      className="mx-auto max-w-[1160px] space-y-4 p-4 sm:p-6"
+      className="mx-auto max-w-[1160px] space-y-5 px-4 py-6 sm:px-6 lg:py-7 pb-16"
       data-testid="admin-exceptions-page"
     >
-      {/* Header Sheet */}
-      <section className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      {/* Back Pill */}
+      <div>
+        <Link
+          href="/admin"
+          className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] hover:text-[var(--accent)] hover:shadow-[var(--shadow-card)] transition-all duration-[150ms]"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.85} />
+          <span>返回运维监控中心</span>
+        </Link>
+      </div>
+
+      {/* Unified Porcelain Page-Header Card */}
+      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <Link
-              href="/admin"
-              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ink-muted)] hover:text-[var(--ink-primary)]"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span>返回运维控制中心</span>
-            </Link>
-            <h2 className="mt-2 text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
-              异常单据队列
-            </h2>
-            <p className="mt-1 text-[13px] text-[var(--ink-muted)]">
-              集中展示授权仓库范围内的{" "}
-              <code className="font-mono-code text-[12px]">NEEDS_OPERATOR</code>{" "}
-              与{" "}
-              <code className="font-mono-code text-[12px]">OUTCOME_UNKNOWN</code>{" "}
-              单据；支持对人工挂起单据发起只读回执核查（Reconcile），不会重复写入 ERP。
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
+                异常单据队列
+              </h1>
+              {canRunDemoTick && <SourceTag source="synthetic" />}
+            </div>
+            <p className="mt-1 text-[13px] text-[var(--ink-secondary)]">
+              集中查看待确认与需人工核查的单据；发起回执核查仅做只读回查，不会重复写入 ERP。
+            </p>
+            <p className="mt-1.5 text-[12px] text-[var(--ink-muted)] tabular-nums">
+              <span className="font-mono-code">{actor?.tenant ?? "—"}</span>
+              <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
+              <span className="font-mono-code">
+                {actor?.warehouses.join(" / ") || "无站点"}
+              </span>
+              <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
+              <span>
+                已加载 {items.length} 条{nextCursor ? "+" : ""}
+              </span>
             </p>
           </div>
 
@@ -278,54 +291,28 @@ export function ExceptionsConsoleView() {
             {canRunDemoTick && (
               <Button
                 size="sm"
-                variant="secondary"
+                pill
+                variant="quiet"
                 loading={tickBusy}
                 data-testid="exceptions-worker-tick-btn"
                 onClick={() => void handleDemoTick()}
               >
-                <Play className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <Play className="h-3.5 w-3.5" strokeWidth={1.85} />
                 <span>演示 Worker Tick</span>
               </Button>
             )}
             <Button
               size="sm"
+              pill
               variant="secondary"
               loading={loading}
               data-testid="exceptions-refresh-btn"
               onClick={() => void loadExceptions()}
             >
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>刷新队列</span>
             </Button>
           </div>
-        </div>
-
-        <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline)] pt-3 text-[12px] text-[var(--ink-secondary)]">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>
-              租户：
-              <strong className="font-mono-code text-[var(--ink-primary)]">
-                {actor?.tenant ?? "—"}
-              </strong>
-            </span>
-            <span>
-              授权仓库：
-              <strong className="font-mono-code text-[var(--ink-primary)]">
-                {actor?.warehouses.join(", ") || "无"}
-              </strong>
-            </span>
-            <span className="font-mono-code text-[var(--ink-muted)] tabular-nums">
-              当前已加载 {items.length} 条{nextCursor ? "+" : ""}
-            </span>
-          </div>
-          {canRunDemoTick && <SourceTag source="synthetic" />}
-        </div>
-
-        <div className="mt-3 flex items-start gap-2 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12px] text-[var(--ink-secondary)] leading-relaxed">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" strokeWidth={1.75} />
-          <span>
-            点击「查看单据」将进入单据详情页并重新校验当前账号的业务模块读取权限；执行「发起回执核查 (Reconcile)」仅触发 ERP 只读回查，不会重复发送业务写入。
-          </span>
         </div>
       </section>
 
@@ -334,9 +321,9 @@ export function ExceptionsConsoleView() {
         <div
           role="status"
           data-testid="exceptions-worker-tick-result"
-          className="flex items-center gap-2 rounded-[4px] border border-[var(--accent-border)] bg-[var(--accent-wash)] px-3.5 py-2.5 font-mono-code text-[12px] text-[var(--accent)]"
+          className="flex items-center gap-2.5 rounded-tile bg-[var(--accent-wash)] px-4 py-3 text-[12.5px] text-[var(--accent)]"
         >
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+          <CheckCircle2 className="h-4 w-4 shrink-0" strokeWidth={1.85} />
           <span>{tickNotice}</span>
         </div>
       )}
@@ -346,13 +333,13 @@ export function ExceptionsConsoleView() {
           role="status"
           data-testid="reconcile-feedback"
           className={[
-            "flex items-center gap-2 rounded-[4px] border px-3.5 py-2.5 text-[12.5px]",
+            "flex items-center gap-2.5 rounded-tile px-4 py-3 text-[13px]",
             actionNotice.kind === "success"
-              ? "border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
-              : "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]",
+              ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+              : "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]",
           ].join(" ")}
         >
-          <CheckCircle2 className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+          <CheckCircle2 className="h-4 w-4 shrink-0" strokeWidth={1.85} />
           <span>{actionNotice.message}</span>
         </div>
       )}
@@ -372,52 +359,49 @@ export function ExceptionsConsoleView() {
           error={loadError}
           onRetry={() => void loadExceptions()}
           backHref="/admin"
-          backLabel="返回运维控制中心"
+          backLabel="返回运维监控中心"
         />
       )}
 
-      {/* Exceptions Table Sheet */}
+      {/* Exceptions Porcelain Sheet */}
       {!loadError && (
-        <section className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden">
+        <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           {loading && items.length === 0 ? (
-            <div className="px-4 py-12 text-center font-mono-code text-[12.5px] text-[var(--ink-muted)]">
+            <div className="px-6 py-14 text-center text-[13px] text-[var(--ink-muted)]">
               正在加载异常单据队列…
             </div>
           ) : items.length === 0 ? (
             <div
               data-testid="exceptions-empty-state"
-              className="flex flex-col items-center gap-2 px-4 py-14 text-center"
+              className="flex flex-col items-center gap-2.5 px-6 py-16 text-center"
             >
-              <CheckCircle2
-                className="h-6 w-6 text-[var(--status-emerald)]"
-                strokeWidth={1.75}
-              />
-              <div className="text-[14px] font-medium text-[var(--ink-primary)]">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]">
+                <CheckCircle2 className="h-5.5 w-5.5" strokeWidth={1.85} />
+              </div>
+              <div className="text-[15px] font-semibold text-[var(--ink-primary)]">
                 当前没有待处置异常单据
               </div>
-              <p className="text-[12.5px] text-[var(--ink-muted)]">
-                授权仓库范围内所有已派发提案均未滞留在{" "}
-                <code className="font-mono-code">NEEDS_OPERATOR</code> 或{" "}
-                <code className="font-mono-code">OUTCOME_UNKNOWN</code> 状态。
+              <p className="max-w-[440px] text-[13px] text-[var(--ink-muted)] leading-relaxed">
+                授权仓库范围内所有已派发提案均运行正常，没有滞留在待确认或人工核查状态的记录。
               </p>
             </div>
           ) : (
             <>
-              {/* Desktop Compact Hairline Table */}
+              {/* Desktop Spacious Porcelain Table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full border-collapse text-left">
                   <thead>
-                    <tr className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] text-[11.5px] font-medium text-[var(--ink-secondary)]">
-                      <th className="px-4 py-2.5">提案编号</th>
-                      <th className="px-3 py-2.5">仓库</th>
-                      <th className="px-3 py-2.5">状态</th>
-                      <th className="px-3 py-2.5 text-right">核验轮次</th>
-                      <th className="px-3 py-2.5">最近异常事件</th>
-                      <th className="px-3 py-2.5 text-right">计划/到期时间</th>
-                      <th className="px-4 py-2.5 text-right">操作</th>
+                    <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[12px] font-medium text-[var(--ink-muted)]">
+                      <th className="px-5 py-3">提案编号</th>
+                      <th className="px-3.5 py-3">仓库</th>
+                      <th className="px-3.5 py-3">状态</th>
+                      <th className="px-3.5 py-3 text-right">核验轮次</th>
+                      <th className="px-3.5 py-3">最近异常说明</th>
+                      <th className="px-3.5 py-3 text-right">计划时间</th>
+                      <th className="px-5 py-3 text-right">操作</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[var(--hairline)]">
+                  <tbody className="divide-y divide-[var(--hairline-subtle)]">
                     {items.map((item) => {
                       const canReconcile = item.state === "NEEDS_OPERATOR";
                       const eventExplanation = item.last_event
@@ -427,44 +411,49 @@ export function ExceptionsConsoleView() {
                         <tr
                           key={item.proposal_id}
                           data-testid={`exception-row-${item.proposal_id}`}
-                          className="transition-colors duration-[120ms] hover:bg-[var(--bg-subtle)]"
+                          className="transition-colors duration-[140ms] hover:bg-[var(--bg-surface-tint)]/80"
                         >
-                          <td className="px-4 py-3">
+                          <td className="px-5 py-3.5">
                             <Link
                               href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
-                              className="font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] hover:underline"
+                              className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] hover:underline"
                             >
                               {item.proposal_id}
                             </Link>
                           </td>
-                          <td className="px-3 py-3">
-                            <span className="rounded-[2px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[11.5px] text-[var(--ink-secondary)]">
+                          <td className="px-3.5 py-3.5">
+                            <span className="inline-flex rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11.5px] font-medium text-[var(--ink-secondary)]">
                               {item.warehouse}
                             </span>
                           </td>
-                          <td className="px-3 py-3">
+                          <td className="px-3.5 py-3.5">
                             <StatusBadge status={item.state} compact />
                           </td>
-                          <td className="px-3 py-3 text-right font-mono-code text-[12.5px] text-[var(--ink-primary)] tabular-nums">
+                          <td className="px-3.5 py-3.5 text-right font-mono-code text-[13px] font-medium text-[var(--ink-primary)] tabular-nums">
                             {item.checks}/3
                           </td>
-                          <td className="px-3 py-3">
-                            <div className="font-mono-code text-[11.5px] text-[var(--ink-primary)]">
-                              {item.last_event ?? "—"}
+                          <td className="px-3.5 py-3.5">
+                            <div
+                              title={item.last_event ?? undefined}
+                              className="text-[12.5px] text-[var(--ink-primary)]"
+                            >
+                              {eventExplanation ?? item.last_event ?? "—"}
                             </div>
-                            {eventExplanation && (
-                              <div className="mt-0.5 text-[11.5px] text-[var(--ink-muted)]">
-                                {eventExplanation}
+                            {eventExplanation && item.last_event && (
+                              <div className="mt-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
+                                {item.last_event}
                               </div>
                             )}
                           </td>
-                          <td className="px-3 py-3 text-right font-mono-code text-[12px] text-[var(--ink-secondary)] tabular-nums whitespace-nowrap">
+                          <td className="px-3.5 py-3.5 text-right font-mono-code text-[12px] text-[var(--ink-secondary)] tabular-nums whitespace-nowrap">
                             {formatUnixTime(item.due, { withSeconds: true })}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-5 py-3.5">
                             <div className="flex items-center justify-end gap-1.5">
-                              <button
-                                type="button"
+                              <Button
+                                size="sm"
+                                pill
+                                variant="ghost"
                                 onClick={(e) =>
                                   openDrawer(
                                     {
@@ -477,39 +466,39 @@ export function ExceptionsConsoleView() {
                                   )
                                 }
                                 title="在右侧面板预览提案详情"
-                                className="inline-flex h-7 items-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2 text-[11.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--ink-primary)] cursor-pointer"
                               >
-                                <Eye className="h-3 w-3" strokeWidth={1.75} />
+                                <Eye className="h-3.5 w-3.5" strokeWidth={1.85} />
                                 <span>面板</span>
-                              </button>
+                              </Button>
 
                               <Link
                                 href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
                                 data-testid={`exception-view-${item.proposal_id}`}
-                                className="inline-flex h-7 items-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2 text-[11.5px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
+                                className="inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors"
                               >
                                 <span>详情</span>
                                 <ArrowUpRight
-                                  className="h-3 w-3"
-                                  strokeWidth={1.75}
+                                  className="h-3.5 w-3.5"
+                                  strokeWidth={1.85}
                                 />
                               </Link>
 
                               <Button
                                 size="sm"
+                                pill
                                 variant={canReconcile ? "primary" : "secondary"}
                                 disabled={!canReconcile || reconciling}
                                 title={
                                   canReconcile
                                     ? "发起只读回执核查 (Reconcile)"
-                                    : "OUTCOME_UNKNOWN 将自动重试回查；仅 NEEDS_OPERATOR 可手动重启核查"
+                                    : "待确认单据将自动重试回查；仅需人工核查状态可手动重启"
                                 }
                                 data-testid={`reconcile-btn-${item.proposal_id}`}
                                 onClick={() => setReconcileTarget(item)}
                               >
                                 <RotateCcw
-                                  className="h-3 w-3"
-                                  strokeWidth={1.75}
+                                  className="h-3.5 w-3.5"
+                                  strokeWidth={1.85}
                                 />
                                 <span>发起回执核查</span>
                               </Button>
@@ -522,26 +511,26 @@ export function ExceptionsConsoleView() {
                 </table>
               </div>
 
-              {/* Mobile Stacked Hairline List */}
-              <div className="divide-y divide-[var(--hairline)] md:hidden">
+              {/* Mobile Stacked Porcelain Rows */}
+              <div className="divide-y divide-[var(--hairline-subtle)] md:hidden">
                 {items.map((item) => {
                   const canReconcile = item.state === "NEEDS_OPERATOR";
                   return (
                     <div
                       key={item.proposal_id}
                       data-testid={`exception-mobile-row-${item.proposal_id}`}
-                      className="space-y-2.5 p-4"
+                      className="space-y-3 p-4"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <Link
                           href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
-                          className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)]"
+                          className="font-mono-code text-[13.5px] font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)]"
                         >
                           {item.proposal_id}
                         </Link>
                         <StatusBadge status={item.state} compact />
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono-code text-[12px] text-[var(--ink-muted)] tabular-nums">
                         <span>仓库 {item.warehouse}</span>
                         <span>核验 {item.checks}/3</span>
                         <span>
@@ -549,33 +538,33 @@ export function ExceptionsConsoleView() {
                         </span>
                       </div>
                       {item.last_event && (
-                        <div className="text-[12px] text-[var(--ink-secondary)]">
-                          <code className="font-mono-code text-[11.5px]">
-                            {item.last_event}
-                          </code>
-                          {LAST_EVENT_LABELS[item.last_event] && (
-                            <span className="ml-1.5 text-[var(--ink-muted)]">
-                              · {LAST_EVENT_LABELS[item.last_event]}
-                            </span>
-                          )}
+                        <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3 py-2 text-[12px] text-[var(--ink-secondary)]">
+                          <span>
+                            {LAST_EVENT_LABELS[item.last_event] ??
+                              item.last_event}
+                          </span>
                         </div>
                       )}
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
                         <Link
                           href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
-                          className="inline-flex h-9 items-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-3 text-[12.5px] font-medium text-[var(--ink-primary)]"
+                          className="inline-flex h-9 items-center gap-1 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)]"
                         >
                           <span>查看单据详情</span>
                           <ArrowUpRight className="h-3.5 w-3.5" />
                         </Link>
                         <Button
                           size="md"
+                          pill
                           variant={canReconcile ? "primary" : "secondary"}
                           disabled={!canReconcile || reconciling}
                           data-testid={`exception-mobile-reconcile-btn-${item.proposal_id}`}
                           onClick={() => setReconcileTarget(item)}
                         >
-                          <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          <RotateCcw
+                            className="h-3.5 w-3.5"
+                            strokeWidth={1.85}
+                          />
                           <span>发起回执核查</span>
                         </Button>
                       </div>
@@ -585,16 +574,17 @@ export function ExceptionsConsoleView() {
               </div>
 
               {/* Dual-Value Cursor Pagination Footer */}
-              <div className="flex flex-col gap-2 border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+              <div className="flex flex-col gap-2.5 border-t border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-[12px] text-[var(--ink-muted)] tabular-nums">
                   {nextCursor
-                    ? `双值游标 after_due=${nextCursor.after_due} · after_id=${nextCursor.after_id}`
+                    ? `已加载 ${items.length} 条，仍有更多异常单据`
                     : `已加载全部可见异常单据（共 ${items.length} 条）`}
                 </span>
                 {nextCursor && (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    pill
+                    variant="quiet"
                     loading={loadingMore}
                     data-testid="exceptions-load-more"
                     onClick={() => void handleLoadMore()}
@@ -617,7 +607,7 @@ export function ExceptionsConsoleView() {
         destructive={false}
         loading={reconciling}
         title="确认发起回执核查 (Reconcile)"
-        description="系统将仅向 ERP 执行只读回执核查，不会重复发送任何 ERP 写入请求。确认后提案状态将由 NEEDS_OPERATOR 转为 OUTCOME_UNKNOWN，并将自动核验计数重置为 0。"
+        description="系统将仅向 ERP 执行只读回执核查，不会重复发送任何 ERP 写入请求。确认后提案状态将重新进入结果待确认，并将自动核验计数重置为 0。"
         scopeSummary={`租户 ${actor?.tenant ?? "—"} · 仓库 ${reconcileTarget?.warehouse ?? "—"} · 提案 ${reconcileTarget?.proposal_id ?? "—"}`}
         metadata={[
           {

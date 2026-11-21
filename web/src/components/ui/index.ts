@@ -10,5 +10,5 @@ export {
   AccessNoticeCard,
   type AccessNoticeCardProps,
 } from "./AccessNoticeCard";
-export { Avatar, type AvatarProps } from "./Avatar";
+export { Avatar, type AvatarProps, type AvatarStatus } from "./Avatar";
 export { SourceTag, type SourceTagProps } from "./SourceTag";

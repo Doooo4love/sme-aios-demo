@@ -100,28 +100,28 @@ export function StatePulseBeacon({
       >
         {isActive && (
           <>
-            <polygon
-              points="5.5,1.5 12.5,1.5 16.5,5.5 16.5,12.5 12.5,16.5 5.5,16.5 1.5,12.5 1.5,5.5"
-              stroke="rgba(12, 110, 145, 0.24)"
-              strokeWidth="1.2"
+            <circle
+              cx="9"
+              cy="9"
+              r="7.2"
+              stroke="rgba(22, 104, 227, 0.16)"
+              strokeWidth="1.4"
             />
             <circle
               cx="9"
               cy="9"
-              r="5.5"
-              stroke="#0C6E91"
-              strokeWidth="1.5"
-              strokeDasharray="12 23"
-              strokeLinecap="square"
+              r="7.2"
+              stroke="#1668E3"
+              strokeWidth="1.6"
+              strokeDasharray="13 33"
+              strokeLinecap="round"
               className="aios-beacon-arc"
             />
-            <rect
-              x="7.6"
-              y="7.6"
-              width="2.8"
-              height="2.8"
-              transform="rotate(45 9 9)"
-              fill="#0C6E91"
+            <circle
+              cx="9"
+              cy="9"
+              r="2.1"
+              fill="#1668E3"
               className="aios-beacon-core"
             />
           </>
@@ -129,52 +129,56 @@ export function StatePulseBeacon({
 
         {state === "unknown" && (
           <>
-            <polygon
-              points="5.5,1.5 12.5,1.5 16.5,5.5 16.5,12.5 12.5,16.5 5.5,16.5 1.5,12.5 1.5,5.5"
-              stroke="#B86E00"
-              strokeWidth="1.35"
-              fill="rgba(184, 110, 0, 0.08)"
+            <circle
+              cx="9"
+              cy="9"
+              r="7.2"
+              stroke="#B26200"
+              strokeWidth="1.4"
+              fill="rgba(178, 98, 0, 0.09)"
             />
             <line
               x1="9"
-              y1="5.2"
+              y1="5.3"
               x2="9"
-              y2="9.8"
-              stroke="#B86E00"
-              strokeWidth="1.5"
-              strokeLinecap="square"
+              y2="9.6"
+              stroke="#B26200"
+              strokeWidth="1.6"
+              strokeLinecap="round"
             />
-            <rect x="8.25" y="11.5" width="1.5" height="1.5" fill="#B86E00" />
+            <circle cx="9" cy="12.2" r="0.9" fill="#B26200" />
           </>
         )}
 
         {(state === "operator_needed" || state === "rejected") && (
           <>
-            <polygon
-              points="5.5,1.5 12.5,1.5 16.5,5.5 16.5,12.5 12.5,16.5 5.5,16.5 1.5,12.5 1.5,5.5"
-              stroke="#C03235"
-              strokeWidth="1.35"
-              fill="rgba(192, 50, 53, 0.08)"
+            <circle
+              cx="9"
+              cy="9"
+              r="7.2"
+              stroke="#C92A37"
+              strokeWidth="1.4"
+              fill="rgba(201, 42, 55, 0.09)"
             />
             {state === "rejected" ? (
               <path
-                d="M6.4 6.4L11.6 11.6M11.6 6.4L6.4 11.6"
-                stroke="#C03235"
-                strokeWidth="1.5"
-                strokeLinecap="square"
+                d="M6.5 6.5L11.5 11.5M11.5 6.5L6.5 11.5"
+                stroke="#C92A37"
+                strokeWidth="1.6"
+                strokeLinecap="round"
               />
             ) : (
               <>
                 <line
                   x1="9"
-                  y1="5.2"
+                  y1="5.3"
                   x2="9"
-                  y2="9.8"
-                  stroke="#C03235"
-                  strokeWidth="1.5"
-                  strokeLinecap="square"
+                  y2="9.6"
+                  stroke="#C92A37"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
                 />
-                <rect x="8.25" y="11.5" width="1.5" height="1.5" fill="#C03235" />
+                <circle cx="9" cy="12.2" r="0.9" fill="#C92A37" />
               </>
             )}
           </>
@@ -182,18 +186,20 @@ export function StatePulseBeacon({
 
         {state === "verified" && (
           <>
-            <polygon
-              points="5.5,1.5 12.5,1.5 16.5,5.5 16.5,12.5 12.5,16.5 5.5,16.5 1.5,12.5 1.5,5.5"
-              stroke="#1A7F4B"
-              strokeWidth="1.35"
-              fill="rgba(26, 127, 75, 0.08)"
+            <circle
+              cx="9"
+              cy="9"
+              r="7.2"
+              stroke="#127A46"
+              strokeWidth="1.4"
+              fill="rgba(18, 122, 70, 0.09)"
             />
             <path
-              d="M5.6 9.2L7.9 11.5L12.5 6.8"
-              stroke="#1A7F4B"
-              strokeWidth="1.6"
-              strokeLinecap="square"
-              strokeLinejoin="miter"
+              d="M5.7 9.2L7.9 11.4L12.4 6.9"
+              stroke="#127A46"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
               className="aios-check-reveal"
             />
           </>

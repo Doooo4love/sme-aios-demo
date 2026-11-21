@@ -195,21 +195,21 @@ export function DispatchModule() {
 
   return (
     <div className="space-y-4" data-testid="workbench-dispatch-module">
-      {/* Live Shipment Lookup & Reschedule Card */}
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)]">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+      {/* Live Shipment Lookup & Reschedule Porcelain Sheet */}
+      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
           <div>
-            <h2 className="text-[14px] font-semibold text-[var(--ink-primary)]">
-              实时运单查询与改期提案（shipment.read / shipment.reschedule）
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+              实时运单查询与改期提案
             </h2>
-            <p className="text-[12px] text-[var(--ink-muted)]">
-              仓库范围严格限定于服务端授权列表；改期提案自动绑定稳定 Idempotency-Key 并进入独立主管审批。
+            <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
+              仓库范围严格限定于服务端授权列表；改期提案自动绑定幂等键并进入独立主管审批。
             </p>
           </div>
           {readTool && <SourceTag source={readTool.source} />}
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="p-5 space-y-4">
           {readWarehouses.length === 0 ? (
             <AccessNoticeCard
               variant="ACCESS_RESTRICTED"
@@ -224,7 +224,7 @@ export function DispatchModule() {
               }}
               className="flex flex-wrap items-end gap-3"
             >
-              <label className="block space-y-1">
+              <label className="block space-y-1.5">
                 <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                   授权仓库
                 </span>
@@ -232,7 +232,7 @@ export function DispatchModule() {
                   value={warehouse}
                   onChange={(e) => setWarehouse(e.target.value)}
                   data-testid="dispatch-warehouse-select"
-                  className="h-9 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)]"
+                  className="h-9 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
                 >
                   {readWarehouses.map((wh) => (
                     <option key={wh} value={wh}>
@@ -242,7 +242,7 @@ export function DispatchModule() {
                 </select>
               </label>
 
-              <label className="block flex-1 min-w-[200px] space-y-1">
+              <label className="block flex-1 min-w-[200px] space-y-1.5">
                 <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                   运单编号
                 </span>
@@ -253,7 +253,7 @@ export function DispatchModule() {
                   onChange={(e) => setShipmentId(e.target.value)}
                   placeholder="例如 SHP-1001"
                   data-testid="dispatch-shipment-id-input"
-                  className="h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[13px]"
+                  className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[13px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
                 />
               </label>
 
@@ -271,12 +271,14 @@ export function DispatchModule() {
                 {readWarehouses.includes("HK01") && (
                   <Button
                     size="sm"
+                    pill
                     variant="secondary"
                     onClick={() => {
                       setWarehouse("HK01");
                       setShipmentId("SHP-1001");
                       void handleLookupShipment({ wh: "HK01", id: "SHP-1001" });
                     }}
+                    className="font-mono-code"
                   >
                     HK01 · SHP-1001
                   </Button>
@@ -284,12 +286,14 @@ export function DispatchModule() {
                 {readWarehouses.includes("HK02") && (
                   <Button
                     size="sm"
+                    pill
                     variant="secondary"
                     onClick={() => {
                       setWarehouse("HK02");
                       setShipmentId("SHP-2001");
                       void handleLookupShipment({ wh: "HK02", id: "SHP-2001" });
                     }}
+                    className="font-mono-code"
                   >
                     HK02 · SHP-2001
                   </Button>
@@ -318,16 +322,18 @@ export function DispatchModule() {
           {/* Live Shipment Detail + Reschedule Proposal Form */}
           {shipmentResult && (
             <div
-              className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-4 space-y-4"
+              className="rounded-tile bg-[var(--bg-surface-tint)] p-4.5 space-y-4"
               data-testid="dispatch-shipment-result"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Truck className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.75} />
-                  <span className="font-mono-code text-[14px] font-semibold text-[var(--ink-primary)]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                    <Truck className="h-4 w-4" strokeWidth={1.85} />
+                  </span>
+                  <span className="font-mono-code text-[14.5px] font-semibold text-[var(--ink-primary)]">
                     {shipmentResult.data.shipment_id}
                   </span>
-                  <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-1.5 py-0.5 font-mono-code text-[11px]">
+                  <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                     {shipmentResult.data.warehouse}
                   </span>
                   <StatusBadge status={shipmentResult.data.status} compact />
@@ -335,6 +341,7 @@ export function DispatchModule() {
                 </div>
                 <Button
                   size="sm"
+                  pill
                   variant="secondary"
                   onClick={(e) =>
                     openDrawer(
@@ -357,34 +364,40 @@ export function DispatchModule() {
                 </Button>
               </div>
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-3 text-[12.5px]">
-                <div>
-                  <span className="text-[var(--ink-muted)]">当前交付日期：</span>
-                  <span className="font-mono-code font-semibold text-[var(--ink-primary)]">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-[12.5px]">
+                <div className="rounded-sm bg-[var(--bg-surface)] px-3.5 py-2.5 shadow-[var(--shadow-subtle)]">
+                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                    当前交付日期
+                  </div>
+                  <div className="mt-0.5 font-mono-code tabular-nums text-[14px] font-semibold text-[var(--ink-primary)]">
                     {shipmentResult.data.delivery_date}
-                  </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[var(--ink-muted)]">乐观版本锁：</span>
-                  <span className="font-mono-code font-semibold text-[var(--ink-primary)]">
+                <div className="rounded-sm bg-[var(--bg-surface)] px-3.5 py-2.5 shadow-[var(--shadow-subtle)]">
+                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                    乐观版本锁
+                  </div>
+                  <div className="mt-0.5 font-mono-code tabular-nums text-[14px] font-semibold text-[var(--ink-primary)]">
                     v{shipmentResult.data.version}
-                  </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[var(--ink-muted)]">状态：</span>
-                  <span className="font-mono-code text-[var(--ink-primary)]">
+                <div className="rounded-sm bg-[var(--bg-surface)] px-3.5 py-2.5 shadow-[var(--shadow-subtle)]">
+                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                    运单状态
+                  </div>
+                  <div className="mt-0.5 font-mono-code text-[14px] font-medium text-[var(--ink-primary)]">
                     {shipmentResult.data.status}
-                  </span>
+                  </div>
                 </div>
               </div>
 
               {canRescheduleCurrent ? (
                 <form
                   onSubmit={handleSubmitReschedule}
-                  className="flex flex-wrap items-end gap-3 border-t border-[var(--hairline)] pt-3"
+                  className="flex flex-wrap items-end gap-3 border-t border-[var(--hairline-subtle)] pt-3.5"
                   data-testid="dispatch-reschedule-form"
                 >
-                  <label className="block space-y-1">
+                  <label className="block space-y-1.5">
                     <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                       拟调整交付日期（须不同于当前交期）
                     </span>
@@ -394,7 +407,7 @@ export function DispatchModule() {
                       value={newDeliveryDate}
                       onChange={(e) => setNewDeliveryDate(e.target.value)}
                       data-testid="dispatch-reschedule-date-input"
-                      className="h-9 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px]"
+                      className="h-9 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
                     />
                   </label>
                   <Button
@@ -412,8 +425,8 @@ export function DispatchModule() {
                   </Button>
                 </form>
               ) : (
-                <p className="text-[12px] text-[var(--ink-muted)]">
-                  当前账号对该仓库仅有运单只读查询权限（无 shipment.reschedule 提案权限）。
+                <p className="text-[12.5px] text-[var(--ink-muted)]">
+                  当前账号对该仓库仅有运单只读查询权限，无法发起改期提案。
                 </p>
               )}
 
@@ -422,9 +435,9 @@ export function DispatchModule() {
               {createdProposal && (
                 <div
                   data-testid="dispatch-created-proposal"
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-[4px] border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] p-3 text-[12.5px]"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-tile bg-[var(--status-emerald-wash)] p-3.5 text-[12.5px]"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-[var(--status-emerald)]" />
                     <span className="font-medium text-[var(--ink-primary)]">
                       已生成改期提案{" "}
@@ -432,13 +445,14 @@ export function DispatchModule() {
                         {createdProposal.id}
                       </span>
                     </span>
-                    <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+                    <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
                       digest {formatShortDigest(createdProposal.digest)}
                     </span>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-2">
                     <Button
                       size="sm"
+                      pill
                       variant="secondary"
                       onClick={(e) =>
                         openDrawer(
@@ -456,10 +470,10 @@ export function DispatchModule() {
                     </Button>
                     <Link
                       href={`/proposals/${encodeURIComponent(createdProposal.id)}`}
-                      className="inline-flex h-7 items-center gap-1 rounded-[4px] bg-[var(--accent)] px-2.5 text-[12px] font-medium text-white hover:bg-[var(--accent-hover)]"
+                      className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 text-[12px] font-medium text-white hover:bg-[var(--accent-hover)] transition-colors"
                     >
                       <span>打开详情</span>
-                      <ArrowUpRight className="h-3 w-3" />
+                      <ArrowUpRight className="h-3.5 w-3.5" />
                     </Link>
                   </div>
                 </div>
@@ -471,34 +485,34 @@ export function DispatchModule() {
 
       {/* Clearly Labeled Synthetic Warehouse Dock Milestones */}
       <div
-        className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
+        className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
         data-testid="dispatch-synthetic-dock-card"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2">
-          <div className="flex items-center gap-2">
-            <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-secondary)]">
-              DOCK MILESTONES · 仓库月台收发里程碑
-            </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] px-5 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <h3 className="text-[14px] font-semibold text-[var(--ink-primary)]">
+              仓库月台收发里程碑
+            </h3>
             <SourceTag source="synthetic" />
           </div>
-          <span className="text-[11.5px] text-[var(--ink-muted)]">
+          <span className="text-[12px] text-[var(--ink-muted)]">
             演示用合成数据（待收待发 / 短收 / 破损 / 签收）
           </span>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-[12px]">
+          <table className="w-full border-collapse text-left text-[12.5px]">
             <thead>
-              <tr className="border-b border-[var(--hairline)] bg-[var(--bg-subtle)] text-[11px] text-[var(--ink-muted)]">
-                <th className="px-3 py-2 font-medium">月台单号</th>
-                <th className="px-3 py-2 font-medium">站点 / 泊位</th>
-                <th className="px-3 py-2 font-medium">关联运单</th>
-                <th className="px-3 py-2 font-medium">节点状态</th>
-                <th className="px-3 py-2 font-medium text-right">
+              <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+                <th className="px-4 py-2.5 font-medium">月台单号</th>
+                <th className="px-3.5 py-2.5 font-medium">站点 / 泊位</th>
+                <th className="px-3.5 py-2.5 font-medium">关联运单</th>
+                <th className="px-3.5 py-2.5 font-medium">节点状态</th>
+                <th className="px-3.5 py-2.5 font-medium text-right">
                   计划 / 实收件数
                 </th>
-                <th className="px-3 py-2 font-medium">现场备注</th>
-                <th className="px-3 py-2 font-medium text-right">更新时间</th>
+                <th className="px-3.5 py-2.5 font-medium">现场备注</th>
+                <th className="px-4 py-2.5 font-medium text-right">更新时间</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -512,24 +526,27 @@ export function DispatchModule() {
                         ? "OUTCOME_UNKNOWN"
                         : "OPEN";
                 return (
-                  <tr key={row.id} className="hover:bg-[var(--bg-subtle)]">
-                    <td className="px-3 py-2 font-mono-code font-medium text-[var(--ink-primary)]">
+                  <tr
+                    key={row.id}
+                    className="hover:bg-[var(--bg-surface-tint)]/80 transition-colors duration-[150ms]"
+                  >
+                    <td className="px-4 py-3 font-mono-code font-medium text-[var(--ink-primary)]">
                       {row.id}
                     </td>
-                    <td className="px-3 py-2 font-mono-code text-[var(--ink-secondary)]">
+                    <td className="px-3.5 py-3 font-mono-code text-[var(--ink-secondary)]">
                       {row.warehouse} · {row.dockBay}
                     </td>
-                    <td className="px-3 py-2 font-mono-code text-[var(--ink-primary)]">
+                    <td className="px-3.5 py-3 font-mono-code text-[var(--ink-primary)]">
                       {row.shipmentRef}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3.5 py-3">
                       <StatusBadge
                         status={badgeKey}
                         label={row.stage}
                         compact
                       />
                     </td>
-                    <td className="px-3 py-2 font-mono-code text-right text-[var(--ink-primary)]">
+                    <td className="px-3.5 py-3 font-mono-code tabular-nums text-right text-[var(--ink-primary)]">
                       {row.plannedQty} /{" "}
                       <span
                         className={
@@ -541,10 +558,10 @@ export function DispatchModule() {
                         {row.actualQty}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-[var(--ink-secondary)]">
+                    <td className="px-3.5 py-3 text-[var(--ink-secondary)]">
                       {row.note}
                     </td>
-                    <td className="px-3 py-2 font-mono-code text-right text-[var(--ink-muted)]">
+                    <td className="px-4 py-3 font-mono-code tabular-nums text-right text-[var(--ink-muted)]">
                       {row.updatedAt}
                     </td>
                   </tr>

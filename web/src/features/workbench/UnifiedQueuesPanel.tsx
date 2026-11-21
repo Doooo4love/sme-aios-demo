@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Inbox,
   PanelRight,
   RefreshCw,
@@ -20,6 +22,7 @@ import {
 import {
   formatProposalAction,
   formatRelativeCountdown,
+  formatShortDigest,
   formatUnixTime,
 } from "@/lib/format";
 import { useSession } from "@/lib/session-context";
@@ -37,16 +40,21 @@ export interface UnifiedQueuesPanelProps {
   actionFilter?: TaskItem["action"];
   defaultView?: QueueSubView;
   compactHeader?: boolean;
+  onCountsLoaded?: (counts: { assigned: number; submitted: number }) => void;
 }
 
 export function UnifiedQueuesPanel({
   actionFilter,
   defaultView,
   compactHeader = false,
+  onCountsLoaded,
 }: UnifiedQueuesPanelProps) {
   const { actor, capabilities, authGeneration, handleAccessChanged } =
     useSession();
   const { openDrawer, setAssignedCount } = useWorkbench();
+
+  const onCountsLoadedRef = useRef(onCountsLoaded);
+  onCountsLoadedRef.current = onCountsLoaded;
 
   const hasApprovalRole = useMemo(() => {
     if (!actor || !capabilities) return false;
@@ -73,6 +81,7 @@ export function UnifiedQueuesPanel({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!defaultView) {
@@ -96,6 +105,10 @@ export function UnifiedQueuesPanel({
       setSubmittedNext(submittedRes.next);
       if (!actionFilter) {
         setAssignedCount(assignedRes.items.length);
+        onCountsLoadedRef.current?.({
+          assigned: assignedRes.items.length,
+          submitted: submittedRes.items.length,
+        });
       }
     } catch (err) {
       if (isStaleAuthError(err) || startGen !== getAuthGeneration()) return;
@@ -154,6 +167,18 @@ export function UnifiedQueuesPanel({
     }
   };
 
+  const handleCopyId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedId(id);
+      window.setTimeout(() => {
+        setCopiedId((prev) => (prev === id ? null : prev));
+      }, 1500);
+    } catch {
+      // Clipboard may be unavailable in headless contexts
+    }
+  };
+
   const filteredAssigned = useMemo(() => {
     return assignedItems.filter((item) => {
       if (actionFilter && item.action !== actionFilter) return false;
@@ -204,17 +229,24 @@ export function UnifiedQueuesPanel({
     (subView === "submitted" && submittedNext !== null) ||
     (subView === "unified" && (assignedNext !== null || submittedNext !== null));
 
+  const unifiedCount = useMemo(
+    () =>
+      consolidateTaskItems(filteredAssigned, filteredSubmitted, actor?.subject)
+        .length,
+    [filteredAssigned, filteredSubmitted, actor?.subject],
+  );
+
   return (
     <div
-      className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
+      className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
       data-testid="workbench-unified-queues"
     >
-      {/* Toolbar: Lane Switcher + Warehouse Filter + Refresh */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+      {/* Toolbar: Segmented Lane Switcher + Warehouse Filter Pills + Refresh */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-3.5">
         <div
           role="tablist"
           aria-label="任务队列视图"
-          className="flex flex-wrap items-center gap-1"
+          className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
         >
           {(
             [
@@ -233,11 +265,7 @@ export function UnifiedQueuesPanel({
               {
                 id: "unified" as const,
                 label: "合并视角",
-                count: consolidateTaskItems(
-                  filteredAssigned,
-                  filteredSubmitted,
-                  actor?.subject,
-                ).length,
+                count: unifiedCount,
                 testId: "queue-lane-unified",
               },
             ] as const
@@ -252,14 +280,14 @@ export function UnifiedQueuesPanel({
                 data-testid={tab.testId}
                 onClick={() => setSubView(tab.id)}
                 className={[
-                  "inline-flex h-8 items-center gap-1.5 rounded-[4px] border px-3 text-[12.5px] font-medium transition-colors duration-[120ms] cursor-pointer",
+                  "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] transition-all duration-[165ms] cursor-pointer",
                   active
-                    ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent)]"
-                    : "border-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)]",
+                    ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                    : "text-[var(--ink-secondary)] font-medium hover:text-[var(--ink-primary)]",
                 ].join(" ")}
               >
                 <span>{tab.label}</span>
-                <span className="font-mono-code text-[11px] opacity-80">
+                <span className="font-mono-code tabular-nums text-[11px] opacity-80">
                   {tab.count}
                 </span>
               </button>
@@ -269,15 +297,15 @@ export function UnifiedQueuesPanel({
 
         <div className="flex flex-wrap items-center gap-2">
           {!compactHeader && knownWarehouses.length > 1 && (
-            <div className="flex items-center gap-1">
+            <div className="flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-surface-tint)] p-1">
               <button
                 type="button"
                 onClick={() => setWarehouseFilter("ALL")}
                 className={[
-                  "h-7 rounded-[4px] border px-2 font-mono-code text-[11px] cursor-pointer",
+                  "h-7 rounded-full px-2.5 text-[11.5px] font-medium transition-all duration-[150ms] cursor-pointer",
                   warehouseFilter === "ALL"
-                    ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent)]"
-                    : "border-[var(--hairline-strong)] bg-[var(--bg-sheet)] text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
+                    ? "bg-[var(--accent-wash)] text-[var(--accent)] font-semibold"
+                    : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                 ].join(" ")}
               >
                 全部站点
@@ -288,10 +316,10 @@ export function UnifiedQueuesPanel({
                   type="button"
                   onClick={() => setWarehouseFilter(wh)}
                   className={[
-                    "h-7 rounded-[4px] border px-2 font-mono-code text-[11px] cursor-pointer",
+                    "h-7 rounded-full px-2.5 font-mono-code text-[11px] font-medium transition-all duration-[150ms] cursor-pointer",
                     warehouseFilter === wh
-                      ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent)]"
-                      : "border-[var(--hairline-strong)] bg-[var(--bg-sheet)] text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
+                      ? "bg-[var(--accent-wash)] text-[var(--accent)] font-semibold"
+                      : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                   ].join(" ")}
                 >
                   {wh}
@@ -302,19 +330,20 @@ export function UnifiedQueuesPanel({
 
           <Button
             size="sm"
+            pill
             variant="secondary"
             loading={loading}
             onClick={() => void loadInitialQueues()}
             data-testid="queue-refresh-btn"
           >
-            <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
             <span>刷新队列</span>
           </Button>
         </div>
       </div>
 
       {error && (
-        <div className="p-4">
+        <div className="p-5">
           <AccessNoticeCard
             error={error}
             onRetry={() => void loadInitialQueues()}
@@ -323,22 +352,24 @@ export function UnifiedQueuesPanel({
       )}
 
       {!error && loading && displayedRows.length === 0 && (
-        <div className="py-12 text-center text-[12.5px] text-[var(--ink-muted)]">
+        <div className="py-14 text-center text-[13px] text-[var(--ink-muted)]">
           正在加载当前授权范围内的业务队列…
         </div>
       )}
 
       {!error && !loading && displayedRows.length === 0 && (
         <div
-          className="flex flex-col items-center gap-2 py-12 text-center text-[13px] text-[var(--ink-muted)]"
+          className="flex flex-col items-center gap-2.5 py-14 text-center text-[13px] text-[var(--ink-muted)]"
           data-testid="queue-empty-state"
         >
-          <Inbox className="h-5 w-5 opacity-55" strokeWidth={1.5} />
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]">
+            <Inbox className="h-5 w-5" strokeWidth={1.6} />
+          </span>
           <span>
             {subView === "assigned"
               ? hasApprovalRole
                 ? "当前没有待您审批的业务单据"
-                : "当前账号无待审批任务（普通经办或只读岗位可切换至「已提交」查看）"
+                : "当前账号无待审批任务（经办或只读岗位可切换至「已提交」查看）"
               : "当前条件下暂无单据记录"}
           </span>
         </div>
@@ -346,16 +377,16 @@ export function UnifiedQueuesPanel({
 
       {displayedRows.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-[12.5px]">
+          <table className="w-full border-collapse text-left text-[13px]">
             <thead>
-              <tr className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] text-[11.5px] text-[var(--ink-muted)]">
-                <th className="w-8 px-2 py-2" aria-label="展开明细" />
-                <th className="px-3 py-2 font-medium">单据编号 / 类型</th>
-                <th className="px-3 py-2 font-medium">站点</th>
-                <th className="px-3 py-2 font-medium">轮到我的原因</th>
-                <th className="px-3 py-2 font-medium">状态</th>
-                <th className="px-3 py-2 font-medium">下一步</th>
-                <th className="px-3 py-2 font-medium text-right">操作</th>
+              <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+                <th className="w-10 px-3 py-2.5" aria-label="展开明细" />
+                <th className="px-3.5 py-2.5 font-medium">业务单据</th>
+                <th className="px-3.5 py-2.5 font-medium">站点</th>
+                <th className="px-3.5 py-2.5 font-medium">轮到我的原因</th>
+                <th className="px-3.5 py-2.5 font-medium">状态</th>
+                <th className="px-3.5 py-2.5 font-medium">下一步</th>
+                <th className="px-4 py-2.5 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -368,22 +399,23 @@ export function UnifiedQueuesPanel({
                   row.state === "REJECTED" && row.decision === "returned"
                     ? "returned"
                     : row.state;
+                const shortId = formatShortDigest(row.id, 4, 4);
 
                 return (
                   <React.Fragment key={row.id}>
                     <tr
                       data-testid="queue-row"
                       data-proposal-id={row.id}
-                      className="hover:bg-[var(--bg-subtle)] transition-colors duration-[120ms]"
+                      className="group hover:bg-[var(--bg-surface-tint)]/80 transition-colors duration-[160ms]"
                     >
-                      <td className="px-2 py-2.5 align-top">
+                      <td className="px-3 py-3.5 align-top">
                         <button
                           type="button"
                           onClick={() => toggleExpand(row.id)}
                           aria-expanded={expanded}
                           aria-label={`展开 ${row.id} 时间与阶段详情`}
                           data-testid={`queue-expand-${row.id}`}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)] cursor-pointer"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                         >
                           {expanded ? (
                             <ChevronDown className="h-3.5 w-3.5" />
@@ -392,32 +424,50 @@ export function UnifiedQueuesPanel({
                           )}
                         </button>
                       </td>
-                      <td className="px-3 py-2.5 align-top">
+                      <td className="px-3.5 py-3.5 align-top">
                         <div className="flex flex-col gap-0.5">
                           <Link
                             href={`/proposals/${encodeURIComponent(row.id)}`}
-                            className="font-mono-code font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] hover:underline"
+                            className="font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] transition-colors"
                           >
-                            {row.id}
+                            {formatProposalAction(row.action)} · {row.warehouse}
                           </Link>
-                          <span className="text-[11.5px] text-[var(--ink-muted)]">
-                            {formatProposalAction(row.action)}
-                          </span>
+                          <div className="inline-flex items-center gap-1 text-[11.5px] text-[var(--ink-muted)]">
+                            <span
+                              title={row.id}
+                              className="font-mono-code tabular-nums"
+                            >
+                              {shortId}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyId(row.id)}
+                              title={`复制完整单号 ${row.id}`}
+                              aria-label={`复制单号 ${row.id}`}
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--ink-faint)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-all cursor-pointer"
+                            >
+                              {copiedId === row.id ? (
+                                <Check className="h-3 w-3 text-[var(--status-emerald)]" />
+                              ) : (
+                                <Copy className="h-3 w-3" />
+                              )}
+                            </button>
+                          </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 align-top">
-                        <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)]">
+                      <td className="px-3.5 py-3.5 align-top">
+                        <span className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)]">
                           {row.warehouse}
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 align-top">
-                        <div className="text-[var(--ink-primary)]">
+                      <td className="px-3.5 py-3.5 align-top">
+                        <div className="text-[var(--ink-primary)] leading-snug">
                           {row.primaryReason}
                         </div>
-                        {/* Dual-Hat Consolidation: render per-hat sub-statuses inside ONE unified row */}
+                        {/* Dual-Hat Consolidation: per-hat sub-statuses inside ONE unified row */}
                         {row.hats.length > 1 && (
                           <div
-                            className="mt-1.5 space-y-1 border-t border-[var(--hairline-subtle)] pt-1.5"
+                            className="mt-2 space-y-1.5 rounded-sm bg-[var(--bg-surface-tint)] p-2.5"
                             data-testid="queue-dual-hat-substatuses"
                           >
                             {row.hats.map((hat) => (
@@ -425,7 +475,7 @@ export function UnifiedQueuesPanel({
                                 key={`${row.id}-${hat.lane}`}
                                 className="flex items-center gap-2 text-[11.5px]"
                               >
-                                <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-plane)] px-1 py-0.5 font-mono-code text-[10px] text-[var(--ink-secondary)]">
+                                <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                                   {hat.roleLabel}
                                 </span>
                                 <span className="text-[var(--ink-muted)]">
@@ -436,29 +486,30 @@ export function UnifiedQueuesPanel({
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 align-top">
+                      <td className="px-3.5 py-3.5 align-top">
                         <StatusBadge status={badgeStatus} compact />
                         {isDueSoon && (
-                          <div className="mt-1 font-mono-code text-[11px] font-medium text-[var(--status-amber-ink)]">
+                          <div className="mt-1.5 font-mono-code tabular-nums text-[11px] font-medium text-[var(--status-amber-ink)]">
                             {expiry.label}
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 align-top text-[12px] text-[var(--ink-secondary)]">
+                      <td className="px-3.5 py-3.5 align-top text-[12.5px] text-[var(--ink-secondary)]">
                         {row.primaryNextStep}
                       </td>
-                      <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
+                      <td className="px-4 py-3.5 align-top text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
                           <Button
                             size="sm"
-                            variant="secondary"
+                            pill
+                            variant="quiet"
                             onClick={(e) =>
                               openDrawer(
                                 {
                                   kind: "proposal",
                                   id: row.id,
                                   warehouse: row.warehouse,
-                                  title: `${formatProposalAction(row.action)} · ${row.id}`,
+                                  title: `${formatProposalAction(row.action)} · ${shortId}`,
                                 },
                                 { tab: "current", trigger: e.currentTarget },
                               )
@@ -470,30 +521,30 @@ export function UnifiedQueuesPanel({
                           </Button>
                           <Link
                             href={`/proposals/${encodeURIComponent(row.id)}`}
-                            className="inline-flex h-7 items-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
+                            className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent)] transition-colors duration-[150ms]"
                           >
                             <span>详情</span>
-                            <ArrowUpRight className="h-3 w-3" />
+                            <ArrowUpRight className="h-3.5 w-3.5" />
                           </Link>
                         </div>
                       </td>
                     </tr>
 
-                    {/* Expandable Inline Metadata Row */}
+                    {/* Expandable Inline Metadata Well */}
                     {expanded && (
                       <tr
-                        className="bg-[var(--bg-subtle)]"
+                        className="bg-[var(--bg-surface-tint)]/90"
                         data-testid={`queue-expanded-${row.id}`}
                       >
-                        <td colSpan={7} className="px-4 py-2.5">
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 text-[12px]">
-                            <div>
-                              <span className="text-[var(--ink-muted)]">
-                                计划/到期时间：
-                              </span>
-                              <span
+                        <td colSpan={7} className="px-5 py-3.5">
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 text-[12px]">
+                            <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
+                              <div className="text-[11px] text-[var(--ink-muted)]">
+                                计划 / 到期时间
+                              </div>
+                              <div
                                 className={[
-                                  "font-mono-code tabular-nums font-medium",
+                                  "mt-0.5 font-mono-code tabular-nums font-medium",
                                   isDueSoon
                                     ? "text-[var(--status-amber-ink)]"
                                     : "text-[var(--ink-primary)]",
@@ -502,31 +553,31 @@ export function UnifiedQueuesPanel({
                                 {formatUnixTime(row.expires, {
                                   withSeconds: true,
                                 })}
-                              </span>
+                              </div>
                             </div>
-                            <div>
-                              <span className="text-[var(--ink-muted)]">
-                                责任阶段：
-                              </span>
-                              <span className="font-medium text-[var(--ink-primary)]">
+                            <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
+                              <div className="text-[11px] text-[var(--ink-muted)]">
+                                责任阶段
+                              </div>
+                              <div className="mt-0.5 font-medium text-[var(--ink-primary)]">
                                 {row.hats.map((h) => h.roleLabel).join(" / ")}
-                              </span>
+                              </div>
                             </div>
-                            <div>
-                              <span className="text-[var(--ink-muted)]">
-                                当前指派：
-                              </span>
-                              <span className="font-mono-code text-[var(--ink-primary)]">
+                            <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
+                              <div className="text-[11px] text-[var(--ink-muted)]">
+                                当前指派
+                              </div>
+                              <div className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
                                 {row.assigned_to ?? "未指定"}
-                              </span>
+                              </div>
                             </div>
-                            <div>
-                              <span className="text-[var(--ink-muted)]">
-                                更新 / 队列时间 (due)：
-                              </span>
-                              <span className="font-mono-code tabular-nums text-[var(--ink-primary)]">
+                            <div className="rounded-sm bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-subtle)]">
+                              <div className="text-[11px] text-[var(--ink-muted)]">
+                                队列时间
+                              </div>
+                              <div className="mt-0.5 font-mono-code tabular-nums text-[var(--ink-primary)]">
                                 {formatUnixTime(row.due, { withSeconds: true })}
-                              </span>
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -542,10 +593,11 @@ export function UnifiedQueuesPanel({
 
       {/* Dual-Cursor Pagination Footer */}
       {hasMoreForActiveView && (
-        <div className="flex items-center justify-center gap-2 border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+        <div className="flex items-center justify-center gap-2.5 border-t border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] px-5 py-3">
           {(subView === "assigned" || subView === "unified") && assignedNext && (
             <Button
               size="sm"
+              pill
               variant="secondary"
               loading={loadingMore}
               onClick={() => void handleLoadMore("assigned")}
@@ -558,6 +610,7 @@ export function UnifiedQueuesPanel({
             submittedNext && (
               <Button
                 size="sm"
+                pill
                 variant="secondary"
                 loading={loadingMore}
                 onClick={() => void handleLoadMore("submitted")}

@@ -1,14 +1,13 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
-  ArrowLeft,
+  ArrowUp,
   CalendarPlus,
-  Hash,
+  ChevronLeft,
   RefreshCw,
-  Send,
   Users,
 } from "lucide-react";
 import {
@@ -34,6 +33,12 @@ import {
 import { MeetingDraftModal } from "@/features/chat/MeetingDraftModal";
 import { RoomMembersPanel } from "@/features/chat/RoomMembersPanel";
 import { fetchChatRooms } from "@/features/inbox/api";
+import {
+  IMessageBubbleTail,
+  computeBubbleGroupPos,
+  getBubbleRadiusClass,
+  shouldShowBubbleTail,
+} from "@/features/inbox/bubble-group";
 import type { ChatMessage, ChatRoom, Profile } from "@/lib/types";
 
 interface PendingFailedMessage {
@@ -45,6 +50,14 @@ interface PendingFailedMessage {
 }
 
 const POLL_INTERVAL_MS = 5000;
+
+function cleanRoomTitle(title: string): string {
+  const withoutPrefix = title.replace(/^私聊\s*[·•]\s*/, "").trim();
+  const withoutAccountSuffix = withoutPrefix
+    .replace(/\s*\([A-Za-z0-9._-]+\)\s*$/, "")
+    .trim();
+  return withoutAccountSuffix || withoutPrefix || title;
+}
 
 export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
   const {
@@ -84,6 +97,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     getDraft(draftKey),
   );
 
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastSeqRef = useRef<number>(0);
   const fetchedSubjectsRef = useRef<Set<string>>(new Set());
   const pollTimerRef = useRef<number | null>(null);
@@ -91,6 +105,16 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
   const feedEndRef = useRef<HTMLDivElement | null>(null);
 
   const chatAvailable = Boolean(capabilities?.chat_available);
+
+  const autoResizeTextarea = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(150, Math.max(26, el.scrollHeight))}px`;
+  }, []);
+
+  useEffect(() => {
+    autoResizeTextarea(textareaRef.current);
+  }, [composerText, autoResizeTextarea]);
 
   const stopPolling = useCallback(() => {
     pollStoppedRef.current = true;
@@ -112,7 +136,6 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     setMeetingModalOpen(false);
   }, [stopPolling]);
 
-  // Sync draft when switching room or authGeneration
   useEffect(() => {
     setComposerText(getDraft(draftKey));
   }, [draftKey, authGeneration, getDraft]);
@@ -125,7 +148,6 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     [draftKey, setDraft],
   );
 
-  // Load room member profiles on demand (never re-fetch already cached subjects in this authGeneration)
   const hydrateProfiles = useCallback(
     async (subjects: string[], startGen: number) => {
       const toFetch = subjects.filter(
@@ -204,7 +226,10 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
 
   const pollIncrementalMessages = useCallback(async () => {
     if (pollStoppedRef.current) return;
-    if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState !== "visible"
+    ) {
       return;
     }
     const startGen = getAuthGeneration();
@@ -247,7 +272,6 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     }
   }, [roomId, hydrateProfiles, stopPolling, handleFatalRoomError]);
 
-  // Initial room load + conservative active-only polling
   useEffect(() => {
     purgeRoomState();
     setAccessError(null);
@@ -265,11 +289,13 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
 
     (async () => {
       try {
-        // Fetch members & messages in parallel; also fetch room list for title/owner
         const [membersRes, messagesRes, roomsRes] = await Promise.all([
           fetchRoomMembers(roomId, { limit: 100 }),
           fetchRoomMessages(roomId, { limit: 100, after: 0 }),
-          fetchChatRooms({ limit: 100 }).catch(() => ({ items: [], next: null })),
+          fetchChatRooms({ limit: 100 }).catch(() => ({
+            items: [],
+            next: null,
+          })),
         ]);
 
         if (cancelled || startGen !== getAuthGeneration()) return;
@@ -279,7 +305,6 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
         setRoomMeta(matchedRoom);
         setMembers(membersRes.items);
 
-        // Drain any remaining pages if >100 messages
         let allMessages = [...messagesRes.items];
         let nextSeq = messagesRes.next;
         let safetyPages = 0;
@@ -294,7 +319,6 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
           safetyPages += 1;
         }
 
-        // Deduplicate strictly by seq
         const bySeq = new Map<number, ChatMessage>();
         const authorSet = new Set<string>(membersRes.items);
         for (const msg of allMessages) {
@@ -314,14 +338,17 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
           feedEndRef.current?.scrollIntoView({ behavior: "auto" });
         });
 
-        // Start conservative incremental polling strictly while active
         if (!cancelled && !pollStoppedRef.current) {
           pollTimerRef.current = window.setInterval(() => {
             void pollIncrementalMessages();
           }, POLL_INTERVAL_MS);
         }
       } catch (err) {
-        if (cancelled || isStaleAuthError(err) || startGen !== getAuthGeneration()) {
+        if (
+          cancelled ||
+          isStaleAuthError(err) ||
+          startGen !== getAuthGeneration()
+        ) {
           return;
         }
         setInitialLoading(false);
@@ -348,7 +375,6 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     stopPolling,
   ]);
 
-  // Mount RoomMembersPanel into the Right Workbench Drawer when room-members is selected
   useEffect(() => {
     if (
       selectedObject?.kind === "room-members" &&
@@ -385,6 +411,20 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
       setCustomDrawerContent(null);
     };
   }, [setCustomDrawerContent]);
+
+  useEffect(() => {
+    const latest = messages[messages.length - 1];
+    if (!latest) return;
+    window.dispatchEvent(
+      new CustomEvent("aios:room-preview", {
+        detail: {
+          roomId,
+          text: latest.text,
+          createdAt: latest.created_at,
+        },
+      }),
+    );
+  }, [roomId, messages]);
 
   const sendWithClientId = useCallback(
     async (text: string, clientId: string, isRetry: boolean) => {
@@ -486,15 +526,34 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     }
   };
 
-  // Unauthorized or chat disabled view
+  const groupItems = useMemo(
+    () => messages.map((m) => ({ sender: m.author, createdAt: m.created_at })),
+    [messages],
+  );
+
+  // Derive peer avatar when room is a 1:1 DM
+  const otherPeer = useMemo(() => {
+    if (!actor || members.length !== 2) return null;
+    const other = members.find((m) => m !== actor.subject);
+    if (!other) return null;
+    const prof = memberProfiles[other];
+    return {
+      subject: other,
+      name: prof?.display_name || other,
+      avatarSrc: prof?.has_avatar
+        ? getRoomMemberAvatarUrl(roomId, other, prof.version, authGeneration)
+        : null,
+    };
+  }, [actor, members, memberProfiles, roomId, authGeneration]);
+
   if (capabilities && !chatAvailable) {
     return (
-      <div className="flex h-full items-center justify-center bg-[var(--bg-canvas)] p-6">
+      <div className="flex h-full items-center justify-center bg-[var(--bg-app)] p-6">
         <div className="w-full max-w-[460px]">
           <AccessNoticeCard
             variant="ACCESS_RESTRICTED"
-            title="协作房间未启用"
-            message="当前账号未获授员工协作房间权限，无法访问此房间。"
+            title="协作会话未启用"
+            message="当前账号未获授员工协作会话权限，无法访问此会话。"
             backHref="/inbox/assistant"
             backLabel="返回个人业务助手"
           />
@@ -507,7 +566,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     return (
       <div
         data-testid="room-access-error"
-        className="flex h-full items-center justify-center bg-[var(--bg-canvas)] p-6"
+        className="flex h-full items-center justify-center bg-[var(--bg-app)] p-6"
       >
         <div className="w-full max-w-[460px]">
           <AccessNoticeCard
@@ -520,106 +579,120 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
     );
   }
 
-  const displayRoomTitle = roomMeta?.title || `协作房间 ${roomId.slice(0, 10)}`;
+  const displayRoomTitle = roomMeta?.title
+    ? cleanRoomTitle(roomMeta.title)
+    : `协作会话 ${roomId.slice(0, 8)}`;
 
   return (
     <div
       data-testid="chat-room-workspace"
       data-room-id={roomId}
-      className="flex h-full min-h-0 flex-col bg-[var(--bg-sheet)]"
+      className="flex h-full min-h-0 flex-col bg-[var(--bg-surface)]"
     >
-      {/* Room Header */}
-      <header className="flex min-h-[52px] shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-sheet)] px-3.5 py-2">
+      {/* 60px Frosted macOS Messages Header */}
+      <header className="aios-topbar-glass sticky top-0 z-20 flex h-[var(--header-h)] shrink-0 items-center justify-between gap-3 border-b border-[var(--hairline)] px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
           <Link
             href="/inbox"
             aria-label="返回会话列表"
             data-testid="room-mobile-back"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] border border-[var(--hairline-strong)] text-[var(--ink-secondary)] hover:bg-[var(--bg-subtle)] lg:hidden"
+            className="inline-flex h-8 items-center gap-0.5 rounded-full pr-2.5 pl-1.5 text-[13.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors lg:hidden"
           >
-            <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
+            <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
+            <span>返回</span>
           </Link>
 
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] text-[var(--ink-secondary)]">
-            <Hash className="h-4 w-4" strokeWidth={1.75} />
-          </span>
+          <Avatar
+            src={otherPeer?.avatarSrc ?? null}
+            name={otherPeer?.name || displayRoomTitle}
+            fallbackText={otherPeer?.subject || roomMeta?.owner || "RM"}
+            size="md"
+          />
 
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2
-                data-testid="room-header-title"
-                className="truncate text-[14.5px] font-semibold text-[var(--ink-primary)]"
-              >
-                {displayRoomTitle}
-              </h2>
-              <span className="shrink-0 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                {members.length} 人
-              </span>
-            </div>
+            <h2
+              data-testid="room-header-title"
+              className="truncate text-[15px] font-semibold tracking-[-0.015em] text-[var(--ink-primary)]"
+            >
+              {displayRoomTitle}
+            </h2>
             <p className="truncate text-[11.5px] text-[var(--ink-muted)]">
-              租户内员工协作房间 · 与个人 Agent 上下文完全隔离
+              {otherPeer ? "1:1 同事会话" : `${members.length} 位成员`} · 租户内隔离协作
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <Button
-            size="sm"
-            variant="secondary"
+        {/* Subtle Zoom / Calendar Meeting & Members Controls */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
             data-testid="room-schedule-meeting-btn"
             disabled={initialLoading}
             onClick={() => setMeetingModalOpen(true)}
+            title="预约 Zoom / 房间会议"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:text-[var(--accent)] transition-all duration-[150ms] cursor-pointer disabled:opacity-50"
           >
-            <CalendarPlus className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.75} />
-            <span>预约房间会议</span>
-          </Button>
+            <CalendarPlus
+              className="h-3.5 w-3.5 text-[var(--accent)]"
+              strokeWidth={1.9}
+            />
+            <span className="hidden sm:inline">Zoom / 日历预约</span>
+          </button>
 
-          <Button
-            size="sm"
-            variant="secondary"
+          <button
+            type="button"
             data-testid="room-members-btn"
             onClick={(e) =>
               openDrawer(
                 {
                   kind: "room-members",
                   id: roomId,
-                  title: "房间成员管理",
+                  title: "会话成员管理",
                 },
                 { tab: "current", trigger: e.currentTarget },
               )
             }
+            title="查看或管理成员"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
           >
-            <Users className="h-3.5 w-3.5" strokeWidth={1.75} />
-            <span>成员 ({members.length})</span>
-          </Button>
+            <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
+            <span className="font-mono-code tabular-nums">{members.length}</span>
+          </button>
         </div>
       </header>
 
-      {/* Message Stream */}
+      {/* Fluid iMessage Stream */}
       <div
         data-testid="room-message-feed"
-        className="min-h-0 flex-1 overflow-auto bg-[var(--bg-canvas)] px-4 py-4 sm:px-6"
+        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-surface)] px-4 py-6 sm:px-8"
       >
-        <div className="mx-auto max-w-[780px] space-y-3">
+        <div className="mx-auto max-w-[740px]">
           {initialLoading ? (
-            <div className="py-12 text-center text-[13px] text-[var(--ink-muted)]">
-              正在加载房间消息与成员资料…
+            <div className="py-16 text-center text-[13px] text-[var(--ink-muted)]">
+              正在加载会话消息…
             </div>
           ) : messages.length === 0 && pendingOutbound.length === 0 ? (
             <div
               data-testid="room-empty-state"
-              className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-6 text-center"
+              className="flex flex-col items-center justify-center pt-[12vh] pb-6 text-center"
             >
-              <p className="text-[13.5px] font-medium text-[var(--ink-primary)]">
-                房间内暂无可见消息
-              </p>
-              <p className="mt-1 text-[12px] text-[var(--ink-muted)]">
-                发送第一条协作消息，或点击右上角“预约房间会议”发起站内日程草稿。
+              <Avatar
+                src={otherPeer?.avatarSrc ?? null}
+                name={otherPeer?.name || displayRoomTitle}
+                fallbackText={otherPeer?.subject || roomMeta?.owner || "RM"}
+                size="xl"
+                className="shadow-[var(--shadow-card)]"
+              />
+              <h3 className="mt-4 text-[17px] font-semibold text-[var(--ink-primary)]">
+                {displayRoomTitle}
+              </h3>
+              <p className="mt-1.5 max-w-[380px] text-[13px] text-[var(--ink-muted)] leading-relaxed">
+                发送第一条协作消息，或点击右上角“Zoom / 日历预约”直接发起会议日程。
               </p>
             </div>
           ) : (
-            <>
-              {messages.map((msg) => {
+            <div>
+              {messages.map((msg, idx) => {
                 const isSelf = actor?.subject === msg.author;
                 const prof = isSelf ? selfProfile : memberProfiles[msg.author];
                 const displayName = prof?.display_name || msg.author;
@@ -636,69 +709,101 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                       )
                     : null;
 
+                const pos = computeBubbleGroupPos(groupItems, idx);
+                const isGroupStart = pos === "single" || pos === "first";
+                const showTail = shouldShowBubbleTail(pos);
+                const radiusClass = getBubbleRadiusClass(
+                  isSelf ? "sent" : "received",
+                  pos,
+                );
+                const animateClass =
+                  idx >= messages.length - 6
+                    ? isSelf
+                      ? "imessage-bubble-sent"
+                      : "imessage-bubble-received"
+                    : "";
+
                 return (
                   <article
                     key={msg.seq}
                     data-testid={`room-message-${msg.seq}`}
                     className={[
-                      "flex items-start gap-2.5",
-                      isSelf ? "flex-row-reverse" : "",
+                      "flex items-end gap-2",
+                      isSelf ? "justify-end pr-1.5" : "justify-start pl-1",
+                      idx === 0
+                        ? ""
+                        : isGroupStart
+                          ? "mt-3.5"
+                          : "mt-[3px]",
                     ].join(" ")}
                   >
-                    <Avatar
-                      src={avatarSrc}
-                      name={displayName}
-                      fallbackText={msg.author}
-                      size="sm"
-                      className="mt-0.5"
-                    />
+                    {/* Left Colleague Avatar (only visible at group end, spacer preserves alignment) */}
+                    {!isSelf && (
+                      <div className="w-8 shrink-0">
+                        {showTail && (
+                          <Avatar
+                            src={avatarSrc}
+                            name={displayName}
+                            fallbackText={msg.author}
+                            size="sm"
+                          />
+                        )}
+                      </div>
+                    )}
 
                     <div
                       className={[
-                        "min-w-0 max-w-[80%]",
-                        isSelf ? "items-end text-right" : "",
+                        "min-w-0 max-w-[78%] flex flex-col",
+                        isSelf ? "items-end" : "items-start",
                       ].join(" ")}
                     >
-                      <div
-                        className={[
-                          "flex items-center gap-2 text-[11.5px] text-[var(--ink-muted)]",
-                          isSelf ? "justify-end" : "",
-                        ].join(" ")}
-                      >
-                        <span className="font-medium text-[var(--ink-secondary)]">
-                          {displayName}
-                        </span>
-                        <span className="font-mono-code text-[10.5px]">
-                          #{msg.seq}
-                        </span>
-                        <span className="font-mono-code text-[10.5px]">
-                          {formatUnixTime(msg.created_at)}
-                        </span>
-                      </div>
+                      {isGroupStart && !isSelf && (
+                        <div className="mb-1 ml-1 flex items-center gap-2 text-[11.5px] text-[var(--ink-muted)]">
+                          <span className="font-medium text-[var(--ink-secondary)]">
+                            {displayName}
+                          </span>
+                          <span className="font-mono-code text-[10.5px] tabular-nums">
+                            {formatUnixTime(msg.created_at)}
+                          </span>
+                        </div>
+                      )}
 
                       <div
                         className={[
-                          "mt-1 inline-block rounded-[4px] border px-3 py-2 text-left text-[13.5px] leading-relaxed whitespace-pre-wrap break-words",
+                          "relative px-4 py-2.5 text-[14.5px] leading-[1.45] whitespace-pre-wrap break-words",
+                          radiusClass,
+                          animateClass,
                           isSelf
-                            ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--ink-primary)]"
-                            : "border-[var(--hairline-strong)] bg-[var(--bg-sheet)] text-[var(--ink-primary)]",
+                            ? "bg-[var(--accent)] text-white"
+                            : "bg-[var(--agent-bubble-bg)] text-[var(--ink-primary)]",
                         ].join(" ")}
                       >
                         {msg.text}
+                        {showTail && (
+                          <IMessageBubbleTail
+                            side={isSelf ? "sent" : "received"}
+                          />
+                        )}
                       </div>
+
+                      {showTail && isSelf && (
+                        <span className="mt-1 mr-1 font-mono-code text-[10.5px] text-[var(--ink-faint)] tabular-nums">
+                          {formatUnixTime(msg.created_at)}
+                        </span>
+                      )}
                     </div>
                   </article>
                 );
               })}
 
-              {/* Pending / Failed Outbound Messages with Idempotent Retry */}
+              {/* Pending / Failed Outbound Messages with Idempotent client_id Retry */}
               {pendingOutbound.map((item) => (
                 <div
                   key={item.clientId}
                   data-testid={`room-pending-message-${item.clientId}`}
-                  className="flex flex-col items-end gap-1"
+                  className="mt-3 flex flex-col items-end gap-1.5 pr-1.5"
                 >
-                  <div className="max-w-[80%] rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-plane)] px-3 py-2 text-[13.5px] text-[var(--ink-secondary)] whitespace-pre-wrap break-words opacity-85">
+                  <div className="imessage-bubble-sent relative max-w-[78%] rounded-lg bg-[var(--accent)]/75 px-4 py-2.5 text-[14.5px] leading-[1.45] text-white whitespace-pre-wrap break-words">
                     {item.text}
                   </div>
                   {item.status === "sending" ? (
@@ -706,13 +811,14 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                       正在发送…
                     </span>
                   ) : (
-                    <div className="flex flex-wrap items-center justify-end gap-2 rounded-[4px] border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-2.5 py-1.5 text-[11.5px] text-[var(--status-amber-ink)]">
+                    <div className="flex flex-wrap items-center justify-end gap-2 rounded-sm bg-[var(--status-amber-wash)] px-3 py-2 text-[12px] text-[var(--status-amber-ink)]">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                       <span>{item.errorMessage || "发送失败"}</span>
                       {item.conflictMismatch ? (
                         <Button
                           size="sm"
                           variant="secondary"
+                          pill
                           onClick={() => {
                             const freshId = generateClientId("msg");
                             setPendingOutbound((prev) =>
@@ -727,6 +833,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                         <Button
                           size="sm"
                           variant="secondary"
+                          pill
                           data-testid="room-message-retry-btn"
                           onClick={() =>
                             void sendWithClientId(
@@ -744,51 +851,49 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                   )}
                 </div>
               ))}
-            </>
+            </div>
           )}
 
           <div ref={feedEndRef} />
         </div>
       </div>
 
-      {/* Room Composer */}
-      <footer className="shrink-0 border-t border-[var(--hairline)] bg-[var(--bg-sheet)] px-4 py-3">
-        <div className="mx-auto max-w-[780px]">
-          <div className="flex items-end gap-2">
+      {/* Minimal Floating Capsule Composer */}
+      <footer className="shrink-0 bg-gradient-to-t from-[var(--bg-surface)] via-[var(--bg-surface)] to-transparent px-4 pt-2 pb-4 sm:px-8 sm:pb-5">
+        <div className="mx-auto max-w-[740px]">
+          <div className="flex items-end gap-2 rounded-xl bg-[var(--bg-surface)] py-2 pl-4 pr-2.5 shadow-[var(--shadow-composer)] focus-within:shadow-[var(--shadow-composer-focus)] transition-shadow duration-[200ms]">
             <textarea
+              ref={textareaRef}
               data-composer-input
               data-testid="room-composer-input"
-              rows={2}
+              rows={1}
               maxLength={4000}
               value={composerText}
               onChange={(e) => updateComposer(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`在 ${displayRoomTitle} 发送纯文本协作消息（Enter 发送，Shift+Enter 换行）`}
-              className="min-h-[44px] max-h-[140px] flex-1 resize-y rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-3 py-2 text-[13.5px] leading-relaxed text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
+              placeholder={`向 ${displayRoomTitle} 发送消息…`}
+              className="my-1 block max-h-[150px] min-h-[26px] flex-1 resize-none bg-transparent text-[14.5px] leading-[1.45] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none"
             />
-            <Button
+            <button
               type="button"
-              variant="primary"
-              size="md"
               data-testid="room-send-btn"
+              aria-label="发送消息"
               disabled={composerText.trim().length === 0}
               onClick={handleSend}
-              className="h-[44px] shrink-0 px-4"
+              className={[
+                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-[150ms]",
+                composerText.trim().length > 0
+                  ? "bg-[var(--accent)] text-white shadow-[0_2px_6px_rgba(22,104,227,0.28)] hover:bg-[var(--accent-hover)] active:scale-[0.92] cursor-pointer"
+                  : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)] cursor-not-allowed",
+              ].join(" ")}
             >
-              <Send className="h-4 w-4" strokeWidth={1.75} />
-              <span>发送</span>
-            </Button>
-          </div>
-          <div className="mt-1.5 flex items-center justify-between text-[11px] text-[var(--ink-muted)]">
-            <span>发送失败可原地重试并自动复用幂等 client_id，不会重复写入。</span>
-            <span className="font-mono-code tabular-nums">
-              {composerText.length}/4000
-            </span>
+              <ArrowUp className="h-4 w-4" strokeWidth={2.3} />
+            </button>
           </div>
         </div>
       </footer>
 
-      {/* Draft-Then-Confirm Room Meeting Modal */}
+      {/* Upgraded Draft-Then-Confirm Room Meeting Modal (with optional Zoom & MCP Sync + .ics) */}
       <MeetingDraftModal
         open={meetingModalOpen}
         onOpenChange={setMeetingModalOpen}

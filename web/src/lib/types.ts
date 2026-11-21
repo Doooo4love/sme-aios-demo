@@ -659,12 +659,139 @@ export interface DemoPersonaMeta {
   label: string;
   summary: string;
   group: "core" | "specialist" | "isolation";
+  username?: string;
+  email?: string;
+  display_name?: string;
+  department?: string;
 }
 
 export interface DemoPersonasResponse {
   enabled: boolean;
+  password_login_enabled?: boolean;
   oidc_login_enabled: boolean;
   personas: DemoPersonaMeta[];
+}
+
+export interface CompanyContact {
+  subject: string;
+  tenant: string;
+  display_name: string;
+  default_display_name: string;
+  email: string;
+  department: string;
+  job_title: string;
+  role: Role | string;
+  warehouses: string[];
+  has_avatar: boolean;
+  avatar_url: string | null;
+  profile_version: number;
+  direct_room_id: string | null;
+  shared_room_count: number;
+}
+
+export interface CompanyContactsResponse {
+  tenant: string;
+  can_chat: boolean;
+  total: number;
+  items: CompanyContact[];
+}
+
+export type ExternalCalendarTarget = "google" | "icloud" | "outlook";
+
+export interface McpConnectorStatusItem {
+  connector: "internal" | "zoom" | ExternalCalendarTarget;
+  connector_id: "internal" | "zoom" | ExternalCalendarTarget;
+  label: string;
+  category: "internal" | "meeting" | "calendar";
+  configured: boolean;
+  status: "connected" | "sandbox_ready";
+  mode: "live_internal" | "live_mcp" | "live_api" | "sandbox_preview" | "ics_fallback";
+  protocol: string;
+  supports_sync: boolean;
+  setup_env_keys: string[];
+}
+
+export interface McpStatusResponse {
+  tenant: string;
+  ics_export_url: string;
+  connectors: McpConnectorStatusItem[];
+}
+
+export interface ZoomBookingAttendee {
+  subject: string;
+  display_name: string;
+  email: string;
+  department: string;
+}
+
+export interface ZoomBookingDraft {
+  client_id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  duration_minutes: number;
+  timezone: string;
+  room_id: string | null;
+  create_zoom: boolean;
+  notify_room: boolean;
+  calendar_targets: ExternalCalendarTarget[];
+  attendees: ZoomBookingAttendee[];
+  unresolved_mentions: string[];
+}
+
+export interface ZoomBookingPreviewResponse {
+  phase: "preview";
+  draft: ZoomBookingDraft;
+  warnings: string[];
+  zoom_configured: boolean;
+  zoom_mode_preview: "live_mcp" | "live_api" | "sandbox_preview";
+  connectors: McpConnectorStatusItem[];
+}
+
+export interface ExternalCalendarSyncResult {
+  connector: ExternalCalendarTarget;
+  label: string;
+  status: "synced" | "unconfigured" | "error";
+  external_event_id: string | null;
+  message: string;
+  setup_env_keys?: string[];
+}
+
+export interface ZoomMeetingResult {
+  requested: boolean;
+  mode: "live_mcp" | "live_api" | "sandbox_preview" | "error_fallback" | "skipped";
+  sync_mode: "live_mcp" | "live_api" | "sandbox_preview" | "error_fallback" | "skipped";
+  status_label: string;
+  join_url: string | null;
+  meeting_id: string | null;
+  passcode: string | null;
+}
+
+export interface BookedCalendarEvent extends CalendarEventDetail {
+  room_id: string | null;
+}
+
+export interface ZoomBookingConfirmResponse {
+  phase: "confirmed";
+  mode: "live_mcp" | "live_api" | "sandbox_preview" | "error_fallback";
+  sync_mode: "live_mcp" | "live_api" | "sandbox_preview" | "error_fallback";
+  status_badge: string;
+  event: BookedCalendarEvent;
+  internal_event: BookedCalendarEvent;
+  zoom: ZoomMeetingResult;
+  zoom_meeting: ZoomMeetingResult;
+  external_sync: ExternalCalendarSyncResult[];
+  calendar_sync_results: ExternalCalendarSyncResult[];
+  room_notified: boolean;
+  ics_download_url: string;
+}
+
+export interface CalendarSyncResponse {
+  tenant: string;
+  event_id: string | null;
+  sync_mode: "live_mcp" | "sandbox_ready" | "partial";
+  results: ExternalCalendarSyncResult[];
+  ics_download_url: string;
 }
 
 export interface FieldValidationError {

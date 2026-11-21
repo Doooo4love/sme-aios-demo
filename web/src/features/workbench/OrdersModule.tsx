@@ -25,26 +25,53 @@ export function OrdersModule() {
 
   return (
     <div className="space-y-4" data-testid="workbench-orders-module">
-      {/* Quick Entry & Intake Lookup Strip */}
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-1">
-            <h2 className="text-[14px] font-semibold text-[var(--ink-primary)]">
+      {/* Quick Entry & Intake Lookup Porcelain Card */}
+      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
               接单与销售订单草稿工作区
             </h2>
-            <p className="text-[12px] text-[var(--ink-muted)]">
-              已授权写入站点：
-              <span className="font-mono-code text-[var(--ink-primary)]">
-                {orderWriteWarehouses.join(", ") || "无（只读）"}
-              </span>{" "}
-              · 已授权读取站点：
-              <span className="font-mono-code text-[var(--ink-primary)]">
-                {orderReadWarehouses.join(", ") || "无"}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-[var(--ink-muted)]">
+              <span className="inline-flex items-center gap-1.5">
+                <span>授权写入站点</span>
+                {orderWriteWarehouses.length > 0 ? (
+                  orderWriteWarehouses.map((wh) => (
+                    <span
+                      key={`w-${wh}`}
+                      className="rounded-full bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--accent)]"
+                    >
+                      {wh}
+                    </span>
+                  ))
+                ) : (
+                  <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--ink-muted)]">
+                    仅只读
+                  </span>
+                )}
               </span>
-            </p>
+              <span aria-hidden="true" className="text-[var(--ink-faint)]">
+                ·
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span>授权读取站点</span>
+                {orderReadWarehouses.length > 0 ? (
+                  orderReadWarehouses.map((wh) => (
+                    <span
+                      key={`r-${wh}`}
+                      className="rounded-full bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)]"
+                    >
+                      {wh}
+                    </span>
+                  ))
+                ) : (
+                  <span>无</span>
+                )}
+              </span>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -61,16 +88,25 @@ export function OrdersModule() {
               }}
               className="flex items-center gap-1.5"
             >
-              <input
-                type="text"
-                value={intakeQuery}
-                onChange={(e) => setIntakeQuery(e.target.value)}
-                placeholder="输入 intake_id 面板核对"
-                className="h-8 w-48 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12px]"
-              />
-              <Button size="sm" variant="secondary" type="submit">
-                <Search className="h-3.5 w-3.5" />
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-faint)]" />
+                <input
+                  type="text"
+                  value={intakeQuery}
+                  onChange={(e) => setIntakeQuery(e.target.value)}
+                  placeholder="输入进件编号核对"
+                  className="h-9 w-52 rounded-full bg-[var(--bg-surface-tint)] border border-[var(--hairline-strong)] pl-8 pr-3 font-mono-code text-[12px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[160ms]"
+                />
+              </div>
+              <Button
+                size="sm"
+                pill
+                variant="secondary"
+                type="submit"
+                title="在右侧面板核对进件"
+              >
                 <PanelRight className="h-3.5 w-3.5" />
+                <span>调阅</span>
               </Button>
             </form>
 
@@ -78,9 +114,9 @@ export function OrdersModule() {
               <Link
                 href="/orders/new"
                 data-testid="work-new-order-link"
-                className="inline-flex h-9 items-center gap-1.5 rounded-[4px] bg-[var(--accent)] px-3.5 text-[13px] font-medium text-white hover:bg-[var(--accent-hover)]"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.24)] hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_12px_-2px_rgba(22,104,227,0.32)] active:scale-[0.98] transition-all duration-[165ms]"
               >
-                <FilePlus2 className="h-4 w-4" strokeWidth={1.75} />
+                <FilePlus2 className="h-3.5 w-3.5" strokeWidth={1.9} />
                 <span>新建订单进件</span>
                 <ArrowUpRight className="h-3.5 w-3.5" />
               </Link>

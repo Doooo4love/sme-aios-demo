@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   CheckCircle2,
   Clock,
   Info,
@@ -17,7 +18,12 @@ import {
 import { isApiError, isStaleAuthError, type ApiError } from "@/lib/api-client";
 import { formatUnixTime } from "@/lib/format";
 import { useSession } from "@/lib/session-context";
-import { AccessNoticeCard, Button, StatusBadge } from "@/components/ui";
+import {
+  AccessNoticeCard,
+  Avatar,
+  Button,
+  StatusBadge,
+} from "@/components/ui";
 import { ActionConfirmDialog } from "@/features/admin/ActionConfirmDialog";
 import {
   fetchEmployeeModuleAssignments,
@@ -26,6 +32,7 @@ import {
 } from "@/features/people/api";
 import {
   classifyModuleAssignment,
+  formatOffsetDaysLocalInput,
   getDependentWriteGrants,
   getLocalTimezoneLabel,
   getModuleMeta,
@@ -119,7 +126,7 @@ export function EmployeeAccessDetailView({
   const [nowUnix, setNowUnix] = useState<number>(() =>
     Math.floor(Date.now() / 1000),
   );
-  const [localTzLabel, setLocalTzLabel] = useState<string>("本地时区");
+  const [localTzLabel, setLocalTzLabel] = useState<string>("本地时间");
 
   const isSelf = actor?.subject === subject;
 
@@ -226,20 +233,23 @@ export function EmployeeAccessDetailView({
         const requiredRead = GRANT_PREREQUISITES[grant];
         if (requiredRead && !nextSet.has(requiredRead)) {
           nextSet.add(requiredRead);
-          infoNote = `已自动勾选前置读取权限 ${requiredRead}（写入动作 ${grant} 依赖对应读取权限）。`;
+          const reqLabel = GRANT_META[requiredRead]?.label ?? requiredRead;
+          const grantLabel = GRANT_META[grant]?.label ?? grant;
+          infoNote = `已自动勾选前置读取权限「${reqLabel}」（「${grantLabel}」依赖对应读取权限）。`;
         }
       } else {
         nextSet.delete(grant);
         const dependents = getDependentWriteGrants(grant);
-        const removed: Grant[] = [];
+        const removed: string[] = [];
         for (const dep of dependents) {
           if (nextSet.has(dep)) {
             nextSet.delete(dep);
-            removed.push(dep);
+            removed.push(GRANT_META[dep]?.label ?? dep);
           }
         }
         if (removed.length > 0) {
-          infoNote = `取消 ${grant} 后已同步取消依赖它的写入权限 ${removed.join(", ")}。`;
+          const grantLabel = GRANT_META[grant]?.label ?? grant;
+          infoNote = `取消「${grantLabel}」后已同步取消依赖它的写入权限（${removed.join("、")}）。`;
         }
       }
 
@@ -377,7 +387,8 @@ export function EmployeeAccessDetailView({
       if (draft.grants.length === 0 || draft.warehouses.length === 0) {
         setModuleFeedback(moduleId, {
           kind: "error",
-          message: "授予模块权限时，必须同时选择至少一项动作权限与至少一个仓库站点。",
+          message:
+            "授予模块权限时，必须同时选择至少一项动作权限与至少一个仓库站点。",
         });
         return;
       }
@@ -387,7 +398,7 @@ export function EmployeeAccessDetailView({
         if (req && !draft.grants.includes(req)) {
           setModuleFeedback(moduleId, {
             kind: "error",
-            message: `动作 ${g} 依赖前置读取权限 ${req}，请同时勾选后再保存。`,
+            message: `「${GRANT_META[g]?.label ?? g}」依赖前置读取权限「${GRANT_META[req]?.label ?? req}」，请同时勾选后再保存。`,
           });
           return;
         }
@@ -404,7 +415,8 @@ export function EmployeeAccessDetailView({
         ) {
           setModuleFeedback(moduleId, {
             kind: "error",
-            message: "到期时间必须晚于当前本地时间，且不得超过 2100 年。",
+            message:
+              "到期时间格式需为 YYYY-MM-DD HH:MM，且必须晚于当前本地时间（不超过 2100 年）。",
           });
           return;
         }
@@ -430,7 +442,7 @@ export function EmployeeAccessDetailView({
         setNowUnix(savedNow);
         setModuleFeedback(moduleId, {
           kind: "success",
-          message: `已保存模块显式授权（版本 v${saved.version}）。`,
+          message: `已保存模块授权（第 ${saved.version} 版配置）。`,
         });
       } catch (err) {
         if (isStaleAuthError(err)) return;
@@ -494,7 +506,7 @@ export function EmployeeAccessDetailView({
       setRevokeTargetModule(null);
       setModuleFeedback(moduleId, {
         kind: "success",
-        message: `已撤销此模块权限（版本 v${saved.version}），相关查询与待派发提案已阻断。`,
+        message: `已撤销此模块权限（第 ${saved.version} 版配置），相关查询与待派发提案已阻断。`,
       });
     } catch (err) {
       if (isStaleAuthError(err)) return;
@@ -534,7 +546,7 @@ export function EmployeeAccessDetailView({
   if (!canManagePeople) {
     return (
       <div
-        className="mx-auto max-w-[820px] p-4 sm:p-6"
+        className="mx-auto max-w-[820px] px-4 py-8 sm:px-6"
         data-testid="people-access-denied"
       >
         <AccessNoticeCard
@@ -557,54 +569,67 @@ export function EmployeeAccessDetailView({
 
   return (
     <div
-      className="mx-auto max-w-[1060px] space-y-4 p-4 sm:p-6"
+      className="mx-auto max-w-[1060px] space-y-5 px-4 py-6 sm:px-6 lg:py-7 pb-16"
       data-testid="employee-access-detail-page"
     >
-      {/* Top Header */}
-      <section className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <Link
-              href="/admin/people"
-              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ink-muted)] hover:text-[var(--ink-primary)]"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span>返回员工目录</span>
-            </Link>
-            <div className="mt-2 flex flex-wrap items-center gap-2.5">
-              <h2
-                className="font-mono-code text-[20px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)] break-all"
-                data-testid="employee-detail-subject"
-              >
-                {subject}
-              </h2>
-              {isSelf && (
-                <span className="inline-flex items-center rounded-[4px] border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--status-amber-ink)]">
-                  本人账号 · 只读
+      {/* Back Pill */}
+      <div>
+        <Link
+          href="/admin/people"
+          className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] hover:text-[var(--accent)] hover:shadow-[var(--shadow-card)] transition-all duration-[150ms]"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.85} />
+          <span>返回员工目录</span>
+        </Link>
+      </div>
+
+      {/* Unified Porcelain Employee Header Sheet */}
+      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4 min-w-0">
+            <Avatar
+              fallbackText={subject}
+              name={subject}
+              size="lg"
+              kind="user"
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1
+                  className="font-mono-code text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] break-all"
+                  data-testid="employee-detail-subject"
+                >
+                  {subject}
+                </h1>
+                {isSelf && (
+                  <span className="inline-flex items-center rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--status-amber-ink)]">
+                    本人账号 · 只读
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-[12.5px] text-[var(--ink-muted)] tabular-nums">
+                <span className="font-mono-code">{actor?.tenant ?? "—"}</span>
+                <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
+                <span>
+                  可管理仓库{" "}
+                  <span className="font-mono-code text-[var(--ink-secondary)]">
+                    {catalog?.warehouses.join(" / ") || "—"}
+                  </span>
                 </span>
-              )}
+              </p>
             </div>
-            <p className="mt-1 text-[12.5px] text-[var(--ink-muted)]">
-              租户{" "}
-              <span className="font-mono-code text-[var(--ink-primary)]">
-                {actor?.tenant ?? "—"}
-              </span>{" "}
-              · 可管理仓库：
-              <span className="font-mono-code text-[var(--ink-primary)]">
-                {catalog?.warehouses.join(", ") || "—"}
-              </span>
-            </p>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
             <Button
               size="sm"
+              pill
               variant="secondary"
               loading={loading}
               data-testid="employee-access-refresh"
               onClick={() => void loadEmployeeAccess()}
             >
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>刷新最新配置</span>
             </Button>
           </div>
@@ -615,39 +640,35 @@ export function EmployeeAccessDetailView({
           <div
             role="alert"
             data-testid="self-edit-guard-banner"
-            className="mt-4 flex items-start gap-2.5 rounded-[4px] border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-3.5 py-2.5 text-[12.5px] text-[var(--status-crimson)]"
+            className="mt-4 flex items-start gap-3 rounded-tile bg-[var(--status-crimson-wash)] px-4 py-3 text-[13px] text-[var(--status-crimson)]"
           >
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
-            <div>
-              <span className="font-semibold">管理员不能修改自己的模块授权。</span>
+            <ShieldAlert
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={1.85}
+            />
+            <div className="leading-relaxed">
+              <span className="font-semibold">
+                管理员不能修改自己的模块授权。
+              </span>
               <span className="ml-1 text-[var(--ink-secondary)]">
-                所有授权勾选、到期编辑、保存与撤销操作均已禁用，请由其他具备全站点权限的管理员协助调整。
+                所有编辑、保存与撤销操作均已禁用，请由其他具备全站点权限的管理员协助调整。
               </span>
             </div>
           </div>
         )}
 
-        {/* Configured vs Effective Scope Clarity Note */}
-        <div
+        {/* Single Page-Level Scope & Expiry Explanation (Shown ONCE per page, never repeated per card) */}
+        <p
           data-testid="scope-intersection-note"
-          className="mt-3.5 flex items-start gap-2.5 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3.5 py-2.5 text-[12px] text-[var(--ink-secondary)] leading-relaxed"
+          className="mt-4 border-t border-[var(--hairline-subtle)] pt-3.5 text-[12px] text-[var(--ink-muted)] leading-relaxed"
         >
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--accent)]" strokeWidth={1.75} />
-          <div>
-            <span className="font-medium text-[var(--ink-primary)]">
-              配置范围与实际生效范围说明：
-            </span>
-            此处配置的仓库范围将与员工经身份提供商核验的仓库范围取交集（
-            <span className="font-mono-code text-[11.5px]">
-              有效范围 = 模块显式配置 ∩ 员工身份仓库
-            </span>
-            ）；未显式配置的模块继承员工身份默认权限。员工最终生效的能力清单与仓库边界以其本人的{" "}
-            <code className="font-mono-code text-[11.5px]">
-              /v1/workbench/capabilities
-            </code>{" "}
-            返回为准。
-          </div>
-        </div>
+          实际生效范围取「模块显式配置」与「员工身份已验证仓库」的交集，未单独配置的模块沿用默认权限；到期时间留空即永久有效（按
+          {localTzLabel}计算，格式{" "}
+          <span className="font-mono-code text-[var(--ink-secondary)]">
+            YYYY-MM-DD HH:MM
+          </span>
+          ）。
+        </p>
       </section>
 
       {loadError && (
@@ -664,54 +685,54 @@ export function EmployeeAccessDetailView({
       )}
 
       {loading && !catalog && !loadError && (
-        <div className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] px-4 py-12 text-center font-mono-code text-[12.5px] text-[var(--ink-muted)]">
+        <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] px-6 py-14 text-center text-[13px] text-[var(--ink-muted)]">
           正在加载员工模块授权快照…
         </div>
       )}
 
-      {/* 5 Stacked Module Architectural Cards */}
+      {/* 5 Elevated Porcelain Module Sheets (NO 3D tilt on input/checkbox edit cards) */}
       {catalog && !loadError && (
-        <div className="space-y-3.5">
+        <div className="space-y-4">
           {moduleIds.map((moduleId, idx) => {
             const spec = catalog.modules[moduleId]!;
             const meta = getModuleMeta(moduleId, idx);
             const persisted = assignments[moduleId];
             const stateInfo = classifyModuleAssignment(persisted, nowUnix);
-            const draft = drafts[moduleId] ?? buildDraftFromAssignment(persisted);
+            const draft =
+              drafts[moduleId] ?? buildDraftFromAssignment(persisted);
             const dirty = isDraftDirty(draft, persisted);
             const isSavingThis = savingModule === moduleId;
             const feedback = feedbackByModule[moduleId];
             const persistedVersion = persisted ? persisted.version : 0;
             const isAlreadyRevoked = stateInfo.status === "revoked";
             const savedAt = lastSavedAt[moduleId];
+            const showExplicitActions = dirty || Boolean(persisted);
+            const hasExpiry = draft.expiresAtInput.trim().length > 0;
 
             return (
               <section
                 key={moduleId}
                 data-testid={`module-card-${moduleId}`}
                 data-module-state={stateInfo.status}
-                className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
+                className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
               >
-                {/* Module Card Header */}
-                <div className="flex flex-col gap-2.5 border-b border-[var(--hairline)] px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                {/* Module Card Header (raw module slug tucked into title tooltip) */}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                        MODULE · {meta.index}
-                      </span>
-                      <h3 className="text-[15px] font-semibold text-[var(--ink-primary)]">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h2
+                        title={`模块标识：${moduleId}`}
+                        className="text-[16px] font-semibold tracking-[-0.015em] text-[var(--ink-primary)]"
+                      >
                         {meta.title}
-                      </h3>
-                      <code className="rounded-[2px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)]">
-                        {moduleId}
-                      </code>
+                      </h2>
                       {dirty && !isSelf && (
-                        <span className="font-mono-code text-[11px] font-medium text-[var(--status-amber-ink)]">
-                          · 未保存修改
+                        <span className="inline-flex items-center rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]">
+                          未保存修改
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-[12.5px] text-[var(--ink-muted)]">
+                    <p className="mt-1 text-[13px] text-[var(--ink-muted)] leading-relaxed">
                       {meta.description}
                     </p>
                   </div>
@@ -723,132 +744,144 @@ export function EmployeeAccessDetailView({
                     />
                     <span
                       data-testid={`module-version-${moduleId}`}
-                      className="rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-2 py-1 font-mono-code text-[11.5px] text-[var(--ink-secondary)] tabular-nums"
+                      title={
+                        persisted
+                          ? `当前为第 ${persistedVersion} 版配置 (v${persistedVersion})`
+                          : "尚未单独配置 (v0)"
+                      }
+                      className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--ink-secondary)] tabular-nums leading-none"
                     >
-                      v{persistedVersion}
+                      {persisted ? `第 ${persistedVersion} 版` : "首次配置"}
                     </span>
                   </div>
                 </div>
 
-                {/* Role Constraint Banner (e.g., approvals -> manager/admin only) */}
+                {/* Role Constraint Notice (e.g., approvals -> manager/admin only) */}
                 {spec.roles && spec.roles.length > 0 && (
-                  <div className="border-b border-[var(--hairline)] bg-[var(--status-amber-wash)] px-4 py-2 text-[12px] text-[var(--status-amber-ink)]">
-                    <span className="font-medium">角色约束：</span>
-                    仅当目标员工角色属于{" "}
-                    <span className="font-mono-code font-semibold">
-                      {spec.roles.join(" / ")}
-                    </span>{" "}
-                    时此模块授权才会生效；显式配置审批仓库后，审批范围可独立于经办写入权限生效。
+                  <div className="mt-4 rounded-tile bg-[var(--status-amber-wash)] px-3.5 py-2.5 text-[12.5px] text-[var(--status-amber-ink)] leading-relaxed">
+                    <span className="font-semibold">角色约束：</span>
+                    仅当员工角色为主管或管理员时此模块授权才会生效；配置审批仓库后可独立于经办写入权限生效。
                   </div>
                 )}
 
-                {/* Persisted Snapshot Summary Row */}
-                <div className="grid grid-cols-1 gap-3 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5 text-[12px] sm:grid-cols-4">
-                  <div>
-                    <div className="text-[11px] text-[var(--ink-muted)]">
-                      当前规则状态
+                {/* Concise Persisted Snapshot Strip (shown ONLY when explicitly configured — zero inherited repetition) */}
+                {persisted && (
+                  <dl className="mt-4 grid grid-cols-1 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-4 py-3 text-[12px] sm:grid-cols-3">
+                    <div>
+                      <dt className="text-[11px] text-[var(--ink-muted)]">
+                        已保存动作
+                      </dt>
+                      <dd
+                        title={persisted.grants.join(", ") || "空"}
+                        className="mt-0.5 font-medium text-[var(--ink-primary)]"
+                      >
+                        {persisted.grants.length === 0
+                          ? "已清空（已撤销）"
+                          : persisted.grants
+                              .map((g) => GRANT_META[g]?.label ?? g)
+                              .join("、")}
+                      </dd>
                     </div>
-                    <div className="mt-0.5 text-[var(--ink-primary)] font-medium">
-                      {stateInfo.label}
+                    <div>
+                      <dt className="text-[11px] text-[var(--ink-muted)]">
+                        已保存仓库
+                      </dt>
+                      <dd className="mt-0.5 font-mono-code text-[12px] font-medium text-[var(--ink-primary)]">
+                        {persisted.warehouses.length === 0
+                          ? "已清空（已撤销）"
+                          : persisted.warehouses.join(" · ")}
+                      </dd>
                     </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-[var(--ink-muted)]">
-                      已持久化动作
-                    </div>
-                    <div className="mt-0.5 font-mono-code text-[11.5px] text-[var(--ink-primary)] break-all">
-                      {!persisted
-                        ? "继承身份默认"
-                        : persisted.grants.length === 0
-                          ? "空（已撤销）"
-                          : persisted.grants.join(", ")}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-[var(--ink-muted)]">
-                      已持久化仓库
-                    </div>
-                    <div className="mt-0.5 font-mono-code text-[11.5px] text-[var(--ink-primary)]">
-                      {!persisted
-                        ? "继承身份默认"
-                        : persisted.warehouses.length === 0
-                          ? "空（已撤销）"
-                          : persisted.warehouses.join(", ")}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-[var(--ink-muted)]">
-                      到期时间（{localTzLabel}）
-                    </div>
-                    <div className="mt-0.5 font-mono-code text-[11.5px] text-[var(--ink-primary)] tabular-nums">
-                      {!persisted
-                        ? "不适用"
-                        : persisted.expires_at
+                    <div>
+                      <dt className="text-[11px] text-[var(--ink-muted)]">
+                        到期时间（{localTzLabel}）
+                      </dt>
+                      <dd className="mt-0.5 font-mono-code text-[12px] text-[var(--ink-primary)] tabular-nums">
+                        {persisted.expires_at
                           ? `${formatUnixTime(persisted.expires_at)}${stateInfo.status === "expired" ? "（已到期）" : ""}`
                           : persisted.grants.length === 0
                             ? "不适用"
                             : "永久有效"}
+                      </dd>
                     </div>
-                  </div>
-                </div>
+                  </dl>
+                )}
 
                 {/* Editor Body */}
-                <div className="grid grid-cols-1 gap-5 p-4 lg:grid-cols-12">
-                  {/* Column 1: Action Grants */}
+                <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-12">
+                  {/* Column 1: Action Grants (Custom Accessible Cobalt Checkboxes) */}
                   <div className="lg:col-span-5">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-[12px] font-semibold text-[var(--ink-secondary)]">
-                        动作权限 (grants)
+                    <div className="mb-2.5 flex items-center justify-between">
+                      <span className="text-[12.5px] font-semibold text-[var(--ink-secondary)]">
+                        动作权限
                       </span>
-                      <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+                      <span className="text-[11.5px] text-[var(--ink-muted)] tabular-nums">
                         已选 {draft.grants.length} / {spec.grants.length}
                       </span>
                     </div>
-                    <div className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)]">
+                    <div className="space-y-2">
                       {spec.grants.map((grant) => {
                         const checked = draft.grants.includes(grant);
                         const grantInfo = GRANT_META[grant];
                         const reqGrant = GRANT_PREREQUISITES[grant];
+                        const reqLabel = reqGrant
+                          ? (GRANT_META[reqGrant]?.label ?? reqGrant)
+                          : null;
                         const checkboxId = `grant-${moduleId}-${grant}`;
                         return (
                           <label
                             key={grant}
                             htmlFor={checkboxId}
+                            title={`权限编码：${grant}`}
                             className={[
-                              "flex items-start gap-2.5 px-3 py-2.5 transition-colors duration-[120ms]",
+                              "flex items-center gap-3 rounded-tile px-3.5 py-2.5 transition-all duration-[150ms] select-none",
                               isSelf
                                 ? "cursor-not-allowed opacity-65"
-                                : "cursor-pointer hover:bg-[var(--bg-subtle)]",
-                              checked ? "bg-[var(--accent-wash)]" : "",
+                                : "cursor-pointer",
+                              checked
+                                ? "bg-[var(--accent-wash)] ring-1 ring-[var(--accent-border)]"
+                                : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-subtle)]",
                             ].join(" ")}
                           >
-                            <input
-                              id={checkboxId}
-                              type="checkbox"
-                              checked={checked}
-                              disabled={isSelf || isSavingThis}
-                              data-testid={`grant-checkbox-${moduleId}-${grant}`}
-                              onChange={(e) =>
-                                handleToggleGrant(
-                                  moduleId,
-                                  grant,
-                                  e.target.checked,
-                                )
-                              }
-                              className="mt-0.5 h-4 w-4 shrink-0 rounded-[2px] border-[var(--hairline-strong)] accent-[var(--accent)]"
-                            />
+                            <span className="relative flex h-4.5 w-4.5 shrink-0 items-center justify-center">
+                              <input
+                                id={checkboxId}
+                                type="checkbox"
+                                checked={checked}
+                                disabled={isSelf || isSavingThis}
+                                data-testid={`grant-checkbox-${moduleId}-${grant}`}
+                                onChange={(e) =>
+                                  handleToggleGrant(
+                                    moduleId,
+                                    grant,
+                                    e.target.checked,
+                                  )
+                                }
+                                className="peer absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                              />
+                              <span
+                                aria-hidden="true"
+                                className={[
+                                  "pointer-events-none flex h-4.5 w-4.5 items-center justify-center rounded-xs transition-all duration-[150ms] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent)] peer-focus-visible:ring-offset-1",
+                                  checked
+                                    ? "bg-[var(--accent)] text-white shadow-[0_1px_2px_rgba(22,104,227,0.28)]"
+                                    : "bg-[var(--bg-surface)] ring-1 ring-[var(--hairline-strong)]",
+                                ].join(" ")}
+                              >
+                                {checked && (
+                                  <Check className="h-3 w-3" strokeWidth={2.75} />
+                                )}
+                              </span>
+                            </span>
                             <div className="min-w-0 flex-1">
                               <div className="text-[13px] font-medium text-[var(--ink-primary)] leading-snug">
                                 {grantInfo?.label ?? grant}
                               </div>
-                              <div className="mt-0.5 flex flex-wrap items-center gap-2 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                                <span>{grant}</span>
-                                {reqGrant && (
-                                  <span className="rounded-[2px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-1 py-0.5 text-[10px]">
-                                    需前置 {reqGrant}
-                                  </span>
-                                )}
-                              </div>
+                              {reqLabel && (
+                                <div className="mt-0.5 text-[11px] text-[var(--ink-muted)]">
+                                  需先具备「{reqLabel}」
+                                </div>
+                              )}
                             </div>
                           </label>
                         );
@@ -856,14 +889,14 @@ export function EmployeeAccessDetailView({
                     </div>
                   </div>
 
-                  {/* Column 2: Warehouses */}
+                  {/* Column 2: Warehouses (Pure Tactile Toggle Pills — No Inner Checkbox Chrome) */}
                   <div className="lg:col-span-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="text-[12px] font-semibold text-[var(--ink-secondary)]">
-                        仓库范围 (warehouses)
+                    <div className="mb-2.5 flex items-center justify-between gap-2">
+                      <span className="text-[12.5px] font-semibold text-[var(--ink-secondary)]">
+                        仓库范围
                       </span>
                       {!isSelf && catalog.warehouses.length > 0 && (
-                        <div className="flex items-center gap-2 text-[11px]">
+                        <div className="flex items-center gap-2 text-[11.5px]">
                           <button
                             type="button"
                             disabled={isSavingThis}
@@ -873,14 +906,16 @@ export function EmployeeAccessDetailView({
                                 catalog.warehouses,
                               )
                             }
-                            className="text-[var(--accent)] hover:underline cursor-pointer disabled:opacity-50"
+                            className="font-medium text-[var(--accent)] hover:underline cursor-pointer disabled:opacity-50"
                           >
                             全选
                           </button>
                           <button
                             type="button"
                             disabled={isSavingThis}
-                            onClick={() => handleSetAllWarehouses(moduleId, [])}
+                            onClick={() =>
+                              handleSetAllWarehouses(moduleId, [])
+                            }
                             className="text-[var(--ink-muted)] hover:text-[var(--ink-primary)] cursor-pointer disabled:opacity-50"
                           >
                             清空
@@ -888,7 +923,8 @@ export function EmployeeAccessDetailView({
                         </div>
                       )}
                     </div>
-                    <div className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)]">
+
+                    <div className="flex flex-wrap gap-2">
                       {catalog.warehouses.map((wh) => {
                         const checked = draft.warehouses.includes(wh);
                         const whId = `wh-${moduleId}-${wh}`;
@@ -897,11 +933,13 @@ export function EmployeeAccessDetailView({
                             key={wh}
                             htmlFor={whId}
                             className={[
-                              "flex items-center gap-2.5 px-3 py-2.5 transition-colors duration-[120ms]",
+                              "relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium transition-all duration-[150ms] select-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--accent)] has-[:focus-visible]:ring-offset-1",
                               isSelf
                                 ? "cursor-not-allowed opacity-65"
-                                : "cursor-pointer hover:bg-[var(--bg-subtle)]",
-                              checked ? "bg-[var(--accent-wash)]" : "",
+                                : "cursor-pointer",
+                              checked
+                                ? "bg-[var(--accent)] text-white shadow-[0_1px_3px_rgba(22,104,227,0.28)]"
+                                : "bg-[var(--bg-surface-tint)] text-[var(--ink-secondary)] hover:bg-[var(--bg-surface-subtle)] hover:text-[var(--ink-primary)]",
                             ].join(" ")}
                           >
                             <input
@@ -917,9 +955,16 @@ export function EmployeeAccessDetailView({
                                   e.target.checked,
                                 )
                               }
-                              className="h-4 w-4 shrink-0 rounded-[2px] border-[var(--hairline-strong)] accent-[var(--accent)]"
+                              className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
                             />
-                            <span className="font-mono-code text-[13px] font-medium text-[var(--ink-primary)]">
+                            {checked && (
+                              <Check
+                                className="h-3.5 w-3.5 shrink-0"
+                                strokeWidth={2.5}
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className="font-mono-code font-semibold">
                               {wh}
                             </span>
                           </label>
@@ -928,39 +973,87 @@ export function EmployeeAccessDetailView({
                     </div>
                   </div>
 
-                  {/* Column 3: Optional Expiration */}
+                  {/* Column 3: Localized Chinese Expiry Picker (Zero US mm/dd/yyyy Chrome) */}
                   <div className="lg:col-span-4">
-                    <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="mb-2.5 flex items-center justify-between gap-2">
                       <label
                         htmlFor={`expiry-${moduleId}`}
-                        className="text-[12px] font-semibold text-[var(--ink-secondary)]"
+                        className="text-[12.5px] font-semibold text-[var(--ink-secondary)]"
                       >
-                        到期时间（可选）
+                        有效期限
                       </label>
-                      {draft.expiresAtInput && !isSelf && (
+                      {hasExpiry && !isSelf && (
                         <button
                           type="button"
                           disabled={isSavingThis}
                           data-testid={`module-expiry-clear-${moduleId}`}
                           onClick={() => handleExpiryChange(moduleId, "")}
-                          className="inline-flex items-center gap-1 text-[11px] text-[var(--ink-muted)] hover:text-[var(--ink-primary)] cursor-pointer disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors cursor-pointer disabled:opacity-50"
                         >
-                          <X className="h-3 w-3" strokeWidth={1.75} />
-                          <span>清除（永久有效）</span>
+                          <X className="h-3 w-3" strokeWidth={1.85} />
+                          <span>改为永久</span>
                         </button>
                       )}
                     </div>
-                    <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3">
-                      <div className="flex items-center gap-2">
+
+                    <div className="space-y-2 rounded-tile bg-[var(--bg-surface-tint)] p-3">
+                      {/* Quick Chinese Expiry Presets */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isSelf || isSavingThis}
+                          onClick={() => handleExpiryChange(moduleId, "")}
+                          className={[
+                            "rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-55",
+                            !hasExpiry
+                              ? "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)]"
+                              : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-surface)]/60",
+                          ].join(" ")}
+                        >
+                          永久有效
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSelf || isSavingThis}
+                          onClick={() =>
+                            handleExpiryChange(
+                              moduleId,
+                              formatOffsetDaysLocalInput(7),
+                            )
+                          }
+                          className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--accent)] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                        >
+                          7 天后到期
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSelf || isSavingThis}
+                          onClick={() =>
+                            handleExpiryChange(
+                              moduleId,
+                              formatOffsetDaysLocalInput(30),
+                            )
+                          }
+                          className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--accent)] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                        >
+                          30 天后到期
+                        </button>
+                      </div>
+
+                      {/* Clean Localized YYYY-MM-DD HH:MM Input */}
+                      <div className="relative flex items-center">
                         <Clock
-                          className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]"
-                          strokeWidth={1.75}
+                          className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-[var(--ink-muted)]"
+                          strokeWidth={1.85}
                         />
                         <input
                           id={`expiry-${moduleId}`}
-                          type="datetime-local"
+                          type="text"
+                          inputMode="numeric"
+                          lang="zh-CN"
                           value={draft.expiresAtInput}
                           disabled={isSelf || isSavingThis}
+                          placeholder="留空即永久有效，或填 2026-12-31 18:00"
                           aria-invalid={
                             (feedback?.kind === "error" &&
                               feedback.message.includes("到期时间")) ||
@@ -970,13 +1063,9 @@ export function EmployeeAccessDetailView({
                           onChange={(e) =>
                             handleExpiryChange(moduleId, e.target.value)
                           }
-                          className="h-8 min-w-0 flex-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2 font-mono-code text-[12px] text-[var(--ink-primary)] tabular-nums focus:border-[var(--accent)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                          className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] pl-8.5 pr-3 font-mono-code text-[12px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-faint)] tabular-nums focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-all disabled:cursor-not-allowed disabled:opacity-60"
                         />
                       </div>
-                      <p className="mt-2 text-[11.5px] text-[var(--ink-muted)] leading-relaxed">
-                        留空表示永久有效；填写后将按本地时区（{localTzLabel}
-                        ）换算为 Unix 秒时间戳提交（仅支持未来时间）。
-                      </p>
                     </div>
                   </div>
                 </div>
@@ -991,34 +1080,34 @@ export function EmployeeAccessDetailView({
                         : `module-feedback-${moduleId}`
                     }
                     className={[
-                      "mx-4 mb-3 flex items-start justify-between gap-3 rounded-[4px] border px-3 py-2 text-[12.5px]",
+                      "mt-4 flex items-start justify-between gap-3 rounded-tile px-3.5 py-2.5 text-[12.5px]",
                       feedback.kind === "success"
-                        ? "border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+                        ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
                         : feedback.kind === "conflict"
-                          ? "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
+                          ? "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
                           : feedback.kind === "error"
-                            ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
-                            : "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent)]",
+                            ? "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
+                            : "bg-[var(--accent-wash)] text-[var(--accent)]",
                     ].join(" ")}
                   >
                     <div className="flex items-start gap-2 min-w-0">
                       {feedback.kind === "success" ? (
                         <CheckCircle2
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                          strokeWidth={1.75}
+                          className="mt-0.5 h-4 w-4 shrink-0"
+                          strokeWidth={1.85}
                         />
                       ) : feedback.kind === "info" ? (
                         <Info
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                          strokeWidth={1.75}
+                          className="mt-0.5 h-4 w-4 shrink-0"
+                          strokeWidth={1.85}
                         />
                       ) : (
                         <AlertTriangle
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                          strokeWidth={1.75}
+                          className="mt-0.5 h-4 w-4 shrink-0"
+                          strokeWidth={1.85}
                         />
                       )}
-                      <div className="min-w-0">
+                      <div className="min-w-0 leading-relaxed">
                         <span>{feedback.message}</span>
                         {feedback.requestId && (
                           <span className="ml-2 font-mono-code text-[11px] opacity-80">
@@ -1031,46 +1120,71 @@ export function EmployeeAccessDetailView({
                       type="button"
                       onClick={() => setModuleFeedback(moduleId, null)}
                       aria-label="关闭提示"
-                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[2px] opacity-70 hover:opacity-100 cursor-pointer"
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full opacity-70 hover:opacity-100 cursor-pointer"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 )}
 
-                {/* Action Footer */}
-                <div className="flex flex-col gap-2.5 border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+                {/* Action Footer (Progressive disclosure: show full Revoke + Save pair only when dirty or explicitly configured) */}
+                <div className="mt-5 flex flex-col gap-3 border-t border-[var(--hairline-subtle)] pt-3.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-[12px] text-[var(--ink-muted)] tabular-nums">
                     {persisted
-                      ? `乐观锁版本 v${persisted.version}${savedAt ? ` · 本次已保存于 ${formatUnixTime(savedAt, { withSeconds: true }).slice(11)}` : ""}`
-                      : "首次保存将携带 version: 0 创建显式规则"}
+                      ? `第 ${persisted.version} 版配置${savedAt ? ` · 已保存 ${formatUnixTime(savedAt, { withSeconds: true }).slice(11)}` : ""}`
+                      : "尚未单独配置"}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      disabled={isSelf || isSavingThis || isAlreadyRevoked}
-                      data-testid={`module-revoke-${moduleId}`}
-                      onClick={() => setRevokeTargetModule(moduleId)}
-                    >
-                      <ShieldOff className="h-3.5 w-3.5" strokeWidth={1.75} />
-                      <span>
-                        {isAlreadyRevoked ? "已撤销此模块" : "撤销该模块权限"}
-                      </span>
-                    </Button>
+                    {showExplicitActions ? (
+                      <>
+                        <Button
+                          size="sm"
+                          pill
+                          variant="danger"
+                          disabled={isSelf || isSavingThis || isAlreadyRevoked}
+                          data-testid={`module-revoke-${moduleId}`}
+                          onClick={() => setRevokeTargetModule(moduleId)}
+                        >
+                          <ShieldOff
+                            className="h-3.5 w-3.5"
+                            strokeWidth={1.85}
+                          />
+                          <span>
+                            {isAlreadyRevoked
+                              ? "已撤销此模块"
+                              : "撤销该模块权限"}
+                          </span>
+                        </Button>
 
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      loading={isSavingThis && revokeTargetModule !== moduleId}
-                      disabled={isSelf || isSavingThis}
-                      data-testid={`module-save-${moduleId}`}
-                      onClick={() => void handleSaveModule(moduleId)}
-                    >
-                      <Save className="h-3.5 w-3.5" strokeWidth={1.75} />
-                      <span>保存授权</span>
-                    </Button>
+                        <Button
+                          size="sm"
+                          pill
+                          variant="primary"
+                          loading={
+                            isSavingThis && revokeTargetModule !== moduleId
+                          }
+                          disabled={isSelf || isSavingThis}
+                          data-testid={`module-save-${moduleId}`}
+                          onClick={() => void handleSaveModule(moduleId)}
+                        >
+                          <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
+                          <span>保存授权</span>
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        size="sm"
+                        pill
+                        variant="ghost"
+                        disabled={isSelf || isSavingThis}
+                        data-testid={`module-revoke-${moduleId}`}
+                        onClick={() => setRevokeTargetModule(moduleId)}
+                      >
+                        <ShieldOff className="h-3.5 w-3.5" strokeWidth={1.85} />
+                        <span>停用此模块</span>
+                      </Button>
+                    )}
                   </div>
                 </div>
               </section>
@@ -1096,24 +1210,20 @@ export function EmployeeAccessDetailView({
             ? `确认撤销「${revokeModuleMeta.title}」模块权限`
             : "确认撤销模块权限"
         }
-        description="撤销该员工此模块权限，发送空动作与空仓库配置，生效后将阻断相关查询及待派发提案。"
-        scopeSummary={`租户 ${actor?.tenant ?? "—"} · 目标员工 ${subject} · 模块 ${revokeModuleMeta?.title ?? ""} (${revokeTargetModule ?? ""})`}
+        description="撤销后将清空该员工此模块的动作与仓库配置，生效后立即阻断相关查询及待派发提案。"
+        scopeSummary={`租户 ${actor?.tenant ?? "—"} · 目标员工 ${subject} · 模块 ${revokeModuleMeta?.title ?? ""}`}
         metadata={[
-          { label: "目标员工 (subject)", value: subject, mono: true },
+          { label: "目标员工", value: subject, mono: true },
           {
             label: "目标模块",
-            value: revokeTargetModule ?? "—",
-            mono: true,
+            value: revokeModuleMeta?.title ?? revokeTargetModule ?? "—",
           },
           {
-            label: "提交乐观锁版本",
-            value: `v${revokeCurrentVersion}`,
-            mono: true,
-          },
-          {
-            label: "提交撤销载荷",
-            value: "grants: [], warehouses: [], expires_at: null",
-            mono: true,
+            label: "当前配置版本",
+            value:
+              revokeCurrentVersion > 0
+                ? `第 ${revokeCurrentVersion} 版`
+                : "首次配置",
           },
         ]}
         confirmLabel="确认撤销权限"

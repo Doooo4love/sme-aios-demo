@@ -3,13 +3,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Activity,
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  Clock,
   Copy,
   Database,
-  Info,
+  Layers,
   PauseCircle,
   Play,
   PlayCircle,
@@ -24,6 +24,7 @@ import {
 import { isApiError, isStaleAuthError, type ApiError } from "@/lib/api-client";
 import {
   formatProposalStateLabel,
+  formatRoleLabel,
   formatShortDigest,
   formatUnixTime,
 } from "@/lib/format";
@@ -34,7 +35,10 @@ import {
   SourceTag,
   StatusBadge,
 } from "@/components/ui";
-import { ExecutionTopologyRibbon } from "@/components/kinetic";
+import {
+  ExecutionTopologyRibbon,
+  Interactive3DCard,
+} from "@/components/kinetic";
 import { ActionConfirmDialog } from "@/features/admin/ActionConfirmDialog";
 import {
   fetchAssuranceAuditCheckpoint,
@@ -66,6 +70,30 @@ const CANONICAL_PROPOSAL_STATES: readonly ProposalState[] = [
   "REJECTED",
 ];
 
+const COMPACT_STATE_LABELS: Record<ProposalState, string> = {
+  PROPOSED: "待审批",
+  QUEUED: "已批准",
+  SENDING: "写入中",
+  VERIFYING: "核验中",
+  CHECKING: "复核中",
+  OUTCOME_UNKNOWN: "待确认",
+  NEEDS_OPERATOR: "需人工",
+  VERIFIED: "已入账",
+  REJECTED: "已拒绝",
+};
+
+const STATE_DOT_TONE: Record<ProposalState, string> = {
+  PROPOSED: "bg-[var(--status-amber)]",
+  QUEUED: "bg-[var(--accent)]",
+  SENDING: "bg-[var(--accent)]",
+  VERIFYING: "bg-[var(--accent)]",
+  CHECKING: "bg-[var(--status-amber)]",
+  OUTCOME_UNKNOWN: "bg-[var(--status-amber)]",
+  NEEDS_OPERATOR: "bg-[var(--status-crimson)]",
+  VERIFIED: "bg-[var(--status-emerald)]",
+  REJECTED: "bg-[var(--status-crimson)]",
+};
+
 function inferDominantTopologyState(
   counts: Record<string, number>,
 ): ProposalState {
@@ -84,6 +112,21 @@ function inferDominantTopologyState(
     if ((counts[state] ?? 0) > 0) return state;
   }
   return "PROPOSED";
+}
+
+function inferActivePipelineState(
+  counts: Record<string, number>,
+): ProposalState {
+  const order: readonly ProposalState[] = [
+    "CHECKING",
+    "VERIFYING",
+    "SENDING",
+    "QUEUED",
+  ];
+  for (const state of order) {
+    if ((counts[state] ?? 0) > 0) return state;
+  }
+  return "QUEUED";
 }
 
 interface InlineFeedback {
@@ -259,6 +302,18 @@ export function AdminOpsOverview() {
     );
   }, [summary]);
 
+  const proposedCount = summary?.proposals_by_state.PROPOSED ?? 0;
+
+  const inFlightCount = useMemo(() => {
+    if (!summary) return 0;
+    return (
+      (summary.proposals_by_state.QUEUED ?? 0) +
+      (summary.proposals_by_state.SENDING ?? 0) +
+      (summary.proposals_by_state.VERIFYING ?? 0) +
+      (summary.proposals_by_state.CHECKING ?? 0)
+    );
+  }, [summary]);
+
   const exceptionCount = useMemo(() => {
     if (!summary) return 0;
     return (
@@ -266,6 +321,24 @@ export function AdminOpsOverview() {
       (summary.proposals_by_state.OUTCOME_UNKNOWN ?? 0)
     );
   }, [summary]);
+
+  const inFlightSummaryLine = useMemo(() => {
+    if (!summary || inFlightCount === 0) return "当前无在途单据";
+    const parts: string[] = [];
+    if ((summary.proposals_by_state.QUEUED ?? 0) > 0) {
+      parts.push(`待派发 ${summary.proposals_by_state.QUEUED}`);
+    }
+    if ((summary.proposals_by_state.SENDING ?? 0) > 0) {
+      parts.push(`写入中 ${summary.proposals_by_state.SENDING}`);
+    }
+    const verifying =
+      (summary.proposals_by_state.VERIFYING ?? 0) +
+      (summary.proposals_by_state.CHECKING ?? 0);
+    if (verifying > 0) {
+      parts.push(`核验中 ${verifying}`);
+    }
+    return parts.join(" · ");
+  }, [summary, inFlightCount]);
 
   const activeTopologyState = useMemo<ProposalState>(() => {
     if (manualTopologyState) return manualTopologyState;
@@ -286,8 +359,8 @@ export function AdminOpsOverview() {
       setWriteControlFeedback({
         kind: verifiedSummary.writes_paused ? "warning" : "success",
         message: verifiedSummary.writes_paused
-          ? "已验证租户 ERP 出站写入处于「已暂停」状态（已重新核对 /v1/operations/summary）。"
-          : "已验证租户 ERP 出站写入处于「正常运行」状态（已重新核对 /v1/operations/summary）。",
+          ? "已确认租户 ERP 出站写入处于「已暂停」状态。"
+          : "已确认租户 ERP 出站写入处于「正常运行」状态。",
       });
     } catch (err) {
       if (isStaleAuthError(err)) return;
@@ -421,7 +494,7 @@ export function AdminOpsOverview() {
   if (!canAccessAdminOps) {
     return (
       <div
-        className="mx-auto max-w-[820px] p-4 sm:p-6"
+        className="mx-auto max-w-[820px] px-4 py-8 sm:px-6"
         data-testid="admin-ops-access-denied"
       >
         <AccessNoticeCard
@@ -437,21 +510,27 @@ export function AdminOpsOverview() {
 
   return (
     <div
-      className="mx-auto max-w-[1160px] space-y-4 p-4 sm:p-6"
+      className="mx-auto max-w-[1160px] space-y-5 px-4 py-6 sm:px-6 lg:py-7 pb-16"
       data-testid="admin-ops-page"
     >
-      {/* Top Overview Header */}
-      <section className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      {/* Unified Porcelain Page-Header Card (matches /work & /calendar) */}
+      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <p className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
-              OPERATIONS CONTROL CENTER · 运维监控与出站控制
-            </p>
-            <h2 className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
               运维监控中心
-            </h2>
-            <p className="mt-1 text-[13px] text-[var(--ink-muted)]">
-              实时核验核心服务健康探针、租户提案流转分布、ERP 出站写入熔断与异常单据处置入口。
+            </h1>
+            <p className="mt-1 text-[13px] text-[var(--ink-secondary)]">
+              实时核验核心服务健康、提案流转分布与 ERP 出站写入控制。
+            </p>
+            <p className="mt-1.5 text-[12px] text-[var(--ink-muted)] tabular-nums">
+              <span className="font-mono-code">{actor?.tenant ?? "—"}</span>
+              <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
+              <span className="font-mono-code">
+                {actor?.warehouses.join(" / ") || "无站点"}
+              </span>
+              <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
+              <span>{actor ? formatRoleLabel(actor.role) : "—"}</span>
             </p>
           </div>
 
@@ -460,70 +539,42 @@ export function AdminOpsOverview() {
               href="/admin/exceptions"
               data-testid="ops-exceptions-link"
               className={[
-                "inline-flex h-8 items-center gap-1.5 rounded-[4px] border px-3 text-[12px] font-medium transition-colors duration-[120ms]",
+                "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms]",
                 exceptionCount > 0
-                  ? "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)] hover:opacity-90"
-                  : "border-[var(--hairline-strong)] bg-[var(--bg-subtle)] text-[var(--ink-primary)] hover:bg-[var(--bg-plane)]",
+                  ? "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)] hover:opacity-90"
+                  : "bg-[var(--bg-surface-subtle)] text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
               ].join(" ")}
             >
-              <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>异常单据队列</span>
-              <span className="font-mono-code text-[11px] font-semibold tabular-nums">
+              <span className="font-mono-code text-[11.5px] font-semibold tabular-nums">
                 ({exceptionCount})
               </span>
-              <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.85} />
             </Link>
 
             {canManagePeople && (
               <Link
                 href="/admin/people"
-                className="inline-flex h-8 items-center gap-1.5 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-plane)] transition-colors duration-[120ms]"
+                className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors duration-[150ms]"
               >
-                <Users className="h-3.5 w-3.5 text-[var(--ink-muted)]" strokeWidth={1.75} />
-                <span>员工模块权限</span>
+                <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
+                <span>员工权限</span>
               </Link>
             )}
 
             <Button
               size="sm"
+              pill
               variant="secondary"
               loading={loading}
               data-testid="ops-refresh-btn"
               onClick={() => void loadAllOpsData()}
             >
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>刷新快照</span>
             </Button>
           </div>
-        </div>
-
-        {/* Scope & Metadata Boundary Notice */}
-        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-[var(--hairline)] pt-3 text-[12px] text-[var(--ink-secondary)]">
-          <span>
-            当前租户：
-            <strong className="font-mono-code font-semibold text-[var(--ink-primary)]">
-              {actor?.tenant ?? "—"}
-            </strong>
-          </span>
-          <span>
-            统计覆盖仓库：
-            <strong className="font-mono-code font-semibold text-[var(--ink-primary)]">
-              {actor?.warehouses.join(", ") || "无"}
-            </strong>
-          </span>
-          <span>
-            当前角色：
-            <strong className="font-mono-code font-semibold text-[var(--ink-primary)]">
-              {actor?.role ?? "—"}
-            </strong>
-          </span>
-        </div>
-
-        <div className="mt-3 flex items-start gap-2 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12px] text-[var(--ink-secondary)] leading-relaxed">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" strokeWidth={1.75} />
-          <span>
-            权限边界说明：运维管理员在本页面仅查看已授权仓库范围内的提案状态统计与运维元数据；点开单据详情或发起业务查阅时，系统仍会按对应业务模块的读取授权进行实时复核。
-          </span>
         </div>
       </section>
 
@@ -535,135 +586,181 @@ export function AdminOpsOverview() {
         />
       )}
 
-      {/* Section 1: Service Health Probes (/healthz & /readyz) */}
-      <section
-        data-testid="ops-health-panel"
-        className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
-      >
-        <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <Activity className="h-3.5 w-3.5 text-[var(--ink-secondary)]" strokeWidth={1.75} />
-            <h3 className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-              核心服务健康探针（API / 数据库）
-            </h3>
-          </div>
-          <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-            GET /healthz · GET /readyz
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 divide-y divide-[var(--hairline)] sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+      {/* Section 1: Core Service Health Probes (/healthz & /readyz) — Sheen-Only Porcelain Tiles */}
+      <section data-testid="ops-health-panel" className="space-y-2.5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {/* /healthz */}
-          <div className="flex items-center justify-between gap-3 p-4" data-testid="probe-healthz">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <Server className="h-4 w-4 text-[var(--ink-secondary)]" strokeWidth={1.75} />
-                <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-                  API 进程存活
-                </span>
-                <code className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                  /healthz
-                </code>
+          <Interactive3DCard
+            interactive={false}
+            sheenIntensity="subtle"
+            data-testid="probe-healthz"
+            className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className={[
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                    healthz?.ok
+                      ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+                      : healthz
+                        ? "bg-[var(--status-amber-wash)] text-[var(--status-amber)]"
+                        : "bg-[var(--bg-surface-subtle)] text-[var(--ink-secondary)]",
+                  ].join(" ")}
+                >
+                  <Server className="h-4 w-4" strokeWidth={1.85} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-[14.5px] font-semibold text-[var(--ink-primary)]">
+                      API 进程存活
+                    </h2>
+                    <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+                      /healthz
+                    </span>
+                  </div>
+                  <p className="mt-1 font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+                    {healthz
+                      ? `HTTP ${healthz.httpStatus || "ERR"} · status="${healthz.status}" · ${formatUnixTime(healthz.checkedAt, { withSeconds: true }).slice(11)}`
+                      : "正在探测服务存活…"}
+                  </p>
+                </div>
               </div>
-              <p className="mt-1 font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
-                {healthz
-                  ? `HTTP ${healthz.httpStatus || "ERR"} · status="${healthz.status}" · 核验于 ${formatUnixTime(healthz.checkedAt, { withSeconds: true }).slice(11)}`
-                  : "正在探测…"}
-              </p>
-            </div>
-            {healthz ? (
-              <StatusBadge
-                status={healthz.ok ? "healthy" : "unavailable"}
-                label={healthz.ok ? "API 存活 (up)" : "API 异常"}
-              />
-            ) : (
-              <StatusBadge status="PROPOSED" label="探测中" compact />
-            )}
-          </div>
 
-          {/* /readyz */}
-          <div className="flex items-center justify-between gap-3 p-4" data-testid="probe-readyz">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4 text-[var(--ink-secondary)]" strokeWidth={1.75} />
-                <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
-                  数据库就绪状态
-                </span>
-                <code className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                  /readyz
-                </code>
-              </div>
-              <p className="mt-1 font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
-                {readyz
-                  ? `HTTP ${readyz.httpStatus || "ERR"} · status="${readyz.status}" · 核验于 ${formatUnixTime(readyz.checkedAt, { withSeconds: true }).slice(11)}`
-                  : "正在探测…"}
-              </p>
-              {readyz && !readyz.ok && readyz.message && (
-                <p className="mt-1 text-[11.5px] text-[var(--status-amber-ink)]">
-                  {readyz.message}
-                </p>
+              {healthz ? (
+                <StatusBadge
+                  status={healthz.ok ? "healthy" : "unavailable"}
+                  label={healthz.ok ? "正常" : "异常"}
+                />
+              ) : (
+                <StatusBadge status="PROPOSED" label="探测中" compact />
               )}
             </div>
-            {readyz ? (
-              <StatusBadge
-                status={readyz.ok ? "healthy" : "unavailable"}
-                label={readyz.ok ? "数据库就绪 (ready)" : `未就绪 (${readyz.httpStatus || "ERR"})`}
-              />
-            ) : (
-              <StatusBadge status="PROPOSED" label="探测中" compact />
+          </Interactive3DCard>
+
+          {/* /readyz */}
+          <Interactive3DCard
+            interactive={false}
+            sheenIntensity="subtle"
+            data-testid="probe-readyz"
+            className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className={[
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                    readyz?.ok
+                      ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+                      : readyz
+                        ? "bg-[var(--status-amber-wash)] text-[var(--status-amber)]"
+                        : "bg-[var(--bg-surface-subtle)] text-[var(--ink-secondary)]",
+                  ].join(" ")}
+                >
+                  <Database className="h-4 w-4" strokeWidth={1.85} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-[14.5px] font-semibold text-[var(--ink-primary)]">
+                      数据库就绪状态
+                    </h2>
+                    <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+                      /readyz
+                    </span>
+                  </div>
+                  <p className="mt-1 font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+                    {readyz
+                      ? `HTTP ${readyz.httpStatus || "ERR"} · status="${readyz.status}" · ${formatUnixTime(readyz.checkedAt, { withSeconds: true }).slice(11)}`
+                      : "正在探测数据库就绪…"}
+                  </p>
+                </div>
+              </div>
+
+              {readyz ? (
+                <StatusBadge
+                  status={readyz.ok ? "healthy" : "unavailable"}
+                  label={
+                    readyz.ok
+                      ? "正常"
+                      : `未就绪 (${readyz.httpStatus || "ERR"})`
+                  }
+                />
+              ) : (
+                <StatusBadge status="PROPOSED" label="探测中" compact />
+              )}
+            </div>
+
+            {readyz && !readyz.ok && readyz.message && (
+              <p className="mt-2.5 rounded-sm bg-[var(--status-amber-wash)] px-3 py-1.5 text-[12px] text-[var(--status-amber-ink)]">
+                {readyz.message}
+              </p>
             )}
-          </div>
+          </Interactive3DCard>
         </div>
 
-        <div className="border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2 text-[11.5px] text-[var(--ink-muted)]">
-          说明：上述探针仅检测平台 API 服务进程存活与本地/主数据库连接就绪状态，不代表外部 ERP、OIDC 或上游连接器的实时连通性。
-        </div>
+        <p className="px-1 text-[11.5px] text-[var(--ink-muted)]">
+          上述探针仅检测平台 API 服务与主数据库连接状态，不代表外部 ERP 或上游连接器连通性；查阅具体单据时系统仍会实时复核对应业务模块权限。
+        </p>
       </section>
 
-      {/* Section 2: ERP Write Control + Proposal State Distribution */}
+      {/* Section 2: ERP Write Control + 3-Hero Proposal State Overview + 9-State Compact Legend + Topology */}
       {summary && (
-        <section className="space-y-4">
-          {/* Write Control Banner */}
-          <div
+        <section className="space-y-5">
+          {/* Write Control Hero Card (Sheen-Only Porcelain) */}
+          <Interactive3DCard
+            interactive={false}
+            sheenIntensity="subtle"
             data-testid="write-control-card"
             className={[
-              "rounded-[6px] border p-4 sm:p-5",
+              "rounded-card p-5 sm:p-6 shadow-[var(--shadow-card)]",
               summary.writes_paused
-                ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)]"
-                : "border-[var(--hairline)] bg-[var(--bg-sheet)]",
+                ? "bg-[linear-gradient(135deg,#FFFFFF_0%,rgba(201,42,55,0.06)_100%)] ring-1 ring-[var(--status-crimson-border)]"
+                : "bg-[var(--bg-surface)]",
             ].join(" ")}
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
-                    ERP WRITE CIRCUIT BREAKER
-                  </span>
-                  <StatusBadge
-                    status={summary.writes_paused ? "paused" : "healthy"}
-                    label={
-                      summary.writes_paused
-                        ? "ERP 写入已暂停"
-                        : "ERP 写入正常运行"
-                    }
-                  />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3.5 min-w-0">
+                <div
+                  className={[
+                    "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
+                    summary.writes_paused
+                      ? "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
+                      : "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]",
+                  ].join(" ")}
+                >
+                  {summary.writes_paused ? (
+                    <PauseCircle className="h-5 w-5" strokeWidth={1.85} />
+                  ) : (
+                    <ShieldCheck className="h-5 w-5" strokeWidth={1.85} />
+                  )}
                 </div>
-                <h3 className="mt-1.5 text-[15px] font-semibold text-[var(--ink-primary)]">
-                  {summary.writes_paused
-                    ? `租户 ${actor?.tenant ?? ""} 的 ERP 出站写入已暂停`
-                    : `租户 ${actor?.tenant ?? ""} 的 ERP 出站写入通道已开启`}
-                </h3>
-                <p className="mt-1 text-[12.5px] text-[var(--ink-secondary)]">
-                  {summary.writes_paused
-                    ? "当前所有已批准待派发（QUEUED）提案将暂缓发往 ERP，直至管理员手动恢复；已完成写入的回执核验不受影响。"
-                    : "已批准进入 QUEUED 的提案可由 Worker 正常派发至 ERP 并执行回执核验。"}
-                </p>
+
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h2 className="text-[15.5px] font-semibold tracking-[-0.015em] text-[var(--ink-primary)]">
+                      {summary.writes_paused
+                        ? `租户 ${actor?.tenant ?? ""} 的 ERP 出站写入已暂停`
+                        : `租户 ${actor?.tenant ?? ""} 的 ERP 出站写入通道已开启`}
+                    </h2>
+                    <StatusBadge
+                      status={summary.writes_paused ? "paused" : "healthy"}
+                      label={summary.writes_paused ? "已暂停" : "正常运行"}
+                      compact
+                    />
+                  </div>
+                  <p className="mt-1 text-[13px] text-[var(--ink-secondary)] leading-relaxed">
+                    {summary.writes_paused
+                      ? "所有已批准待派发提案将暂缓发往 ERP，直至管理员手动恢复；已发出单据的回执核验不受影响。"
+                      : "已批准提案将由 Worker 正常派发至 ERP 并自动核验回执。"}
+                  </p>
+                </div>
               </div>
 
               <div className="shrink-0">
                 {isAdmin ? (
                   <Button
                     size="md"
+                    pill
                     variant={summary.writes_paused ? "primary" : "danger"}
                     loading={writeControlBusy}
                     data-testid="write-control-toggle"
@@ -671,19 +768,19 @@ export function AdminOpsOverview() {
                   >
                     {summary.writes_paused ? (
                       <>
-                        <PlayCircle className="h-4 w-4" strokeWidth={1.75} />
+                        <PlayCircle className="h-4 w-4" strokeWidth={1.85} />
                         <span>恢复 ERP 写入</span>
                       </>
                     ) : (
                       <>
-                        <PauseCircle className="h-4 w-4" strokeWidth={1.75} />
+                        <PauseCircle className="h-4 w-4" strokeWidth={1.85} />
                         <span>暂停 ERP 写入</span>
                       </>
                     )}
                   </Button>
                 ) : (
-                  <span className="inline-flex items-center rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-3 py-1.5 text-[12px] text-[var(--ink-muted)]">
-                    仅管理员 (admin) 可切换写入开关
+                  <span className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-3.5 py-1.5 text-[12px] text-[var(--ink-muted)]">
+                    仅管理员可切换写入开关
                   </span>
                 )}
               </div>
@@ -694,18 +791,24 @@ export function AdminOpsOverview() {
                 role="status"
                 data-testid="write-control-feedback"
                 className={[
-                  "mt-3 flex items-center gap-2 rounded-[4px] border px-3 py-2 text-[12.5px]",
+                  "mt-4 flex items-center gap-2.5 rounded-tile px-3.5 py-2.5 text-[12.5px]",
                   writeControlFeedback.kind === "success"
-                    ? "border-[var(--status-emerald-border)] bg-[var(--bg-sheet)] text-[var(--status-emerald)]"
+                    ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
                     : writeControlFeedback.kind === "warning"
-                      ? "border-[var(--status-amber-border)] bg-[var(--bg-sheet)] text-[var(--status-amber-ink)]"
-                      : "border-[var(--status-crimson-border)] bg-[var(--bg-sheet)] text-[var(--status-crimson)]",
+                      ? "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
+                      : "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
                 ].join(" ")}
               >
                 {writeControlFeedback.kind === "success" ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                  <CheckCircle2
+                    className="h-4 w-4 shrink-0"
+                    strokeWidth={1.85}
+                  />
                 ) : (
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                  <AlertTriangle
+                    className="h-4 w-4 shrink-0"
+                    strokeWidth={1.85}
+                  />
                 )}
                 <span>{writeControlFeedback.message}</span>
                 {writeControlFeedback.requestId && (
@@ -715,81 +818,235 @@ export function AdminOpsOverview() {
                 )}
               </div>
             )}
-          </div>
+          </Interactive3DCard>
 
-          {/* Proposals by State Architectural Grid + ExecutionTopologyRibbon */}
-          <div className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden">
-            <div className="flex flex-col gap-2 border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-                  提案状态分布（proposals_by_state）
-                </h3>
-                <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                  合计 {totalProposals} 条
+          {/* Proposal State Overview: 3 Prominent Actionable Tiles + Calm 9-State Legend */}
+          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                  提案状态分布
+                </h2>
+                <span className="font-mono-code text-[12px] text-[var(--ink-muted)] tabular-nums">
+                  共 {totalProposals} 条
                 </span>
               </div>
-              <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                GET /v1/operations/summary
+              <span className="text-[12px] text-[var(--ink-muted)]">
+                选择任一状态可在下方流转拓扑中聚焦查看
               </span>
             </div>
 
+            {/* 3 Prominent Actionable Metric Tiles */}
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {/* 1. 待审批 */}
+              <button
+                type="button"
+                onClick={() => setManualTopologyState("PROPOSED")}
+                className={[
+                  "group rounded-tile p-4 text-left transition-all duration-[160ms] cursor-pointer",
+                  activeTopologyState === "PROPOSED"
+                    ? "bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--accent-border)]"
+                    : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-subtle)]",
+                ].join(" ")}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-[var(--ink-secondary)]">
+                    待审批
+                  </span>
+                  <span
+                    className={[
+                      "flex h-7 w-7 items-center justify-center rounded-full",
+                      proposedCount > 0
+                        ? "bg-[var(--status-amber-wash)] text-[var(--status-amber)]"
+                        : "bg-[var(--bg-surface)] text-[var(--ink-muted)]",
+                    ].join(" ")}
+                  >
+                    <Clock className="h-3.5 w-3.5" strokeWidth={1.85} />
+                  </span>
+                </div>
+                <div
+                  className={[
+                    "mt-2 font-mono-code text-[28px] font-semibold tracking-[-0.03em] leading-none tabular-nums",
+                    proposedCount > 0
+                      ? "text-[var(--status-amber-ink)]"
+                      : "text-[var(--ink-faint)] opacity-55",
+                  ].join(" ")}
+                >
+                  {proposedCount}
+                </div>
+                <div className="mt-1.5 text-[12px] text-[var(--ink-muted)]">
+                  {proposedCount > 0 ? "等待独立主管确认批准" : "当前无待审批提案"}
+                </div>
+              </button>
+
+              {/* 2. 待派发 / 执行中 */}
+              <button
+                type="button"
+                onClick={() =>
+                  setManualTopologyState(
+                    inferActivePipelineState(summary.proposals_by_state),
+                  )
+                }
+                className={[
+                  "group rounded-tile p-4 text-left transition-all duration-[160ms] cursor-pointer",
+                  activeTopologyState === "QUEUED" ||
+                  activeTopologyState === "SENDING" ||
+                  activeTopologyState === "VERIFYING" ||
+                  activeTopologyState === "CHECKING"
+                    ? "bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--accent-border)]"
+                    : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-subtle)]",
+                ].join(" ")}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-[var(--ink-secondary)]">
+                    待派发与执行中
+                  </span>
+                  <span
+                    className={[
+                      "flex h-7 w-7 items-center justify-center rounded-full",
+                      inFlightCount > 0
+                        ? "bg-[var(--accent-wash)] text-[var(--accent)]"
+                        : "bg-[var(--bg-surface)] text-[var(--ink-muted)]",
+                    ].join(" ")}
+                  >
+                    <Layers className="h-3.5 w-3.5" strokeWidth={1.85} />
+                  </span>
+                </div>
+                <div
+                  className={[
+                    "mt-2 font-mono-code text-[28px] font-semibold tracking-[-0.03em] leading-none tabular-nums",
+                    inFlightCount > 0
+                      ? "text-[var(--accent)]"
+                      : "text-[var(--ink-faint)] opacity-55",
+                  ].join(" ")}
+                >
+                  {inFlightCount}
+                </div>
+                <div className="mt-1.5 text-[12px] text-[var(--ink-muted)] truncate">
+                  {inFlightSummaryLine}
+                </div>
+              </button>
+
+              {/* 3. 需关注异常 */}
+              <Link
+                href="/admin/exceptions"
+                className={[
+                  "group block rounded-tile p-4 transition-all duration-[160ms]",
+                  exceptionCount > 0
+                    ? "bg-[var(--status-crimson-wash)]/75 hover:bg-[var(--status-crimson-wash)]"
+                    : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-subtle)]",
+                ].join(" ")}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-[var(--ink-secondary)]">
+                    需关注异常
+                  </span>
+                  <span
+                    className={[
+                      "flex h-7 w-7 items-center justify-center rounded-full",
+                      exceptionCount > 0
+                        ? "bg-[var(--bg-surface)] text-[var(--status-crimson)]"
+                        : "bg-[var(--bg-surface)] text-[var(--ink-muted)]",
+                    ].join(" ")}
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.85} />
+                  </span>
+                </div>
+                <div
+                  className={[
+                    "mt-2 font-mono-code text-[28px] font-semibold tracking-[-0.03em] leading-none tabular-nums",
+                    exceptionCount > 0
+                      ? "text-[var(--status-crimson)]"
+                      : "text-[var(--ink-faint)] opacity-55",
+                  ].join(" ")}
+                >
+                  {exceptionCount}
+                </div>
+                <div className="mt-1.5 flex items-center justify-between text-[12px] text-[var(--ink-muted)]">
+                  <span>
+                    {exceptionCount > 0 ? "含待确认或需人工核查" : "无滞留异常单据"}
+                  </span>
+                  <span className="inline-flex items-center gap-0.5 font-medium text-[var(--accent)] group-hover:translate-x-0.5 transition-transform">
+                    <span>队列</span>
+                    <ArrowRight className="h-3 w-3" strokeWidth={2} />
+                  </span>
+                </div>
+              </Link>
+            </div>
+
+            {/* Calm Compact 9-State Breakdown Legend (zeros faint, enums in tooltips, all state-count-* testids preserved) */}
             <div
               data-testid="proposals-state-grid"
-              className="grid grid-cols-1 divide-y divide-[var(--hairline)] sm:grid-cols-3 sm:divide-y-0"
+              className="mt-4 grid grid-cols-3 gap-1 rounded-tile bg-[var(--bg-surface-tint)] p-1.5 sm:grid-cols-5 lg:grid-cols-9"
             >
-              {CANONICAL_PROPOSAL_STATES.map((stateKey, index) => {
+              {CANONICAL_PROPOSAL_STATES.map((stateKey) => {
                 const count = summary.proposals_by_state[stateKey] ?? 0;
                 const isExceptionState =
                   stateKey === "OUTCOME_UNKNOWN" ||
                   stateKey === "NEEDS_OPERATOR";
                 const isSelected = activeTopologyState === stateKey;
+                const tooltip = `${formatProposalStateLabel(stateKey)} (${stateKey})`;
 
-                const cellContent = (
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <StatusBadge status={stateKey} compact />
-                      <div className="mt-1.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
-                        {stateKey}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div
-                        data-testid={`state-count-${stateKey}`}
+                const itemClasses = [
+                  "flex flex-col items-center justify-center rounded-sm px-2 py-2.5 text-center transition-all duration-[150ms]",
+                  isSelected
+                    ? "bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)]"
+                    : "hover:bg-[var(--bg-surface)]/70",
+                ].join(" ");
+
+                const inner = (
+                  <>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span
+                        aria-hidden="true"
                         className={[
-                          "font-mono-code text-[22px] font-semibold leading-none tabular-nums",
-                          isExceptionState && count > 0
-                            ? stateKey === "NEEDS_OPERATOR"
-                              ? "text-[var(--status-crimson)]"
-                              : "text-[var(--status-amber-ink)]"
-                            : "text-[var(--ink-primary)]",
+                          "h-1.5 w-1.5 shrink-0 rounded-full",
+                          count > 0
+                            ? STATE_DOT_TONE[stateKey]
+                            : "bg-[var(--ink-faint)] opacity-40",
+                        ].join(" ")}
+                      />
+                      <span
+                        className={[
+                          "text-[11.5px] whitespace-nowrap",
+                          count > 0 || isSelected
+                            ? "font-medium text-[var(--ink-primary)]"
+                            : "text-[var(--ink-muted)]",
                         ].join(" ")}
                       >
-                        {count}
-                      </div>
-                      {isExceptionState && (
-                        <div className="mt-1 text-[11px] text-[var(--accent)]">
-                          查看异常队列 →
-                        </div>
-                      )}
+                        {COMPACT_STATE_LABELS[stateKey]}
+                      </span>
                     </div>
-                  </div>
+                    <span
+                      data-testid={`state-count-${stateKey}`}
+                      className={[
+                        "mt-1 font-mono-code text-[15px] font-semibold leading-none tabular-nums",
+                        count === 0
+                          ? "text-[var(--ink-faint)] opacity-45"
+                          : stateKey === "NEEDS_OPERATOR"
+                            ? "text-[var(--status-crimson)]"
+                            : stateKey === "OUTCOME_UNKNOWN" ||
+                                stateKey === "PROPOSED"
+                              ? "text-[var(--status-amber-ink)]"
+                              : stateKey === "VERIFIED"
+                                ? "text-[var(--status-emerald)]"
+                                : "text-[var(--ink-primary)]",
+                      ].join(" ")}
+                    >
+                      {count}
+                    </span>
+                  </>
                 );
-
-                const cellBorder = [
-                  "p-4 transition-colors duration-[120ms]",
-                  index >= 3 ? "sm:border-t sm:border-[var(--hairline)]" : "",
-                  index % 3 !== 0 ? "sm:border-l sm:border-[var(--hairline)]" : "",
-                  isSelected ? "bg-[var(--accent-wash)]" : "hover:bg-[var(--bg-subtle)]",
-                ].join(" ");
 
                 if (isExceptionState) {
                   return (
                     <Link
                       key={stateKey}
                       href="/admin/exceptions"
-                      className={`block ${cellBorder}`}
+                      title={tooltip}
+                      className={itemClasses}
                     >
-                      {cellContent}
+                      {inner}
                     </Link>
                   );
                 }
@@ -798,43 +1055,46 @@ export function AdminOpsOverview() {
                   <button
                     key={stateKey}
                     type="button"
+                    title={tooltip}
                     onClick={() => setManualTopologyState(stateKey)}
-                    className={`w-full text-left cursor-pointer ${cellBorder}`}
+                    className={`cursor-pointer ${itemClasses}`}
                   >
-                    {cellContent}
+                    {inner}
                   </button>
                 );
               })}
             </div>
+          </div>
 
-            {/* ExecutionTopologyRibbon Overview */}
-            <div className="border-t border-[var(--hairline)] bg-[var(--bg-subtle)] p-4">
-              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 text-[12px]">
-                <span className="text-[var(--ink-secondary)]">
-                  执行状态机拓扑示意 · 当前高亮阶段：
-                  <strong className="ml-1 font-mono-code text-[var(--ink-primary)]">
-                    {activeTopologyState}
+          {/* Standalone Porcelain ExecutionTopologyRibbon with Integrated headerRight Focus Control */}
+          <ExecutionTopologyRibbon
+            state={activeTopologyState}
+            variant="auto"
+            headerRight={
+              <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                <span
+                  title={activeTopologyState}
+                  className="text-[var(--ink-muted)]"
+                >
+                  当前聚焦：
+                  <strong className="font-medium text-[var(--ink-primary)]">
+                    {formatProposalStateLabel(activeTopologyState)}
                   </strong>
-                  <span className="ml-1.5 text-[var(--ink-muted)]">
-                    ({formatProposalStateLabel(activeTopologyState)})
-                  </span>
                 </span>
                 {manualTopologyState && (
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    pill
+                    variant="quiet"
                     onClick={() => setManualTopologyState(null)}
-                    className="text-[11.5px] text-[var(--accent)] hover:underline cursor-pointer"
+                    className="!h-6 !px-2 !text-[11.5px]"
                   >
-                    恢复自动聚焦最高优先级状态
-                  </button>
+                    恢复自动聚焦
+                  </Button>
                 )}
               </div>
-              <ExecutionTopologyRibbon
-                state={activeTopologyState}
-                variant="auto"
-              />
-            </div>
-          </div>
+            }
+          />
         </section>
       )}
 
@@ -842,44 +1102,34 @@ export function AdminOpsOverview() {
       {canRunDemoTick && (
         <section
           data-testid="demo-worker-panel"
-          className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4 sm:p-5"
+          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
         >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
-                  本地演示 Worker 推进
-                </span>
+                <h2
+                  title="POST /v1/demo/worker-tick"
+                  className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]"
+                >
+                  手动步进本地 Outbox Worker
+                </h2>
                 <SourceTag source="synthetic" />
-                <code className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                  POST /v1/demo/worker-tick
-                </code>
               </div>
-              <h3 className="mt-1.5 text-[15px] font-semibold text-[var(--ink-primary)]">
-                手动步进本地 Outbox Worker
-              </h3>
-              <p className="mt-1 text-[12.5px] text-[var(--ink-muted)]">
-                仅在本地演示模式下向具备{" "}
-                <code className="font-mono-code text-[11.5px]">
-                  admin + operations.manage
-                </code>{" "}
-                的账号开放。每次点击推进一轮队列派发或回执复核（如{" "}
-                <code className="font-mono-code text-[11.5px]">
-                  QUEUED → VERIFIED
-                </code>
-                ），完成后自动刷新汇总与异常队列。
+              <p className="mt-1 text-[13px] text-[var(--ink-secondary)] leading-relaxed">
+                仅在本地演示环境下向管理员开放。每次点击推进一轮队列派发或回执核验，完成后自动刷新状态分布与异常队列。
               </p>
             </div>
 
             <div className="shrink-0">
               <Button
                 size="md"
+                pill
                 variant="primary"
                 loading={workerTickBusy}
                 data-testid="worker-tick-btn"
                 onClick={() => void handleRunWorkerTick()}
               >
-                <Play className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <Play className="h-3.5 w-3.5" strokeWidth={2} />
                 <span>执行一次 Worker Tick</span>
               </Button>
             </div>
@@ -891,126 +1141,125 @@ export function AdminOpsOverview() {
               data-testid="worker-tick-result"
               data-worked={String(workerTickFeedback.worked)}
               className={[
-                "mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[4px] border px-3 py-2 text-[12.5px]",
+                "mt-4 flex flex-wrap items-center justify-between gap-2 rounded-tile px-3.5 py-2.5 text-[12.5px]",
                 workerTickFeedback.worked
-                  ? "border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
-                  : "border-[var(--hairline-strong)] bg-[var(--bg-subtle)] text-[var(--ink-secondary)]",
+                  ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+                  : "bg-[var(--bg-surface-tint)] text-[var(--ink-secondary)]",
               ].join(" ")}
             >
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                <CheckCircle2
+                  className="h-4 w-4 shrink-0"
+                  strokeWidth={1.85}
+                />
                 <span>
-                  <code className="font-mono-code font-semibold">
-                    {`{"worked": ${workerTickFeedback.worked}}`}
-                  </code>{" "}
-                  —{" "}
                   {workerTickFeedback.worked
-                    ? "已推进 1 条队列任务，运维统计与异常预览已同步刷新。"
+                    ? "已推进 1 条队列任务，状态分布与异常预览已同步刷新。"
                     : "当前无待执行的队列任务（或租户 ERP 写入已暂停）。"}
                 </span>
               </div>
-              <span className="font-mono-code text-[11px] opacity-80 tabular-nums">
-                {formatUnixTime(workerTickFeedback.at, { withSeconds: true }).slice(11)}
+              <span className="font-mono-code text-[11.5px] opacity-80 tabular-nums">
+                {formatUnixTime(workerTickFeedback.at, {
+                  withSeconds: true,
+                }).slice(11)}
               </span>
             </div>
           )}
 
           {workerTickError && (
-            <div className="mt-3">
+            <div className="mt-4">
               <AccessNoticeCard error={workerTickError} />
             </div>
           )}
         </section>
       )}
 
-      {/* Section 4: Exceptions Quick Preview + Subject Suspension (2-Column Balanced Split) */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+      {/* Section 4: Exceptions Quick Preview + Subject Suspension (2-Column Porcelain Split) */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         {/* Recent Exceptions Preview */}
-        <section className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden lg:col-span-7">
-          <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2.5">
-            <h3 className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
+        <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 lg:col-span-7 flex flex-col">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
               待关注异常单据预览
-            </h3>
+            </h2>
             <Link
               href="/admin/exceptions"
-              className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--accent)] hover:underline"
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors"
             >
-              <span>进入完整异常队列</span>
-              <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <span>完整队列</span>
+              <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.85} />
             </Link>
           </div>
 
           {exceptionPreview.length === 0 ? (
-            <div className="flex flex-col items-center gap-1.5 px-4 py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
-              <CheckCircle2
-                className="h-5 w-5 text-[var(--status-emerald)]"
-                strokeWidth={1.75}
-              />
-              <span>当前授权仓库内暂无 NEEDS_OPERATOR 或 OUTCOME_UNKNOWN 单据。</span>
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]">
+                <CheckCircle2 className="h-5 w-5" strokeWidth={1.85} />
+              </div>
+              <div className="text-[13.5px] font-medium text-[var(--ink-primary)]">
+                一切平稳，暂无滞留异常
+              </div>
+              <p className="text-[12.5px] text-[var(--ink-muted)]">
+                授权仓库内没有待确认或需人工核查的单据。
+              </p>
             </div>
           ) : (
-            <div className="divide-y divide-[var(--hairline)]">
+            <div className="mt-4 space-y-2">
               {exceptionPreview.map((item) => (
                 <div
                   key={item.proposal_id}
-                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 hover:bg-[var(--bg-subtle)] transition-colors duration-[120ms]"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-3 hover:bg-[var(--bg-surface-subtle)] transition-colors duration-[140ms]"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <Link
                         href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
-                        className="font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] hover:underline"
+                        className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] hover:underline"
                       >
                         {item.proposal_id}
                       </Link>
-                      <span className="rounded-[2px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
+                      <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                         {item.warehouse}
                       </span>
                     </div>
-                    <div className="mt-0.5 font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                      核验轮次 {item.checks} · 事件 {item.last_event ?? "—"}
+                    <div className="mt-1 font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+                      核验轮次 {item.checks}/3 · {item.last_event ?? "—"}
                     </div>
                   </div>
                   <StatusBadge status={item.state} compact />
                 </div>
               ))}
               {hasMoreExceptions && (
-                <div className="bg-[var(--bg-subtle)] px-4 py-2 text-right text-[11.5px] text-[var(--ink-muted)]">
-                  仅展示前 5 条，请前往异常单据队列翻页处理全部记录。
+                <div className="pt-2 text-right text-[12px] text-[var(--ink-muted)]">
+                  仅展示前 5 条，请前往异常队列翻页处理。
                 </div>
               )}
             </div>
           )}
         </section>
 
-        {/* Subject Suspension Card (admin only) */}
+        {/* Subject Suspension Card (admin only — no 3D tilt because it contains text input) */}
         <section
           data-testid="subject-suspension-panel"
-          className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden lg:col-span-5"
+          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 lg:col-span-5"
         >
-          <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2.5">
-            <h3 className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-              主体紧急停权控制
-            </h3>
-            <code className="font-mono-code text-[10.5px] text-[var(--ink-muted)]">
-              /subjects/…/suspension
-            </code>
-          </div>
+          <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+            主体紧急停权控制
+          </h2>
 
-          <div className="p-4">
+          <div className="mt-3">
             {isAdmin ? (
-              <div className="space-y-3">
-                <p className="text-[12px] text-[var(--ink-muted)] leading-relaxed">
-                  按主体标识（subject）在本租户内立即停用或恢复员工的全部 API 访问（停权将返回{" "}
-                  <code className="font-mono-code text-[11px]">403</code>{" "}
-                  并阻断其待派发提案）。管理员不可停用本人账号。
+              <div className="space-y-3.5">
+                <p className="text-[12.5px] text-[var(--ink-secondary)] leading-relaxed">
+                  按员工账号标识在本租户内立即停用或恢复访问权限，停权后将阻断全部请求及待派发提案；不可对本人操作。
                 </p>
+
                 <div>
                   <label
                     htmlFor="suspension-subject-input"
-                    className="block text-[12px] font-medium text-[var(--ink-secondary)]"
+                    className="block text-[12.5px] font-medium text-[var(--ink-secondary)]"
                   >
-                    目标主体标识 (subject)
+                    目标员工标识
                   </label>
                   <input
                     id="suspension-subject-input"
@@ -1023,18 +1272,19 @@ export function AdminOpsOverview() {
                     placeholder="例如 operator 或 viewer"
                     aria-invalid={isSelfSuspensionTarget || undefined}
                     data-testid="suspension-subject-input"
-                    className="mt-1 h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
+                    className="mt-1.5 h-10 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3.5 font-mono-code text-[13px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-faint)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-all"
                   />
                   {isSelfSuspensionTarget && (
-                    <p className="mt-1 text-[11.5px] text-[var(--status-crimson)]">
-                      管理员不可对当前登录的本人主体执行停权。
+                    <p className="mt-1.5 text-[12px] text-[var(--status-crimson)]">
+                      管理员不可对当前登录的本人账号执行停权。
                     </p>
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
                   <Button
                     size="sm"
+                    pill
                     variant="danger"
                     disabled={
                       !trimmedSuspendSubject ||
@@ -1044,12 +1294,13 @@ export function AdminOpsOverview() {
                     data-testid="suspension-suspend-btn"
                     onClick={() => handleRequestSuspension(true)}
                   >
-                    <UserX className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <UserX className="h-3.5 w-3.5" strokeWidth={1.85} />
                     <span>停用访问</span>
                   </Button>
                   <Button
                     size="sm"
-                    variant="secondary"
+                    pill
+                    variant="quiet"
                     disabled={
                       !trimmedSuspendSubject ||
                       isSelfSuspensionTarget ||
@@ -1058,7 +1309,7 @@ export function AdminOpsOverview() {
                     data-testid="suspension-restore-btn"
                     onClick={() => handleRequestSuspension(false)}
                   >
-                    <UserCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <UserCheck className="h-3.5 w-3.5" strokeWidth={1.85} />
                     <span>恢复访问</span>
                   </Button>
                 </div>
@@ -1068,17 +1319,17 @@ export function AdminOpsOverview() {
                     role="status"
                     data-testid="suspension-feedback"
                     className={[
-                      "rounded-[4px] border px-3 py-2 text-[12px]",
+                      "rounded-tile px-3.5 py-2.5 text-[12.5px] leading-relaxed",
                       suspendFeedback.kind === "success"
-                        ? "border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+                        ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
                         : suspendFeedback.kind === "warning"
-                          ? "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
-                          : "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
+                          ? "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
+                          : "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
                     ].join(" ")}
                   >
                     <span>{suspendFeedback.message}</span>
                     {suspendFeedback.requestId && (
-                      <span className="ml-2 font-mono-code text-[11px]">
+                      <span className="ml-2 font-mono-code text-[11px] opacity-80">
                         跟踪编号: {suspendFeedback.requestId}
                       </span>
                     )}
@@ -1086,10 +1337,13 @@ export function AdminOpsOverview() {
                 )}
               </div>
             ) : (
-              <div className="flex items-start gap-2 text-[12.5px] text-[var(--ink-muted)]">
-                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <div className="flex items-start gap-2.5 rounded-tile bg-[var(--bg-surface-tint)] p-3.5 text-[12.5px] text-[var(--ink-secondary)] leading-relaxed">
+                <ShieldAlert
+                  className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ink-muted)]"
+                  strokeWidth={1.85}
+                />
                 <span>
-                  主体停权操作仅限租户管理员（<code className="font-mono-code">admin</code>）执行；主管（manager）可查看运维监控与处置异常单据。
+                  主体停权操作仅限租户管理员执行；主管可查看运维监控与处置异常单据。
                 </span>
               </div>
             )}
@@ -1101,42 +1355,48 @@ export function AdminOpsOverview() {
       {hasAuditGrant && (
         <section
           data-testid="audit-checkpoint-panel"
-          className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
+          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
         >
-          <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2.5">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-3.5 w-3.5 text-[var(--ink-secondary)]" strokeWidth={1.75} />
-              <h3 className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-                受控预审审计签名检查点（只读元数据）
-              </h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                <ShieldCheck className="h-4 w-4" strokeWidth={1.85} />
+              </div>
+              <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                受控预审审计签名检查点
+              </h2>
             </div>
-            <code className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-              GET /v1/assurance/audit/checkpoint
-            </code>
+            <span className="text-[12px] text-[var(--ink-muted)]">
+              只读审计元数据
+            </span>
           </div>
 
-          <div className="p-4">
+          <div className="mt-4">
             {checkpoint ? (
-              <dl className="grid grid-cols-1 gap-3 text-[12px] sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-2.5">
-                  <dt className="text-[11px] text-[var(--ink-muted)]">检查点序号 (seq)</dt>
-                  <dd className="mt-1 font-mono-code text-[14px] font-semibold text-[var(--ink-primary)] tabular-nums">
+              <dl className="grid grid-cols-1 gap-3 text-[12.5px] sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="text-[11.5px] text-[var(--ink-muted)]">
+                    检查点序号
+                  </dt>
+                  <dd className="mt-1.5 font-mono-code text-[16px] font-semibold text-[var(--ink-primary)] tabular-nums">
                     #{checkpoint.seq}
                   </dd>
                 </div>
-                <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-2.5">
-                  <dt className="text-[11px] text-[var(--ink-muted)]">检查点类型</dt>
-                  <dd className="mt-1 font-mono-code text-[12px] text-[var(--ink-primary)] break-all">
+                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="text-[11.5px] text-[var(--ink-muted)]">
+                    检查点类型
+                  </dt>
+                  <dd className="mt-1.5 font-mono-code text-[12.5px] font-medium text-[var(--ink-primary)] break-all">
                     {checkpoint.type}
                   </dd>
                 </div>
-                <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-2.5">
-                  <dt className="flex items-center justify-between text-[11px] text-[var(--ink-muted)]">
-                    <span>链表摘要 (hash)</span>
+                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="flex items-center justify-between text-[11.5px] text-[var(--ink-muted)]">
+                    <span>链表摘要</span>
                     <button
                       type="button"
                       onClick={() => void handleCopyHash(checkpoint.hash)}
-                      className="inline-flex items-center gap-1 text-[10.5px] text-[var(--accent)] hover:underline cursor-pointer"
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors cursor-pointer"
                     >
                       <Copy className="h-3 w-3" />
                       <span>{copiedHash ? "已复制" : "复制"}</span>
@@ -1144,25 +1404,27 @@ export function AdminOpsOverview() {
                   </dt>
                   <dd
                     title={checkpoint.hash}
-                    className="mt-1 font-mono-code text-[12px] text-[var(--ink-primary)]"
+                    className="mt-1.5 font-mono-code text-[12.5px] font-medium text-[var(--ink-primary)]"
                   >
                     {formatShortDigest(checkpoint.hash, 12, 8)}
                   </dd>
                 </div>
-                <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-2.5">
-                  <dt className="text-[11px] text-[var(--ink-muted)]">密钥标识 (key_id)</dt>
+                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="text-[11.5px] text-[var(--ink-muted)]">
+                    密钥标识
+                  </dt>
                   <dd
                     title={checkpoint.key_id}
-                    className="mt-1 font-mono-code text-[12px] text-[var(--ink-primary)]"
+                    className="mt-1.5 font-mono-code text-[12.5px] font-medium text-[var(--ink-primary)]"
                   >
                     {formatShortDigest(checkpoint.key_id, 10, 8)}
                   </dd>
                 </div>
               </dl>
             ) : (
-              <p className="text-[12.5px] text-[var(--ink-muted)]">
+              <div className="rounded-tile bg-[var(--bg-surface-tint)] px-4 py-3 text-[13px] text-[var(--ink-muted)]">
                 {checkpointUnavailableMsg ?? "正在获取审计签名检查点…"}
-              </p>
+              </div>
             )}
           </div>
         </section>
@@ -1183,29 +1445,29 @@ export function AdminOpsOverview() {
         }
         description={
           writeConfirmTarget
-            ? "暂停后将阻断本租户所有已批准待派发（QUEUED）提案向 ERP 发起出站写入，直至管理员再次手动恢复；已发送单据的只读回执核验不受影响。"
-            : "恢复后将允许本租户所有待派发（QUEUED）提案按 Worker 调度继续写入 ERP，请确认当前上游 ERP 环境状态正常。"
+            ? "暂停后将阻断本租户所有已批准待派发提案向 ERP 发起出站写入，直至管理员再次手动恢复；已发送单据的只读回执核验不受影响。"
+            : "恢复后将允许本租户所有待派发提案按 Worker 调度继续写入 ERP，请确认当前上游 ERP 环境状态正常。"
         }
         scopeSummary={`租户 ${actor?.tenant ?? "—"}（全部站点）· 操作人可见站点 ${actor?.warehouses.join(", ") || "—"}`}
         metadata={[
           { label: "目标租户", value: actor?.tenant ?? "—", mono: true },
           {
             label: "当前写入状态",
-            value: summary?.writes_paused ? "paused (已暂停)" : "active (正常运行)",
-            mono: true,
+            value: summary?.writes_paused ? "已暂停" : "正常运行",
           },
           {
             label: "变更后状态",
-            value: writeConfirmTarget ? "paused (已暂停)" : "active (正常运行)",
-            mono: true,
+            value: writeConfirmTarget ? "已暂停" : "正常运行",
           },
           {
-            label: "当前 QUEUED 数量",
+            label: "当前待派发数量",
             value: String(summary?.proposals_by_state.QUEUED ?? 0),
             mono: true,
           },
         ]}
-        confirmLabel={writeConfirmTarget ? "确认暂停 ERP 写入" : "确认恢复 ERP 写入"}
+        confirmLabel={
+          writeConfirmTarget ? "确认暂停 ERP 写入" : "确认恢复 ERP 写入"
+        }
         cancelLabel="取消"
         dialogTestId="write-control-confirm-dialog"
         confirmTestId="confirm-dialog-submit"
@@ -1227,26 +1489,25 @@ export function AdminOpsOverview() {
         }
         description={
           suspendConfirm?.suspended
-            ? "停权生效后，该主体在本租户内的所有接口请求将被立即拦截（403），其发起的尚未派发提案在出站前也将被阻断。"
-            : "恢复后，该主体将重新按其身份声明与已配置的模块授权规则访问本租户工作台。"
+            ? "停权生效后，该账号在本租户内的所有接口请求将被立即拦截，其发起的尚未派发提案在出站前也将被阻断。"
+            : "恢复后，该账号将重新按其身份声明与已配置的模块授权规则访问本租户工作台。"
         }
-        scopeSummary={`租户 ${actor?.tenant ?? "—"} · 目标主体 ${suspendConfirm?.subject ?? "—"}`}
+        scopeSummary={`租户 ${actor?.tenant ?? "—"} · 目标账号 ${suspendConfirm?.subject ?? "—"}`}
         metadata={[
           { label: "租户", value: actor?.tenant ?? "—", mono: true },
           {
-            label: "目标主体 (subject)",
+            label: "目标账号",
             value: suspendConfirm?.subject ?? "—",
             mono: true,
           },
           {
             label: "提交操作",
-            value: suspendConfirm?.suspended
-              ? "suspended: true (停用)"
-              : "suspended: false (恢复)",
-            mono: true,
+            value: suspendConfirm?.suspended ? "停用访问" : "恢复访问",
           },
         ]}
-        confirmLabel={suspendConfirm?.suspended ? "确认停用访问" : "确认恢复访问"}
+        confirmLabel={
+          suspendConfirm?.suspended ? "确认停用访问" : "确认恢复访问"
+        }
         cancelLabel="取消"
         dialogTestId="suspension-confirm-dialog"
         confirmTestId="confirm-dialog-submit"

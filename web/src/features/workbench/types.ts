@@ -16,9 +16,51 @@ export type WorkbenchModuleId =
   | "assurance"
   | "decision";
 
+export type PermissionTierId =
+  | "execution"
+  | "specialist"
+  | "approval_decision"
+  | "governance";
+
+export interface PermissionTierSpec {
+  id: PermissionTierId;
+  label: string;
+  subtitle: string;
+  moduleIds: readonly WorkbenchModuleId[];
+}
+
+export const PERMISSION_TIERS: readonly PermissionTierSpec[] = [
+  {
+    id: "execution",
+    label: "执行与进件层",
+    subtitle: "统一任务队列、销售订单进件与运单调度",
+    moduleIds: ["queues", "orders", "dispatch"],
+  },
+  {
+    id: "specialist",
+    label: "专业复核层",
+    subtitle: "财务发票合同审阅与采购、质检、法务多轨预审",
+    moduleIds: ["finance", "assurance"],
+  },
+  {
+    id: "approval_decision",
+    label: "审批与经营层",
+    subtitle: "主管独立审批队列与跨仓经营只读汇总",
+    moduleIds: ["approvals", "decision"],
+  },
+  {
+    id: "governance",
+    label: "管理与治理层",
+    subtitle: "按真实治理权限展示员工模块授权与运维异常监控",
+    moduleIds: [],
+  },
+];
+
 export interface WorkbenchModuleSpec {
   id: WorkbenchModuleId;
+  tier: Exclude<PermissionTierId, "governance">;
   label: string;
+  shortLabel: string;
   code: string;
   description: string;
   required: boolean;
@@ -27,51 +69,65 @@ export interface WorkbenchModuleSpec {
 export const ALL_MODULE_SPECS: Record<WorkbenchModuleId, WorkbenchModuleSpec> = {
   queues: {
     id: "queues",
+    tier: "execution",
     label: "统一任务队列",
+    shortLabel: "任务队列",
     code: "QUEUES",
-    description: "待我处理与已提交单据的统一视图与合并角色视角",
+    description: "集中查看待我处理与已提交单据，支持合并视角与快速侧边核对",
     required: true,
   },
   orders: {
     id: "orders",
-    label: "接单",
+    tier: "execution",
+    label: "接单进件",
+    shortLabel: "接单",
     code: "ORDERS",
-    description: "销售订单进件入口、订单提案队列与历史进件查询",
-    required: false,
-  },
-  approvals: {
-    id: "approvals",
-    label: "主管审批",
-    code: "APPROVALS",
-    description: "独立主管审批队列、按需详情核对与批量批准",
+    description: "销售订单结构化与 OCR 进件入口、订单提案追踪与历史进件调阅",
     required: false,
   },
   dispatch: {
     id: "dispatch",
-    label: "调度",
+    tier: "execution",
+    label: "运单调度",
+    shortLabel: "调度",
     code: "DISPATCH",
-    description: "实时运单查询、改期提案提交与仓库月台里程碑",
+    description: "实时查询授权仓库运单、发起改期提案并查看月台收发里程碑",
     required: false,
   },
   finance: {
     id: "finance",
-    label: "财务",
+    tier: "specialist",
+    label: "财务与合同",
+    shortLabel: "财务",
     code: "FINANCE",
-    description: "实时发票查询、合同预审案件与合同条款对比演示",
+    description: "实时财务发票审阅、关联受控合同预审案件与标准条款差异核对",
     required: false,
   },
   assurance: {
     id: "assurance",
+    tier: "specialist",
     label: "采购 / 质检 / 法务",
+    shortLabel: "多轨预审",
     code: "ASSURANCE",
-    description: "受控治理预审案件、按岗字段投影与多轨独立决策",
+    description: "受控治理预审案件、按岗位投影字段与独立多轨协同表决",
+    required: false,
+  },
+  approvals: {
+    id: "approvals",
+    tier: "approval_decision",
+    label: "主管审批",
+    shortLabel: "审批队列",
+    code: "APPROVALS",
+    description: "独立主管审批队列，按需核对摘要锁并支持单笔与批量批准入队",
     required: false,
   },
   decision: {
     id: "decision",
+    tier: "approval_decision",
     label: "经营只读",
+    shortLabel: "经营汇总",
     code: "DECISION",
-    description: "跨站点实时仓库汇总指标与服务端权限实时下钻",
+    description: "跨站点实时仓库运营指标汇总与按需实时鉴权下钻",
     required: false,
   },
 };
@@ -289,17 +345,17 @@ export const ASSURANCE_KIND_META: Record<
   { label: string; grant: Grant; shortLabel: string }
 > = {
   purchase: {
-    label: "采购预审 (Purchase)",
+    label: "采购预审",
     shortLabel: "采购",
     grant: "assurance.purchase",
   },
   incoming_quality: {
-    label: "来料质检 (Incoming QA)",
+    label: "来料质检",
     shortLabel: "质检",
     grant: "assurance.incoming",
   },
   contract: {
-    label: "合同法务 (Contract)",
+    label: "合同法务",
     shortLabel: "法务",
     grant: "assurance.contract",
   },
@@ -313,10 +369,10 @@ export const ASSURANCE_TRACK_GRANTS: Record<AssuranceTrack, Grant> = {
 };
 
 export const ASSURANCE_TRACK_LABELS: Record<AssuranceTrack, string> = {
-  procurement: "采购轨 (Procurement)",
-  finance: "财务轨 (Finance)",
-  quality: "质检轨 (Quality)",
-  legal: "法务轨 (Legal)",
+  procurement: "采购轨",
+  finance: "财务轨",
+  quality: "质检轨",
+  legal: "法务轨",
 };
 
 export const ASSURANCE_INSTRUCTIONS: ReadonlyArray<{
@@ -331,21 +387,21 @@ export const ASSURANCE_INSTRUCTIONS: ReadonlyArray<{
 ];
 
 export const ASSURANCE_FIELD_LABELS: Record<string, string> = {
-  amount_minor: "金额（最小币值单位）",
+  amount_minor: "金额",
   currency: "币种",
   quote_count: "比价单份数",
   supplier_approved: "供应商已准入",
-  supplier_bank: "供应商收款账户（财务受限字段）",
+  supplier_bank: "供应商收款账户",
   sample_size: "抽检样本量",
   defects: "缺陷数量",
   certificate_present: "质检证书完备",
   critical_defect: "致命缺陷标记",
-  inspector_contact: "质检员联系方式（质检受限字段）",
+  inspector_contact: "质检员联系方式",
   term_months: "合同期限（月）",
   auto_renewal: "自动续约条款",
   standard_template: "标准模板",
   liability_cap_present: "赔偿上限条款",
-  counterparty_contact: "对方签约法务联系（法务受限字段）",
+  counterparty_contact: "对方签约法务联系",
 };
 
 // --- Clearly Tagged Synthetic Demo Fixtures ---

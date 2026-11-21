@@ -46,7 +46,7 @@ export const MODULE_META: Record<string, ModuleDisplayMeta> = {
     id: "approvals",
     index: "05",
     title: "审批",
-    description: "独立审批订单草稿与运单改期提案（仅 manager / admin 角色生效）。",
+    description: "独立审批订单草稿与运单改期提案（仅主管或管理员角色生效）。",
   },
 };
 
@@ -121,14 +121,14 @@ export function classifyModuleAssignment(
     return {
       status: "inherited",
       label: "继承身份权限",
-      summary: "尚未建立显式模块规则，当前沿用员工身份声明的默认权限（首次保存版本为 v0）。",
+      summary: "尚未单独配置，当前沿用员工默认权限。",
     };
   }
   if (assignment.grants.length === 0 && assignment.warehouses.length === 0) {
     return {
       status: "revoked",
       label: "已撤销",
-      summary: "已写入空动作与空仓库规则，阻断该员工此模块的实时查询与待派发提案。",
+      summary: "已撤销此模块授权，相关查询与待派发提案已阻断。",
     };
   }
   if (
@@ -138,13 +138,13 @@ export function classifyModuleAssignment(
     return {
       status: "expired",
       label: "已到期",
-      summary: "该显式配置已超过到期时间，当前不再向员工开放此模块能力。",
+      summary: "该授权已超过设定到期时间，当前不再开放此模块。",
     };
   }
   return {
     status: "active",
     label: "已显式配置",
-    summary: "显式模块规则生效中，实际访问范围将与员工身份已验证仓库取交集。",
+    summary: "独立授权规则生效中，实际访问范围将与员工身份已验证仓库取交集。",
   };
 }
 
@@ -160,6 +160,10 @@ export function sortCatalogModuleIds(moduleIds: string[]): string[] {
   });
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
 export function unixSecondsToLocalInput(
   seconds: number | null | undefined,
 ): string {
@@ -167,33 +171,92 @@ export function unixSecondsToLocalInput(
     return "";
   }
   const d = new Date(seconds * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+export function formatOffsetDaysLocalInput(days: number): string {
+  const target = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  return `${target.getFullYear()}-${pad2(target.getMonth() + 1)}-${pad2(target.getDate())} ${pad2(target.getHours())}:${pad2(target.getMinutes())}`;
+}
+
+/**
+ * Parses localized `YYYY-MM-DD HH:MM` or ISO `YYYY-MM-DDTHH:MM` strings strictly
+ * in the user's local timezone and returns Unix seconds (or null if invalid).
+ */
 export function localInputToUnixSeconds(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const ms = new Date(trimmed).getTime();
+
+  const match =
+    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/.exec(
+      trimmed,
+    );
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = match[4] !== undefined ? Number(match[4]) : 23;
+  const minute = match[5] !== undefined ? Number(match[5]) : 59;
+  const second = match[6] !== undefined ? Number(match[6]) : 0;
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59 ||
+    second < 0 ||
+    second > 59
+  ) {
+    return null;
+  }
+
+  const d = new Date(year, month - 1, day, hour, minute, second, 0);
+  // Reject calendar rollover such as 2026-02-31
+  if (
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) {
+    return null;
+  }
+  const ms = d.getTime();
   if (!Number.isFinite(ms)) return null;
   return Math.floor(ms / 1000);
 }
 
+const KNOWN_TZ_ZH: Record<string, string> = {
+  "Asia/Hong_Kong": "香港时间",
+  "Asia/Shanghai": "北京时间",
+  "Asia/Taipei": "台北时间",
+  "Asia/Singapore": "新加坡时间",
+  "Asia/Tokyo": "东京时间",
+  UTC: "协调世界时",
+};
+
 export function getLocalTimezoneLabel(): string {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz && KNOWN_TZ_ZH[tz]) return KNOWN_TZ_ZH[tz]!;
     const offsetMin = -new Date().getTimezoneOffset();
     const sign = offsetMin >= 0 ? "+" : "-";
     const abs = Math.abs(offsetMin);
     const hh = String(Math.floor(abs / 60)).padStart(2, "0");
     const mm = String(abs % 60).padStart(2, "0");
-    return tz ? `${tz} (UTC${sign}${hh}:${mm})` : `UTC${sign}${hh}:${mm}`;
+    return `本地时间 UTC${sign}${hh}:${mm}`;
   } catch {
-    return "本地时区";
+    return "本地时间";
   }
 }
 
-export function getModuleMeta(moduleId: string, fallbackIndex: number): ModuleDisplayMeta {
+export function getModuleMeta(
+  moduleId: string,
+  fallbackIndex: number,
+): ModuleDisplayMeta {
   const known = MODULE_META[moduleId];
   if (known) return known;
   return {

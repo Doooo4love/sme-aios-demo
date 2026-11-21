@@ -50,7 +50,7 @@ export function RoomMembersPanel({
     try {
       await updateRoomMember(roomId, target, true);
       setInviteSubject("");
-      setFeedback(`已将 ${target} 加入当前房间（仅可查看加入后的消息）。`);
+      setFeedback(`已将 ${target} 加入当前会话（仅可查看加入后的消息）。`);
       await onMembersChanged();
     } catch (err) {
       if (isStaleAuthError(err)) return;
@@ -72,7 +72,7 @@ export function RoomMembersPanel({
     setFeedback(null);
     try {
       await updateRoomMember(roomId, subject, false);
-      setFeedback(`已将 ${subject} 移出房间。`);
+      setFeedback(`已将 ${subject} 移出会话。`);
       await onMembersChanged(subject);
     } catch (err) {
       if (isStaleAuthError(err)) return;
@@ -92,13 +92,13 @@ export function RoomMembersPanel({
       {isOwner ? (
         <form
           onSubmit={(e) => void handleAddMember(e)}
-          className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3 space-y-2"
+          className="rounded-card bg-[var(--bg-surface-tint)] p-3.5 space-y-2.5"
         >
           <label
             htmlFor="room-invite-subject"
             className="block text-[12px] font-medium text-[var(--ink-secondary)]"
           >
-            添加同租户同事（按 subject）
+            添加同租户同事（按账号 subject）
           </label>
           <div className="flex gap-2">
             <input
@@ -111,34 +111,38 @@ export function RoomMembersPanel({
                 setError(null);
               }}
               placeholder="例如：manager / finance"
-              className="h-8 min-w-0 flex-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="h-9 min-w-0 flex-1 rounded-sm bg-[var(--bg-surface)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
             />
             <Button
               type="submit"
               size="sm"
               variant="primary"
-              loading={busySubject === inviteSubject.trim() && busySubject !== null}
+              pill
+              loading={
+                busySubject === inviteSubject.trim() && busySubject !== null
+              }
               disabled={!inviteSubject.trim() || busySubject !== null}
               data-testid="room-invite-submit"
+              className="h-9"
             >
-              <UserPlus className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <UserPlus className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>添加</span>
             </Button>
           </div>
-          <p className="text-[11px] text-[var(--ink-muted)]">
-            新成员加入后仅能读取其加入序号（from_seq）之后的消息。
+          <p className="text-[11.5px] text-[var(--ink-muted)]">
+            新成员加入后仅能查看其加入时间点之后的消息。
           </p>
         </form>
       ) : (
-        <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12px] text-[var(--ink-muted)]">
-          仅房间创建人（{roomOwner || "群主"}）可管理成员名单。
+        <div className="rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px] text-[var(--ink-muted)]">
+          仅会话创建人（{roomOwner || "群主"}）可管理成员名单。
         </div>
       )}
 
       {feedback && (
         <div
           role="status"
-          className="rounded-[4px] border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-3 py-2 text-[12px] text-[var(--status-emerald)]"
+          className="rounded-sm bg-[var(--status-emerald-wash)] px-3.5 py-2.5 text-[12px] text-[var(--status-emerald)]"
         >
           {feedback}
         </div>
@@ -147,12 +151,12 @@ export function RoomMembersPanel({
       {error && <AccessNoticeCard error={error} />}
 
       <div>
-        <div className="mb-2 flex items-center justify-between text-[11.5px] text-[var(--ink-muted)]">
+        <div className="mb-2 flex items-center justify-between text-[12px] text-[var(--ink-muted)]">
           <span>当前活跃成员</span>
-          <span className="font-mono-code">{members.length} 人</span>
+          <span className="font-mono-code tabular-nums">{members.length} 人</span>
         </div>
 
-        <ul className="divide-y divide-[var(--hairline)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)]">
+        <ul className="divide-y divide-[var(--hairline-subtle)] rounded-card bg-[var(--bg-surface-tint)] overflow-hidden">
           {members.map((subject) => {
             const prof = memberProfiles[subject];
             const avatarSrc = prof?.has_avatar
@@ -170,7 +174,7 @@ export function RoomMembersPanel({
               <li
                 key={subject}
                 data-testid={`room-member-row-${subject}`}
-                className="flex items-center justify-between gap-2.5 px-3 py-2.5"
+                className="flex items-center justify-between gap-2.5 px-3.5 py-3"
               >
                 <div className="flex min-w-0 items-center gap-2.5">
                   <Avatar
@@ -185,12 +189,12 @@ export function RoomMembersPanel({
                         {prof?.display_name || subject}
                       </span>
                       {isRoomOwner && (
-                        <span className="rounded-[2px] border border-[var(--accent-border)] bg-[var(--accent-wash)] px-1 py-0.5 font-mono-code text-[10px] text-[var(--accent)] leading-none">
+                        <span className="rounded-full bg-[var(--accent-wash)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)] leading-none">
                           群主
                         </span>
                       )}
                       {isSelf && (
-                        <span className="font-mono-code text-[10px] text-[var(--ink-muted)]">
+                        <span className="text-[11px] text-[var(--ink-muted)]">
                           (我)
                         </span>
                       )}
@@ -205,12 +209,13 @@ export function RoomMembersPanel({
                   <Button
                     size="sm"
                     variant="danger"
+                    pill
                     loading={busySubject === subject}
                     disabled={busySubject !== null}
                     data-testid={`room-remove-member-${subject}`}
                     onClick={() => void handleRemoveMember(subject)}
                   >
-                    <UserMinus className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <UserMinus className="h-3.5 w-3.5" strokeWidth={1.85} />
                     <span>移除</span>
                   </Button>
                 )}

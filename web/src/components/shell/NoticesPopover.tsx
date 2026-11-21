@@ -42,8 +42,8 @@ function noticeKindToLabel(kind: NoticeKind): string {
 }
 
 export function NoticesPopover({
-  align = "start",
-  side = "right",
+  align = "end",
+  side = "bottom",
 }: {
   align?: "start" | "center" | "end";
   side?: "top" | "right" | "bottom" | "left";
@@ -69,7 +69,6 @@ export function NoticesPopover({
       setUnreadNoticesCount(unread);
     } catch (error) {
       if (isStaleAuthError(error)) return;
-      // Silent degradation on background badge poll
     } finally {
       setLoading(false);
     }
@@ -143,14 +142,14 @@ export function NoticesPopover({
           }
           title="通知"
           className={[
-            "relative inline-flex h-9 w-9 items-center justify-center rounded-[4px]",
-            "text-[var(--ink-secondary)] hover:bg-[var(--bg-plane-hover)] hover:text-[var(--ink-primary)]",
-            "transition-colors duration-[120ms] cursor-pointer",
+            "relative inline-flex h-8 w-8 items-center justify-center rounded-full",
+            "text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)]",
+            "transition-colors duration-[140ms] cursor-pointer",
           ].join(" ")}
         >
-          <Bell className="h-[18px] w-[18px]" strokeWidth={1.6} />
+          <Bell className="h-[17px] w-[17px]" strokeWidth={1.75} />
           {unreadNoticesCount > 0 && (
-            <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-[2px] bg-[var(--accent)] px-1 font-mono-code text-[10px] font-semibold text-white">
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 font-mono-code text-[9.5px] font-semibold text-white ring-2 ring-white">
               {unreadNoticesCount > 99 ? "99+" : unreadNoticesCount}
             </span>
           )}
@@ -163,12 +162,12 @@ export function NoticesPopover({
           align={align}
           sideOffset={8}
           className={[
-            "z-50 w-[320px] rounded-[6px] border border-[var(--hairline-strong)]",
-            "bg-[var(--bg-sheet)] shadow-[var(--shadow-popover)] focus:outline-none",
+            "z-50 w-[332px] overflow-hidden rounded-lg",
+            "bg-[var(--bg-surface)] shadow-[var(--shadow-popover)] focus:outline-none",
           ].join(" ")}
         >
-          <div className="flex items-center justify-between border-b border-[var(--hairline)] px-3.5 py-2.5">
-            <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
+          <div className="flex items-center justify-between border-b border-[var(--hairline)] px-4 py-3">
+            <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
               站内通知
             </span>
             <button
@@ -176,27 +175,27 @@ export function NoticesPopover({
               onClick={() => void loadNotices()}
               disabled={loading}
               aria-label="刷新通知"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)] cursor-pointer"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
             >
               <RefreshCw
                 className={["h-3.5 w-3.5", loading ? "animate-spin" : ""].join(
                   " ",
                 )}
-                strokeWidth={1.75}
+                strokeWidth={1.85}
               />
             </button>
           </div>
 
           {inlineNotice && (
-            <div className="flex items-center gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-3.5 py-2 text-[12px] text-[var(--ink-secondary)]">
+            <div className="flex items-center gap-2 border-b border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-4 py-2.5 text-[12px] text-[var(--ink-secondary)]">
               <Lock className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
               <span>{inlineNotice}</span>
             </div>
           )}
 
-          <div className="max-h-[340px] overflow-auto divide-y divide-[var(--hairline-subtle)]">
+          <div className="max-h-[340px] overflow-auto p-1.5 space-y-0.5">
             {items.length === 0 ? (
-              <div className="px-4 py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
+              <div className="px-4 py-10 text-center text-[12.5px] text-[var(--ink-muted)]">
                 {loading ? "正在加载通知…" : "暂无工作台通知"}
               </div>
             ) : (
@@ -209,10 +208,10 @@ export function NoticesPopover({
                     disabled={openingId === item.id}
                     onClick={() => void handleSelectNotice(item)}
                     className={[
-                      "flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left transition-colors duration-[120ms] cursor-pointer",
+                      "flex w-full items-center justify-between gap-2 rounded-sm px-3 py-2.5 text-left transition-colors duration-[140ms] cursor-pointer",
                       unread
                         ? "bg-[var(--accent-wash)] hover:bg-[var(--accent-wash-strong)]"
-                        : "hover:bg-[var(--bg-subtle)]",
+                        : "hover:bg-[var(--bg-hover)]",
                     ].join(" ")}
                   >
                     <div className="min-w-0 flex-1">
@@ -221,13 +220,13 @@ export function NoticesPopover({
                           {item.id}
                         </span>
                         {unread ? (
-                          <span className="font-mono-code text-[10px] text-[var(--accent)]">
+                          <span className="rounded-full bg-[var(--accent)] px-1.5 py-0.5 text-[9.5px] font-semibold text-white leading-none">
                             未读
                           </span>
                         ) : (
                           <Check
                             className="h-3 w-3 text-[var(--ink-faint)]"
-                            strokeWidth={1.75}
+                            strokeWidth={2}
                           />
                         )}
                       </div>
@@ -235,7 +234,7 @@ export function NoticesPopover({
                         {formatUnixTime(item.created_at)}
                       </div>
                     </div>
-                    <span className="shrink-0 text-[11.5px] text-[var(--accent)]">
+                    <span className="shrink-0 text-[12px] font-medium text-[var(--accent)]">
                       {openingId === item.id ? "核验中…" : "查看"}
                     </span>
                   </button>
@@ -243,7 +242,7 @@ export function NoticesPopover({
               })
             )}
           </div>
-          <div className="border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-3.5 py-2 text-[11px] text-[var(--ink-muted)]">
+          <div className="border-t border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-4 py-2.5 text-[11px] text-[var(--ink-muted)]">
             点击通知时将按当前权限实时核验目标记录
           </div>
         </Popover.Content>

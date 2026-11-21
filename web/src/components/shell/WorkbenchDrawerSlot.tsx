@@ -33,6 +33,7 @@ import {
 } from "@/lib/format";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
+import { BriefProgressChain } from "@/components/kinetic/BriefProgressChain";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
 import { Button } from "@/components/ui/Button";
 import { SourceTag } from "@/components/ui/SourceTag";
@@ -58,7 +59,7 @@ const DRAWER_TABS: ReadonlyArray<{ id: DrawerTab; label: string }> = [
 ];
 
 export function WorkbenchDrawerSlot() {
-  const { status, capabilities, authGeneration, handleAccessChanged } =
+  const { status, actor, capabilities, authGeneration, handleAccessChanged } =
     useSession();
   const {
     drawerOpen,
@@ -111,7 +112,6 @@ export function WorkbenchDrawerSlot() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<ApiError | null>(null);
 
-  // Move keyboard focus cleanly into the drawer header when opened
   useEffect(() => {
     if (drawerOpen) {
       requestAnimationFrame(() => {
@@ -120,7 +120,6 @@ export function WorkbenchDrawerSlot() {
     }
   }, [drawerOpen]);
 
-  // Reset ALL local drawer inspection state on authGeneration change
   useEffect(() => {
     setTasks([]);
     setTasksError(null);
@@ -167,7 +166,6 @@ export function WorkbenchDrawerSlot() {
     [status, setAssignedCount, handleAccessChanged],
   );
 
-  // Load lane data when drawer opens on assigned / submitted tab
   useEffect(() => {
     if (!drawerOpen || status !== "authenticated") return;
     if (activeTab === "assigned" || activeTab === "submitted") {
@@ -405,12 +403,11 @@ export function WorkbenchDrawerSlot() {
 
   return (
     <>
-      {/* Medium-viewport overlay scrim (768px - 1179px) */}
       {drawerOpen && (
         <div
           aria-hidden="true"
           onClick={() => closeDrawer({ restoreFocus: true })}
-          className="fixed inset-0 z-30 bg-[var(--scrim)] xl:hidden"
+          className="fixed inset-0 z-30 bg-[var(--scrim)] backdrop-blur-[3px] transition-opacity duration-[180ms] xl:hidden"
         />
       )}
 
@@ -419,34 +416,34 @@ export function WorkbenchDrawerSlot() {
         aria-hidden={!drawerOpen}
         data-testid="workbench-drawer"
         className={[
-          "aios-drawer-transition flex flex-col bg-[var(--bg-sheet)] border-l border-[var(--hairline)] overflow-hidden",
-          // Docked on wide desktop (>= 1280px / xl), slide-over overlay below xl
-          "fixed bottom-0 right-0 top-[var(--topbar-h)] z-40 xl:static xl:z-auto xl:top-auto xl:bottom-auto xl:h-full",
+          "aios-drawer-transition flex flex-col bg-[rgba(255,255,255,0.92)] backdrop-blur-2xl overflow-hidden",
+          // Frosted Porcelain Glass Slide-Over (380-420px): floating below xl, docked with crisp ambient left shadow >= xl
+          "fixed bottom-2.5 right-2.5 top-2.5 z-40 rounded-card xl:static xl:z-auto xl:top-auto xl:bottom-auto xl:right-auto xl:h-full xl:rounded-none xl:border-l xl:border-[var(--hairline)]",
           drawerOpen
-            ? "w-[min(420px,92vw)] xl:w-[var(--drawer-w)] translate-x-0 opacity-100 shadow-[var(--shadow-popover)] xl:shadow-none"
-            : "w-0 translate-x-full xl:translate-x-0 opacity-0 pointer-events-none border-l-0",
+            ? "w-[min(420px,calc(100vw-20px))] xl:w-[clamp(380px,30vw,420px)] translate-x-0 opacity-100 shadow-[var(--shadow-modal)] xl:shadow-[-12px_0_32px_-16px_rgba(17,19,24,0.08)]"
+            : "w-0 translate-x-[calc(100%+16px)] xl:translate-x-0 opacity-0 pointer-events-none xl:border-l-0",
         ].join(" ")}
       >
-        {/* Drawer Header */}
-        <div className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--hairline)] px-4">
+        {/* Frosted Drawer Header */}
+        <div className="flex h-[56px] shrink-0 items-center justify-between border-b border-[var(--hairline)] px-5">
           <div className="min-w-0 flex items-center gap-2">
             <h2
               ref={headingRef}
               tabIndex={-1}
-              className="truncate text-[14.5px] font-semibold text-[var(--ink-primary)] focus:outline-none"
+              className="truncate text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)] focus:outline-none"
             >
               {selectedObject?.title && activeTab === "current"
                 ? selectedObject.title
-                : "业务工作面板"}
+                : "业务核对面板"}
             </h2>
             {selectedObject?.warehouse && activeTab === "current" && (
-              <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
+              <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[10.5px] font-medium text-[var(--ink-secondary)]">
                 {selectedObject.warehouse}
               </span>
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <kbd className="hidden sm:inline-block rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[10px] text-[var(--ink-muted)]">
+            <kbd className="hidden sm:inline-block rounded-xs bg-[var(--bg-surface-subtle)] px-1.5 py-0.5 font-mono-code text-[10px] text-[var(--ink-muted)]">
               ESC
             </kbd>
             <button
@@ -454,41 +451,42 @@ export function WorkbenchDrawerSlot() {
               onClick={() => closeDrawer({ restoreFocus: true })}
               aria-label="收起业务面板"
               data-testid="workbench-drawer-close"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)] cursor-pointer"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors duration-[150ms] cursor-pointer"
             >
-              <X className="h-4 w-4" strokeWidth={1.75} />
+              <X className="h-4 w-4" strokeWidth={1.85} />
             </button>
           </div>
         </div>
 
-        {/* Hairline Segmented Tabs */}
-        <div
-          role="tablist"
-          aria-label="业务面板视图"
-          className="flex shrink-0 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-3"
-        >
-          {DRAWER_TABS.map((tab) => {
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                data-testid={`drawer-tab-${tab.id}`}
-                onClick={() => setActiveTab(tab.id)}
-                className={[
-                  "relative px-3 py-2 text-[12.5px] font-medium transition-colors duration-[120ms] cursor-pointer",
-                  "border-b-2 -mb-px",
-                  active
-                    ? "border-[var(--accent)] text-[var(--ink-primary)]"
-                    : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
-                ].join(" ")}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
+        {/* Clean Segmented Tabs: 当前对象 | 待我处理 | 已提交 */}
+        <div className="shrink-0 border-b border-[var(--hairline)] px-4 py-2.5">
+          <div
+            role="tablist"
+            aria-label="业务面板视图"
+            className="grid grid-cols-3 gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
+          >
+            {DRAWER_TABS.map((tab) => {
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  data-testid={`drawer-tab-${tab.id}`}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={[
+                    "rounded-full px-2.5 py-1.5 text-[12px] transition-all duration-[160ms] cursor-pointer",
+                    active
+                      ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                      : "text-[var(--ink-muted)] font-medium hover:text-[var(--ink-primary)]",
+                  ].join(" ")}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Drawer Body */}
@@ -498,19 +496,21 @@ export function WorkbenchDrawerSlot() {
               {customDrawerContent ? (
                 customDrawerContent
               ) : !selectedObject ? (
-                <div className="flex flex-col items-start gap-3 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-4">
-                  <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--ink-primary)]">
+                <div className="flex flex-col items-start gap-3 rounded-tile bg-[var(--bg-surface-tint)] p-4.5">
+                  <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--ink-primary)]">
                     <ClipboardCheck
                       className="h-4 w-4 text-[var(--accent)]"
-                      strokeWidth={1.75}
+                      strokeWidth={1.85}
                     />
                     <span>按需核对业务单据与证据</span>
                   </div>
                   <p className="text-[12.5px] text-[var(--ink-muted)] leading-relaxed">
-                    在对话卡片、审批队列、进件页或业务模块中点击任意单据，即可在此处展开差异比对、摘要核验、正式确认动作或工作简报，同时保留主视图上下文与草稿。
+                    在对话卡片、审批队列、进件页或业务模块中点击任意单据，即可在此展开差异比对、摘要核验、正式确认动作或工作简报，同时保留当前对话上下文。
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    pill
+                    variant="secondary"
                     onClick={() =>
                       openDrawer({
                         kind: "brief",
@@ -518,11 +518,13 @@ export function WorkbenchDrawerSlot() {
                         title: "工作简报（未来 7 天）",
                       })
                     }
-                    className="inline-flex h-8 items-center gap-1.5 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-plane)] cursor-pointer"
                   >
-                    <Calendar className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <Calendar
+                      className="h-3.5 w-3.5 text-[var(--accent)]"
+                      strokeWidth={1.85}
+                    />
                     <span>查看工作简报</span>
-                  </button>
+                  </Button>
                 </div>
               ) : selectedObject.kind === "proposal" ? (
                 <ProposalInspectorPanel
@@ -544,29 +546,54 @@ export function WorkbenchDrawerSlot() {
                   {intakeError && <AccessNoticeCard error={intakeError} />}
                   {!intakeLoading && !intakeError && intakeDetail && (
                     <>
+                      <BriefProgressChain
+                        phase="done"
+                        summaryLabel="进件证据核验明细"
+                        steps={[
+                          {
+                            id: "intake-scope",
+                            label: `站点与读取权限已校验（${intakeDetail.warehouse}）`,
+                            status: "done",
+                          },
+                          {
+                            id: "intake-sha",
+                            label: "已核对内容寻址证据摘要",
+                            status: "done",
+                            meta: formatShortDigest(
+                              intakeDetail.evidence.artifact_sha256,
+                            ),
+                          },
+                        ]}
+                      />
+
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <FileText
                             className="h-4 w-4 shrink-0 text-[var(--accent)]"
-                            strokeWidth={1.75}
+                            strokeWidth={1.85}
                           />
-                          <span className="truncate font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)]">
-                            {selectedObject.id}
+                          <span
+                            title={selectedObject.id}
+                            className="truncate font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)]"
+                          >
+                            {formatShortDigest(selectedObject.id, 6, 4)}
                           </span>
                         </div>
-                        <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[11px]">
+                        <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)]">
                           {intakeDetail.warehouse}
                         </span>
                       </div>
 
-                      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12.5px]">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">进件类型</dt>
-                          <dd className="font-mono-code text-[var(--ink-primary)]">
-                            {intakeDetail.evidence.kind}
+                          <dd className="text-[var(--ink-primary)]">
+                            {intakeDetail.evidence.kind === "structured"
+                              ? "结构化进件"
+                              : "图片 OCR 进件"}
                           </dd>
                         </div>
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">证据摘要</dt>
                           <dd className="font-mono-code text-[var(--ink-primary)]">
                             {formatShortDigest(
@@ -576,21 +603,21 @@ export function WorkbenchDrawerSlot() {
                         </div>
                         {intakeDetail.evidence.kind === "structured" && (
                           <>
-                            <div className="flex justify-between gap-2 px-3 py-2">
+                            <div className="flex justify-between gap-2 px-3.5 py-2.5">
                               <dt className="text-[var(--ink-muted)]">PO</dt>
                               <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
                                 {intakeDetail.evidence.order.po}
                               </dd>
                             </div>
-                            <div className="flex justify-between gap-2 px-3 py-2">
+                            <div className="flex justify-between gap-2 px-3.5 py-2.5">
                               <dt className="text-[var(--ink-muted)]">买方</dt>
                               <dd className="font-mono-code text-[var(--ink-primary)]">
                                 {intakeDetail.evidence.order.buyer}
                               </dd>
                             </div>
-                            <div className="flex justify-between gap-2 px-3 py-2">
+                            <div className="flex justify-between gap-2 px-3.5 py-2.5">
                               <dt className="text-[var(--ink-muted)]">总额</dt>
-                              <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
+                              <dd className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
                                 {intakeDetail.evidence.order.currency}{" "}
                                 {intakeDetail.evidence.order.total}
                               </dd>
@@ -601,7 +628,7 @@ export function WorkbenchDrawerSlot() {
 
                       <Link
                         href={`/orders/new?intake=${encodeURIComponent(selectedObject.id)}`}
-                        className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-[4px] bg-[var(--accent)] px-3 text-[13px] font-medium text-white hover:bg-[var(--accent-hover)]"
+                        className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-all duration-[160ms]"
                       >
                         <span>在订单进件页查看完整证据</span>
                         <ArrowUpRight className="h-3.5 w-3.5" />
@@ -622,33 +649,54 @@ export function WorkbenchDrawerSlot() {
                   {shipmentError && <AccessNoticeCard error={shipmentError} />}
                   {!shipmentLoading && !shipmentError && shipmentData && (
                     <>
+                      <BriefProgressChain
+                        phase="done"
+                        summaryLabel="运单实时核验明细"
+                        steps={[
+                          {
+                            id: "ship-scope",
+                            label: `仓库范围鉴权通过（${shipmentData.view.warehouse}）`,
+                            status: "done",
+                          },
+                          {
+                            id: "ship-read",
+                            label: "已拉取最新交期与版本锁",
+                            status: "done",
+                            meta: `v${shipmentData.view.version}`,
+                          },
+                        ]}
+                      />
+
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Truck className="h-4 w-4 text-[var(--accent)]" />
                           <span className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)]">
                             {shipmentData.view.shipment_id}
                           </span>
-                          <StatusBadge status={shipmentData.view.status} compact />
+                          <StatusBadge
+                            status={shipmentData.view.status}
+                            compact
+                          />
                         </div>
                         <SourceTag source={shipmentData.source} />
                       </div>
 
-                      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12.5px]">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">仓库站点</dt>
                           <dd className="font-mono-code text-[var(--ink-primary)]">
                             {shipmentData.view.warehouse}
                           </dd>
                         </div>
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">当前交期</dt>
-                          <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
+                          <dd className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
                             {shipmentData.view.delivery_date}
                           </dd>
                         </div>
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">版本号</dt>
-                          <dd className="font-mono-code text-[var(--ink-primary)]">
+                          <dd className="font-mono-code tabular-nums text-[var(--ink-primary)]">
                             v{shipmentData.view.version}
                           </dd>
                         </div>
@@ -658,9 +706,9 @@ export function WorkbenchDrawerSlot() {
                         shipmentData.view.status === "OPEN" && (
                           <form
                             onSubmit={handleDrawerReschedule}
-                            className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3 space-y-2.5"
+                            className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5 space-y-2.5"
                           >
-                            <div className="text-[12px] font-semibold text-[var(--ink-primary)]">
+                            <div className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
                               快捷发起改期提案
                             </div>
                             <input
@@ -670,11 +718,12 @@ export function WorkbenchDrawerSlot() {
                               onChange={(e) =>
                                 setRescheduleDate(e.target.value)
                               }
-                              className="h-8 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2 font-mono-code text-[12px]"
+                              className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-3 font-mono-code text-[12.5px] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none"
                             />
                             <Button
                               type="submit"
                               size="sm"
+                              pill
                               variant="primary"
                               loading={rescheduleBusy}
                               disabled={
@@ -694,15 +743,17 @@ export function WorkbenchDrawerSlot() {
                       )}
 
                       {rescheduleProposal && (
-                        <div className="rounded-[4px] border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] p-3 text-[12px] space-y-2">
+                        <div className="rounded-tile bg-[var(--status-emerald-wash)] p-3.5 text-[12.5px] space-y-2.5">
                           <div className="flex items-center gap-1.5 font-medium text-[var(--status-emerald)]">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <CheckCircle2 className="h-4 w-4" />
                             <span>
-                              已生成提案 {rescheduleProposal.id}
+                              已生成提案{" "}
+                              {formatShortDigest(rescheduleProposal.id, 6, 4)}
                             </span>
                           </div>
                           <Button
                             size="sm"
+                            pill
                             variant="secondary"
                             onClick={() =>
                               openDrawer(
@@ -710,7 +761,7 @@ export function WorkbenchDrawerSlot() {
                                   kind: "proposal",
                                   id: rescheduleProposal.id,
                                   warehouse: rescheduleProposal.warehouse,
-                                  title: `运单改期 · ${rescheduleProposal.id}`,
+                                  title: `运单改期 · ${formatShortDigest(rescheduleProposal.id, 6, 4)}`,
                                 },
                                 { tab: "current" },
                               )
@@ -737,6 +788,24 @@ export function WorkbenchDrawerSlot() {
                   {invoiceError && <AccessNoticeCard error={invoiceError} />}
                   {!invoiceLoading && !invoiceError && invoiceData && (
                     <>
+                      <BriefProgressChain
+                        phase="done"
+                        summaryLabel="财务发票核验明细"
+                        steps={[
+                          {
+                            id: "inv-scope",
+                            label: `财务读取范围已校验（${invoiceData.view.warehouse}）`,
+                            status: "done",
+                          },
+                          {
+                            id: "inv-read",
+                            label: "已返回实时结算状态",
+                            status: "done",
+                            meta: invoiceData.view.state,
+                          },
+                        ]}
+                      />
+
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Receipt className="h-4 w-4 text-[var(--accent)]" />
@@ -747,20 +816,21 @@ export function WorkbenchDrawerSlot() {
                         </div>
                         <SourceTag source={invoiceData.source} />
                       </div>
-                      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12.5px]">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">仓库站点</dt>
                           <dd className="font-mono-code text-[var(--ink-primary)]">
                             {invoiceData.view.warehouse}
                           </dd>
                         </div>
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">发票金额</dt>
-                          <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
-                            {invoiceData.view.currency} {invoiceData.view.amount}
+                          <dd className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
+                            {invoiceData.view.currency}{" "}
+                            {invoiceData.view.amount}
                           </dd>
                         </div>
-                        <div className="flex justify-between gap-2 px-3 py-2">
+                        <div className="flex justify-between gap-2 px-3.5 py-2.5">
                           <dt className="text-[var(--ink-muted)]">结算状态</dt>
                           <dd className="font-mono-code text-[var(--ink-primary)]">
                             {invoiceData.view.state}
@@ -783,6 +853,24 @@ export function WorkbenchDrawerSlot() {
                   {summaryError && <AccessNoticeCard error={summaryError} />}
                   {!summaryLoading && !summaryError && summaryData && (
                     <>
+                      <BriefProgressChain
+                        phase="done"
+                        summaryLabel="经营汇总实时鉴权明细"
+                        steps={[
+                          {
+                            id: "sum-scope",
+                            label: `租户与站点只读范围核验（${actor?.tenant ?? "当前租户"} · ${summaryData.view.warehouse}）`,
+                            status: "done",
+                          },
+                          {
+                            id: "sum-asof",
+                            label: "已同步实时在途统计基准",
+                            status: "done",
+                            meta: summaryData.view.as_of,
+                          },
+                        ]}
+                      />
+
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <BarChart3 className="h-4 w-4 text-[var(--accent)]" />
@@ -792,19 +880,20 @@ export function WorkbenchDrawerSlot() {
                         </div>
                         <SourceTag source={summaryData.source} />
                       </div>
-                      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-4">
-                        <div className="text-[11.5px] text-[var(--ink-muted)]">
-                          在途未结运单 (open_shipments)
+                      <div className="rounded-tile bg-[var(--bg-surface-tint)] p-4.5">
+                        <div className="text-[12px] text-[var(--ink-muted)]">
+                          在途未结运单
                         </div>
-                        <div className="mt-1 font-mono-code text-[24px] font-semibold text-[var(--accent)]">
+                        <div className="mt-1 font-mono-code tabular-nums text-[30px] font-semibold text-[var(--accent)]">
                           {summaryData.view.open_shipments}
                         </div>
-                        <div className="mt-2 font-mono-code text-[11px] text-[var(--ink-muted)]">
+                        <div className="mt-2 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
                           统计基准日：{summaryData.view.as_of}
                         </div>
                       </div>
                       <Button
                         size="sm"
+                        pill
                         variant="secondary"
                         onClick={() => void loadSelectedObject()}
                         className="w-full"
@@ -825,34 +914,52 @@ export function WorkbenchDrawerSlot() {
                   {briefError && <AccessNoticeCard error={briefError} />}
                   {!briefLoading && !briefError && brief && (
                     <>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3">
-                          <div className="text-[11.5px] text-[var(--ink-muted)]">
+                      <BriefProgressChain
+                        phase="done"
+                        summaryLabel="简报快照明细"
+                        steps={[
+                          {
+                            id: "brief-auth",
+                            label: "已按当前账号授权站点汇总待办与会议",
+                            status: "done",
+                          },
+                          {
+                            id: "brief-time",
+                            label: "快照生成时间",
+                            status: "done",
+                            meta: formatUnixTime(brief.as_of),
+                          },
+                        ]}
+                      />
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
+                          <div className="text-[12px] text-[var(--ink-muted)]">
                             待我审批
                           </div>
-                          <div className="mt-1 font-mono-code text-[20px] font-semibold text-[var(--ink-primary)]">
+                          <div className="mt-1 font-mono-code tabular-nums text-[24px] font-semibold text-[var(--ink-primary)]">
                             {brief.pending_approvals}
                             {brief.pending_approvals_capped ? "+" : ""}
                           </div>
                         </div>
-                        <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3">
-                          <div className="text-[11.5px] text-[var(--ink-muted)]">
+                        <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
+                          <div className="text-[12px] text-[var(--ink-muted)]">
                             未来 7 天会议
                           </div>
-                          <div className="mt-1 font-mono-code text-[20px] font-semibold text-[var(--ink-primary)]">
+                          <div className="mt-1 font-mono-code tabular-nums text-[24px] font-semibold text-[var(--ink-primary)]">
                             {brief.meetings}
                           </div>
                         </div>
                       </div>
 
-                      <div className="rounded-[4px] border border-[var(--hairline)]">
-                        <div className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--ink-secondary)]">
+                      <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
+                        <div className="px-3.5 py-2.5 text-[12px] font-semibold text-[var(--ink-secondary)]">
                           已提交单据状态分布
                         </div>
                         <div className="divide-y divide-[var(--hairline-subtle)]">
                           {Object.entries(brief.submitted_current_states)
                             .length === 0 ? (
-                            <div className="px-3 py-4 text-center text-[12px] text-[var(--ink-muted)]">
+                            <div className="px-3.5 py-5 text-center text-[12px] text-[var(--ink-muted)]">
                               暂无已提交记录
                             </div>
                           ) : (
@@ -860,10 +967,10 @@ export function WorkbenchDrawerSlot() {
                               ([stateKey, count]) => (
                                 <div
                                   key={stateKey}
-                                  className="flex items-center justify-between px-3 py-2 text-[12px]"
+                                  className="flex items-center justify-between px-3.5 py-2.5 text-[12px]"
                                 >
                                   <StatusBadge status={stateKey} compact />
-                                  <span className="font-mono-code font-semibold text-[var(--ink-primary)]">
+                                  <span className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
                                     {count}
                                   </span>
                                 </div>
@@ -873,7 +980,7 @@ export function WorkbenchDrawerSlot() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 font-mono-code text-[11px] text-[var(--ink-muted)]">
+                      <div className="flex items-center justify-between gap-2 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
                         <span>快照：{formatUnixTime(brief.as_of)}</span>
                         <button
                           type="button"
@@ -887,11 +994,11 @@ export function WorkbenchDrawerSlot() {
                   )}
                 </div>
               ) : (
-                <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3.5 text-[12.5px] text-[var(--ink-secondary)]">
-                  <div className="font-mono-code text-[11px] text-[var(--ink-muted)] uppercase">
+                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-4 text-[12.5px] text-[var(--ink-secondary)]">
+                  <div className="font-mono-code text-[11px] text-[var(--ink-muted)]">
                     {selectedObject.kind} · {selectedObject.id}
                   </div>
-                  <div className="mt-1 font-medium text-[var(--ink-primary)]">
+                  <div className="mt-1 font-semibold text-[var(--ink-primary)]">
                     {selectedObject.title || selectedObject.id}
                   </div>
                 </div>
@@ -900,7 +1007,7 @@ export function WorkbenchDrawerSlot() {
           )}
 
           {(activeTab === "assigned" || activeTab === "submitted") && (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {tasksLoading && (
                 <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
                   正在加载队列…
@@ -908,8 +1015,8 @@ export function WorkbenchDrawerSlot() {
               )}
               {tasksError && <AccessNoticeCard error={tasksError} />}
               {!tasksLoading && !tasksError && tasks.length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-10 text-center text-[12.5px] text-[var(--ink-muted)]">
-                  <Inbox className="h-5 w-5 opacity-60" strokeWidth={1.5} />
+                <div className="flex flex-col items-center gap-2 py-12 text-center text-[12.5px] text-[var(--ink-muted)]">
+                  <Inbox className="h-5 w-5 opacity-60" strokeWidth={1.6} />
                   <span>
                     {activeTab === "assigned"
                       ? "当前没有待您审批的单据"
@@ -918,60 +1025,64 @@ export function WorkbenchDrawerSlot() {
                 </div>
               )}
               {!tasksLoading && !tasksError && tasks.length > 0 && (
-                <div className="divide-y divide-[var(--hairline)] rounded-[4px] border border-[var(--hairline)]">
-                  {tasks.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() =>
-                        openDrawer(
-                          {
-                            kind: "proposal",
-                            id: item.id,
-                            warehouse: item.warehouse,
-                            title: formatProposalAction(item.action),
-                          },
-                          { tab: "current" },
-                        )
-                      }
-                      className="flex w-full flex-col gap-1.5 px-3 py-2.5 text-left hover:bg-[var(--bg-subtle)] transition-colors duration-[120ms] cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono-code text-[12px] font-semibold text-[var(--ink-primary)] truncate">
-                          {item.id}
-                        </span>
-                        <StatusBadge
-                          status={
-                            item.state === "REJECTED" &&
-                            item.decision === "returned"
-                              ? "returned"
-                              : item.state
-                          }
-                          compact
-                        />
-                      </div>
-                      <div className="flex items-center justify-between text-[11.5px] text-[var(--ink-muted)]">
-                        <span>
-                          {formatProposalAction(item.action)} ·{" "}
-                          <span className="font-mono-code">
+                <div className="space-y-2">
+                  {tasks.map((item) => {
+                    const shortId = formatShortDigest(item.id, 4, 4);
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() =>
+                          openDrawer(
+                            {
+                              kind: "proposal",
+                              id: item.id,
+                              warehouse: item.warehouse,
+                              title: `${formatProposalAction(item.action)} · ${shortId}`,
+                            },
+                            { tab: "current" },
+                          )
+                        }
+                        className="flex w-full flex-col gap-1.5 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-3 text-left hover:bg-[var(--bg-hover)] transition-colors duration-[150ms] cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[12.5px] font-semibold text-[var(--ink-primary)] truncate">
+                            {formatProposalAction(item.action)} ·{" "}
                             {item.warehouse}
                           </span>
-                        </span>
-                        <span className="font-mono-code">
-                          {formatUnixTime(item.due)}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
+                          <StatusBadge
+                            status={
+                              item.state === "REJECTED" &&
+                              item.decision === "returned"
+                                ? "returned"
+                                : item.state
+                            }
+                            compact
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[11.5px] text-[var(--ink-muted)]">
+                          <span
+                            title={item.id}
+                            className="font-mono-code tabular-nums"
+                          >
+                            {shortId}
+                          </span>
+                          <span className="font-mono-code tabular-nums">
+                            {formatUnixTime(item.due)}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               <div className="pt-2">
                 <Link
                   href="/work"
-                  className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--accent)] hover:underline"
+                  className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--accent)] hover:underline"
                 >
                   <span>前往完整工作台列表</span>
-                  <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.85} />
                 </Link>
               </div>
             </div>

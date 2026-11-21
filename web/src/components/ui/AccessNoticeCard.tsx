@@ -94,27 +94,27 @@ export function AccessNoticeCard({
     switch (variant) {
       case "RECORD_UNAVAILABLE":
         return {
-          tone: "border-[var(--hairline-strong)] bg-[var(--bg-sheet)]",
+          tone: "bg-[var(--bg-surface)] shadow-[var(--shadow-card)]",
           iconBox:
-            "border-[var(--hairline-strong)] bg-[var(--bg-plane)] text-[var(--ink-secondary)]",
+            "bg-[var(--bg-surface-subtle)] text-[var(--ink-secondary)]",
           Icon: Lock,
           defaultTitle: "记录不可访问",
           defaultMessage: "当前账号无法访问这条记录。",
         };
       case "ACCESS_RESTRICTED":
         return {
-          tone: "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)]",
+          tone: "bg-[var(--status-crimson-wash)]",
           iconBox:
-            "border-[var(--status-crimson-border)] bg-[var(--bg-sheet)] text-[var(--status-crimson)]",
+            "bg-[var(--bg-surface)] text-[var(--status-crimson)] shadow-[var(--shadow-subtle)]",
           Icon: ShieldAlert,
           defaultTitle: "访问范围受限",
           defaultMessage: "当前账号无权执行此操作或访问该站点范围。",
         };
       case "ACTION_NOT_ALLOWED":
         return {
-          tone: "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
+          tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "border-[var(--status-amber-border)] bg-[var(--bg-sheet)] text-[var(--status-amber)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
           Icon: ShieldAlert,
           defaultTitle: "当前账号不可执行该动作",
           defaultMessage:
@@ -122,27 +122,27 @@ export function AccessNoticeCard({
         };
       case "ACCESS_CHANGED":
         return {
-          tone: "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
+          tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "border-[var(--status-amber-border)] bg-[var(--bg-sheet)] text-[var(--status-amber)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
           Icon: AlertTriangle,
           defaultTitle: "访问权限已变更",
           defaultMessage: "访问权限已变更，已清除旧视图并同步刷新可用能力。",
         };
       case "CONFLICT":
         return {
-          tone: "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
+          tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "border-[var(--status-amber-border)] bg-[var(--bg-sheet)] text-[var(--status-amber)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
           Icon: RefreshCw,
           defaultTitle: "数据快照已更新",
           defaultMessage: "数据已更新，请刷新并核对最新快照后再确认。",
         };
       case "RETRY_LATER":
         return {
-          tone: "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
+          tone: "bg-[var(--status-amber-wash)]",
           iconBox:
-            "border-[var(--status-amber-border)] bg-[var(--bg-sheet)] text-[var(--status-amber)]",
+            "bg-[var(--bg-surface)] text-[var(--status-amber)] shadow-[var(--shadow-subtle)]",
           Icon: Clock,
           defaultTitle: "服务繁忙或上游连接暂不可用",
           defaultMessage:
@@ -163,20 +163,16 @@ export function AccessNoticeCard({
   return (
     <div
       role="alert"
-      className={[
-        "rounded-[6px] border p-4",
-        config.tone,
-        className,
-      ].join(" ")}
+      className={["rounded-md p-4", config.tone, className].join(" ")}
     >
       <div className="flex items-start gap-3">
         <div
           className={[
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] border",
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
             config.iconBox,
           ].join(" ")}
         >
-          <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+          <Icon className="h-4 w-4" strokeWidth={1.85} aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="text-[14px] font-semibold text-[var(--ink-primary)]">
@@ -201,6 +197,7 @@ export function AccessNoticeCard({
                 <Button
                   key={wh}
                   size="sm"
+                  pill
                   variant="secondary"
                   onClick={() => onSelectWarehouse(wh)}
                   className="font-mono-code"
@@ -211,44 +208,47 @@ export function AccessNoticeCard({
             </div>
           )}
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {effectiveProposalId && (
-              <Link
-                href={`/proposals/${encodeURIComponent(effectiveProposalId)}`}
-                className="inline-flex h-8 items-center gap-1.5 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-3 text-[12.5px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
-              >
-                <span>查看单据详情</span>
-                <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.75} />
-              </Link>
-            )}
+          {(effectiveProposalId || onRetry || backHref) && (
+            <div className="mt-3.5 flex flex-wrap items-center gap-2">
+              {effectiveProposalId && (
+                <Link
+                  href={`/proposals/${encodeURIComponent(effectiveProposalId)}`}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-shadow"
+                >
+                  <span>查看单据详情</span>
+                  <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.8} />
+                </Link>
+              )}
 
-            {onRetry && (
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={variant === "RETRY_LATER" && countdown > 0}
-                onClick={onRetry}
-              >
-                <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
-                <span>
-                  {variant === "RETRY_LATER" && countdown > 0
-                    ? `请等待 ${countdown}s`
-                    : variant === "CONFLICT"
-                      ? "刷新最新快照"
-                      : "重新尝试"}
-                </span>
-              </Button>
-            )}
+              {onRetry && (
+                <Button
+                  size="sm"
+                  pill
+                  variant="secondary"
+                  disabled={variant === "RETRY_LATER" && countdown > 0}
+                  onClick={onRetry}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.8} />
+                  <span>
+                    {variant === "RETRY_LATER" && countdown > 0
+                      ? `请等待 ${countdown}s`
+                      : variant === "CONFLICT"
+                        ? "刷新最新快照"
+                        : "重新尝试"}
+                  </span>
+                </Button>
+              )}
 
-            {backHref && (
-              <Link
-                href={backHref}
-                className="inline-flex h-8 items-center rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-3 text-[12.5px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
-              >
-                {backLabel}
-              </Link>
-            )}
-          </div>
+              {backHref && (
+                <Link
+                  href={backHref}
+                  className="inline-flex h-8 items-center rounded-full bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-shadow"
+                >
+                  {backLabel}
+                </Link>
+              )}
+            </div>
+          )}
 
           {(effectiveRequestId || effectiveRunId) && (
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--hairline-subtle)] pt-2 font-mono-code text-[11px] text-[var(--ink-muted)]">

@@ -20,6 +20,7 @@ import {
   formatShortDigest,
   formatUnixTime,
 } from "@/lib/format";
+import { Interactive3DCard } from "@/components/kinetic";
 import { Button } from "@/components/ui/Button";
 import { SourceTag } from "@/components/ui/SourceTag";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -82,15 +83,17 @@ export function buildCapabilityPromptOptions(
 }
 
 const TOOL_LABELS: Record<string, string> = {
-  "shipment.read": "运单查询",
+  "shipment.read": "运单实时状态",
   "shipment.reschedule": "运单改期提案",
   "order.draft.prepare": "销售订单草稿",
-  "finance.invoice.read": "财务发票",
+  "finance.invoice.read": "财务发票核对",
   "mail.inbox.read": "企业收件箱",
   "decision.warehouse.summary": "仓库经营概览",
 };
 
-function isInvoiceView(data: Record<string, unknown>): data is Record<string, unknown> & InvoiceView {
+function isInvoiceView(
+  data: Record<string, unknown>,
+): data is Record<string, unknown> & InvoiceView {
   return (
     typeof data.invoice_id === "string" &&
     typeof data.amount === "string" &&
@@ -98,7 +101,9 @@ function isInvoiceView(data: Record<string, unknown>): data is Record<string, un
   );
 }
 
-function isShipmentView(data: Record<string, unknown>): data is Record<string, unknown> & ShipmentView {
+function isShipmentView(
+  data: Record<string, unknown>,
+): data is Record<string, unknown> & ShipmentView {
   return (
     typeof data.shipment_id === "string" &&
     typeof data.delivery_date === "string"
@@ -128,13 +133,13 @@ function renderConciseDiff(proposal: Proposal): React.ReactNode {
     const newDate =
       typeof after.delivery_date === "string" ? after.delivery_date : "—";
     return (
-      <div className="mt-2.5 flex flex-wrap items-center gap-2 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12.5px]">
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12.5px]">
         <span className="text-[var(--ink-muted)]">交付日期</span>
         <span className="font-mono-code text-[var(--ink-secondary)] line-through">
           {oldDate}
         </span>
-        <ArrowRight className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
-        <span className="font-mono-code font-semibold text-[var(--accent)]">
+        <ArrowRight className="h-3.5 w-3.5 text-[var(--ink-faint)]" />
+        <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent)]">
           {newDate}
         </span>
       </div>
@@ -147,22 +152,22 @@ function renderConciseDiff(proposal: Proposal): React.ReactNode {
     const total = typeof after.total === "string" ? after.total : "—";
     const items = Array.isArray(after.items) ? after.items.length : 0;
     return (
-      <div className="mt-2.5 grid grid-cols-3 gap-2 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12px]">
+      <div className="mt-3 grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
         <div>
           <div className="text-[11px] text-[var(--ink-muted)]">采购单号</div>
-          <div className="font-mono-code font-medium text-[var(--ink-primary)] truncate">
+          <div className="mt-0.5 truncate font-mono-code font-medium text-[var(--ink-primary)]">
             {po}
           </div>
         </div>
         <div>
           <div className="text-[11px] text-[var(--ink-muted)]">订单总额</div>
-          <div className="font-mono-code font-semibold text-[var(--ink-primary)]">
+          <div className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
             {currency} {total}
           </div>
         </div>
         <div>
           <div className="text-[11px] text-[var(--ink-muted)]">明细行数</div>
-          <div className="font-mono-code font-medium text-[var(--ink-primary)]">
+          <div className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
             {items} 行
           </div>
         </div>
@@ -191,26 +196,31 @@ export function TurnResultCard({
   onSelectClarification,
   onInspectObject,
 }: TurnResultCardProps) {
-  // 1. Clarification
   if (result.kind === "clarification") {
     const options = buildCapabilityPromptOptions(capabilities);
     return (
-      <div
+      <Interactive3DCard
+        maxTilt={2}
+        hoverLiftPx={-1}
+        sheenIntensity="subtle"
         data-testid="turn-card-clarification"
-        className="rounded-[6px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] p-4"
+        className="rounded-card bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]"
       >
-        <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--ink-secondary)]">
-          <HelpCircle className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.75} />
+        <div className="flex items-center gap-2 text-[12.5px] font-medium text-[var(--ink-secondary)]">
+          <HelpCircle
+            className="h-4 w-4 text-[var(--accent)]"
+            strokeWidth={1.85}
+          />
           <span>需要补充指令要素</span>
         </div>
-        <p className="mt-2 text-[13.5px] leading-relaxed text-[var(--ink-primary)] break-words">
+        <p className="mt-2 text-[14px] leading-relaxed text-[var(--ink-primary)] break-words">
           {result.question}
         </p>
 
         {options.length > 0 && onSelectClarification && (
-          <div className="mt-3 border-t border-[var(--hairline-subtle)] pt-3">
+          <div className="mt-3.5 border-t border-[var(--hairline-subtle)] pt-3">
             <div className="mb-2 text-[11.5px] text-[var(--ink-muted)]">
-              可直接点选当前账号已授权的标准查询指令：
+              可直接点选常用查询：
             </div>
             <div className="flex flex-wrap gap-1.5">
               {options.map((opt) => (
@@ -219,9 +229,9 @@ export function TurnResultCard({
                   type="button"
                   data-testid={`clarification-option-${opt.domain}`}
                   onClick={() => onSelectClarification(opt.prompt)}
-                  className="inline-flex items-center gap-1.5 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-2.5 py-1.5 text-[12px] text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] transition-colors duration-[120ms] cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent)] transition-colors duration-[140ms] cursor-pointer"
                 >
-                  <span className="font-mono-code text-[10.5px] text-[var(--ink-muted)]">
+                  <span className="text-[11px] text-[var(--ink-muted)]">
                     {opt.domain}
                   </span>
                   <span>{opt.label}</span>
@@ -230,11 +240,10 @@ export function TurnResultCard({
             </div>
           </div>
         )}
-      </div>
+      </Interactive3DCard>
     );
   }
 
-  // 2. Typed Read Result
   if (result.kind === "result") {
     const rawData = (result.data ?? {}) as Record<string, unknown>;
     const toolLabel = TOOL_LABELS[result.tool] || result.tool;
@@ -270,23 +279,22 @@ export function TurnResultCard({
     };
 
     return (
-      <div
+      <Interactive3DCard
+        maxTilt={2.5}
+        hoverLiftPx={-1}
+        sheenIntensity="subtle"
         data-testid="turn-card-result"
         data-tool={result.tool}
-        className="rounded-[6px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] overflow-hidden"
+        className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)]"
       >
-        {/* Top Metadata Strip */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-3.5 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline-subtle)]">
           <div className="flex items-center gap-2">
-            <span className="font-mono-code text-[11px] font-semibold text-[var(--status-emerald)]">
-              已获取结果
-            </span>
-            <span className="text-[var(--hairline-strong)]">·</span>
-            <span className="text-[12.5px] font-medium text-[var(--ink-primary)]">
+            <span className="h-2 w-2 rounded-full bg-[var(--status-emerald)]" />
+            <span className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
               {toolLabel}
             </span>
             {warehouse && (
-              <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-1.5 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)] leading-none">
+              <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] leading-none">
                 {warehouse}
               </span>
             )}
@@ -294,27 +302,31 @@ export function TurnResultCard({
           <div className="flex items-center gap-2">
             <SourceTag source={result.source} />
             {timestamp && (
-              <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+              <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
                 {formatUnixTime(timestamp)}
               </span>
             )}
           </div>
         </div>
 
-        {/* Typed Payload Body */}
-        <div className="p-3.5">
+        <div className="p-4">
           {result.tool === "finance.invoice.read" && isInvoiceView(rawData) ? (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Receipt className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.75} />
-                  <span className="font-mono-code text-[14px] font-semibold text-[var(--ink-primary)]">
-                    {rawData.invoice_id}
+                <div className="flex items-center gap-2.5">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                    <Receipt className="h-4 w-4" strokeWidth={1.85} />
+                  </span>
+                  <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                    发票{" "}
+                    <span className="font-mono-code font-medium">
+                      {rawData.invoice_id}
+                    </span>
                   </span>
                 </div>
                 <StatusBadge status={rawData.state} compact />
               </div>
-              <dl className="grid grid-cols-3 gap-2 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12px]">
+              <dl className="grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
                 <div>
                   <dt className="text-[11px] text-[var(--ink-muted)]">所属仓库</dt>
                   <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
@@ -327,26 +339,31 @@ export function TurnResultCard({
                     {rawData.currency}
                   </dd>
                 </div>
-                <div className="text-right">
+                <div>
                   <dt className="text-[11px] text-[var(--ink-muted)]">发票金额</dt>
-                  <dd className="mt-0.5 font-mono-code text-[13.5px] font-semibold text-[var(--ink-primary)]">
+                  <dd className="mt-0.5 font-mono-code text-[13.5px] font-semibold text-[var(--ink-primary)] tabular-nums">
                     {rawData.amount}
                   </dd>
                 </div>
               </dl>
             </div>
           ) : result.tool === "shipment.read" && isShipmentView(rawData) ? (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Package className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.75} />
-                  <span className="font-mono-code text-[14px] font-semibold text-[var(--ink-primary)]">
-                    {rawData.shipment_id}
+                <div className="flex items-center gap-2.5">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                    <Package className="h-4 w-4" strokeWidth={1.85} />
+                  </span>
+                  <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                    运单{" "}
+                    <span className="font-mono-code font-medium">
+                      {rawData.shipment_id}
+                    </span>
                   </span>
                 </div>
                 <StatusBadge status={rawData.status} compact />
               </div>
-              <dl className="grid grid-cols-3 gap-2 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12px]">
+              <dl className="grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
                 <div>
                   <dt className="text-[11px] text-[var(--ink-muted)]">仓库站点</dt>
                   <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
@@ -355,13 +372,13 @@ export function TurnResultCard({
                 </div>
                 <div>
                   <dt className="text-[11px] text-[var(--ink-muted)]">计划交付日</dt>
-                  <dd className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)]">
+                  <dd className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                     {rawData.delivery_date}
                   </dd>
                 </div>
-                <div className="text-right">
+                <div>
                   <dt className="text-[11px] text-[var(--ink-muted)]">记录版本</dt>
-                  <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
+                  <dd className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
                     v{rawData.version}
                   </dd>
                 </div>
@@ -369,41 +386,41 @@ export function TurnResultCard({
             </div>
           ) : result.tool === "decision.warehouse.summary" &&
             isWarehouseSummary(rawData) ? (
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3.5 py-2.5">
-              <div className="flex items-center gap-2.5">
-                <Warehouse className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.75} />
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-tile bg-[var(--bg-surface-tint)] px-4 py-3">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                  <Warehouse className="h-4 w-4" strokeWidth={1.85} />
+                </span>
                 <div>
                   <div className="text-[11.5px] text-[var(--ink-muted)]">
                     仓库站点 {rawData.warehouse} · 在途未关闭运单
                   </div>
-                  <div className="mt-0.5 font-mono-code text-[20px] font-semibold text-[var(--ink-primary)]">
+                  <div className="mt-0.5 font-mono-code text-[22px] font-semibold text-[var(--ink-primary)] tabular-nums">
                     {rawData.open_shipments}
                   </div>
                 </div>
               </div>
-              <div className="text-right">
+              <div>
                 <div className="text-[11px] text-[var(--ink-muted)]">统计基准日</div>
-                <div className="mt-0.5 font-mono-code text-[12.5px] font-medium text-[var(--ink-secondary)]">
+                <div className="mt-0.5 font-mono-code text-[12.5px] font-medium text-[var(--ink-secondary)] tabular-nums">
                   {rawData.as_of}
                 </div>
               </div>
             </div>
           ) : result.tool === "mail.inbox.read" && isMailInboxView(rawData) ? (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-[12px] text-[var(--ink-muted)]">
-                <Mail className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.75} />
-                <span>
-                  共 {rawData.messages.length} 封邮件摘要（仅头部投影）
-                </span>
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[12px] text-[var(--ink-muted)]">
+                <Mail className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.85} />
+                <span>共 {rawData.messages.length} 封邮件摘要</span>
               </div>
               {rawData.messages.length === 0 ? (
-                <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-3 text-[12.5px] text-[var(--ink-muted)]">
+                <div className="rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-3 text-[12.5px] text-[var(--ink-muted)]">
                   当前收件箱暂无邮件记录。
                 </div>
               ) : (
-                <div className="divide-y divide-[var(--hairline)] rounded-[4px] border border-[var(--hairline)]">
+                <div className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)]">
                   {rawData.messages.map((msg) => (
-                    <div key={msg.id} className="px-3 py-2 text-[12.5px]">
+                    <div key={msg.id} className="px-3.5 py-2.5 text-[12.5px]">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-[var(--ink-primary)] break-words">
                           {msg.subject}
@@ -421,12 +438,14 @@ export function TurnResultCard({
               )}
             </div>
           ) : (
-            <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
+            <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
               {Object.entries(rawData).map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-3 px-3 py-1.5">
+                <div key={k} className="flex justify-between gap-3 px-3.5 py-2">
                   <dt className="font-mono-code text-[var(--ink-muted)]">{k}</dt>
                   <dd className="font-mono-code text-right text-[var(--ink-primary)] break-all">
-                    {typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+                    {typeof v === "string" ||
+                    typeof v === "number" ||
+                    typeof v === "boolean"
                       ? String(v)
                       : JSON.stringify(v)}
                   </dd>
@@ -435,63 +454,71 @@ export function TurnResultCard({
             </dl>
           )}
 
-          {/* Action Row */}
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
-            <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-              只读实时投影 · 受当前权限约束
+          <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-3">
+            <span className="text-[11.5px] text-[var(--ink-muted)]">
+              实时只读视图
             </span>
             <Button
               size="sm"
-              variant="secondary"
+              variant="quiet"
+              pill
               data-testid="turn-result-open-drawer"
               onClick={(e) =>
                 onInspectObject(buildDrawerSelection(), e.currentTarget)
               }
             >
-              <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span>在业务面板查看</span>
+              <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.85} />
+              <span>在右侧核对</span>
             </Button>
           </div>
         </div>
-      </div>
+      </Interactive3DCard>
     );
   }
 
-  // 3. Proposal Card
   if (result.kind === "proposal") {
     const { proposal } = result;
     const headline =
       proposal.state === "PROPOSED"
-        ? "已生成提案 · 待审批"
-        : `提案当前状态 · ${formatProposalStateLabel(proposal.state)}`;
+        ? "已生成待审提案"
+        : `提案状态 · ${formatProposalStateLabel(proposal.state)}`;
 
     return (
-      <div
+      <Interactive3DCard
+        maxTilt={2.5}
+        hoverLiftPx={-1}
+        sheenIntensity="subtle"
         data-testid="turn-card-proposal"
         data-proposal-id={proposal.id}
-        className="rounded-[6px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] overflow-hidden"
+        className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)]"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-3.5 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline-subtle)]">
           <div className="flex items-center gap-2">
-            <FileText className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.75} />
-            <span className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
+            <FileText
+              className="h-3.5 w-3.5 text-[var(--accent)]"
+              strokeWidth={1.85}
+            />
+            <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
               {headline}
             </span>
           </div>
           <StatusBadge status={proposal.state} compact />
         </div>
 
-        <div className="p-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
+        <div className="p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px]">
             <div className="flex items-center gap-2">
-              <span className="font-mono-code font-semibold text-[var(--ink-primary)]">
-                {proposal.id}
+              <span className="font-semibold text-[var(--ink-primary)]">
+                {formatProposalAction(proposal.plan.action)}
               </span>
-              <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
+              <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
                 {proposal.warehouse}
               </span>
-              <span className="text-[var(--ink-secondary)]">
-                {formatProposalAction(proposal.plan.action)}
+              <span
+                title={proposal.id}
+                className="font-mono-code text-[11.5px] text-[var(--ink-muted)]"
+              >
+                {formatShortDigest(proposal.id, 6, 4)}
               </span>
             </div>
             <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
@@ -501,10 +528,11 @@ export function TurnResultCard({
 
           {renderConciseDiff(proposal)}
 
-          <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
+          <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--hairline-subtle)] pt-3">
             <Button
               size="sm"
-              variant="secondary"
+              variant="quiet"
+              pill
               data-testid="turn-proposal-open-drawer"
               onClick={(e) =>
                 onInspectObject(
@@ -518,58 +546,66 @@ export function TurnResultCard({
                 )
               }
             >
-              <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span>在业务面板查看</span>
+              <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.85} />
+              <span>右侧核对</span>
             </Button>
             <Link
               href={`/proposals/${encodeURIComponent(proposal.id)}`}
               data-testid="turn-proposal-open-page"
-              className="inline-flex h-7 items-center gap-1 rounded-[4px] bg-[var(--accent)] px-2.5 text-[12px] font-medium text-white hover:bg-[var(--accent-hover)]"
+              className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 text-[12.5px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-colors"
             >
               <span>打开单据详情</span>
-              <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.9} />
             </Link>
           </div>
         </div>
-      </div>
+      </Interactive3DCard>
     );
   }
 
-  // 4. Approval Preview Card (NEVER approves via /turns!)
   const { proposal } = result;
   return (
-    <div
+    <Interactive3DCard
+      maxTilt={2.5}
+      hoverLiftPx={-1}
+      sheenIntensity="subtle"
       data-testid="turn-card-approval-preview"
       data-proposal-id={proposal.id}
-      className="rounded-[6px] border border-[var(--accent-border)] bg-[var(--bg-sheet)] overflow-hidden"
+      className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--accent-border)]"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--accent-border)] bg-[var(--accent-wash)] px-3.5 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--accent-wash)] px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <CheckSquare className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.75} />
-          <span className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-            请核对后确认 · 审批快照预览
+          <CheckSquare
+            className="h-3.5 w-3.5 text-[var(--accent)]"
+            strokeWidth={1.9}
+          />
+          <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
+            审批快照预览 · 需核对摘要后确认
           </span>
         </div>
         <StatusBadge status={proposal.state} compact />
       </div>
 
-      <div className="p-3.5">
-        <div className="grid grid-cols-2 gap-2 text-[12px] sm:grid-cols-3">
+      <div className="p-4">
+        <div className="grid grid-cols-2 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px] sm:grid-cols-3">
           <div>
             <div className="text-[11px] text-[var(--ink-muted)]">单据编号</div>
-            <div className="font-mono-code font-semibold text-[var(--ink-primary)]">
-              {proposal.id}
+            <div
+              title={proposal.id}
+              className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]"
+            >
+              {formatShortDigest(proposal.id, 6, 4)}
             </div>
           </div>
           <div>
             <div className="text-[11px] text-[var(--ink-muted)]">发起人 / 仓库</div>
-            <div className="font-mono-code text-[var(--ink-primary)]">
+            <div className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
               {proposal.requester} · {proposal.warehouse}
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">摘要锁 (SHA-256)</div>
-            <div className="font-mono-code text-[var(--ink-primary)]">
+            <div className="text-[11px] text-[var(--ink-muted)]">摘要锁</div>
+            <div className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
               {formatShortDigest(proposal.digest)}
             </div>
           </div>
@@ -577,14 +613,15 @@ export function TurnResultCard({
 
         {renderConciseDiff(proposal)}
 
-        <p className="mt-2.5 text-[12px] text-[var(--ink-muted)]">
-          对话区仅展示实时审批预览，正式批准、退回或拒绝必须在单据详情页核对摘要后显式确认。
+        <p className="mt-3 text-[12px] text-[var(--ink-muted)]">
+          正式批准、退回或拒绝需在单据详情页核对摘要后显式确认。
         </p>
 
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
+        <div className="mt-3.5 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--hairline-subtle)] pt-3">
           <Button
             size="sm"
-            variant="secondary"
+            variant="quiet"
+            pill
             data-testid="turn-approval-preview-drawer"
             onClick={(e) =>
               onInspectObject(
@@ -598,19 +635,19 @@ export function TurnResultCard({
               )
             }
           >
-            <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
-            <span>在业务面板预览</span>
+            <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.85} />
+            <span>右侧预览</span>
           </Button>
           <Link
             href={`/proposals/${encodeURIComponent(proposal.id)}`}
             data-testid="turn-approval-open-formal"
-            className="inline-flex h-7 items-center gap-1 rounded-[4px] bg-[var(--accent)] px-3 text-[12px] font-medium text-white hover:bg-[var(--accent-hover)]"
+            className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 text-[12.5px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-colors"
           >
             <span>前往正式审批页确认</span>
-            <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.9} />
           </Link>
         </div>
       </div>
-    </div>
+    </Interactive3DCard>
   );
 }

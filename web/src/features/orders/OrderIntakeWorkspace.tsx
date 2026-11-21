@@ -103,6 +103,12 @@ const BATCH_REVIEW_CODE_LABELS: Record<string, string> = {
   POLICY_DENIED: "外部策略拒绝该提案",
 };
 
+const INPUT_CLASS =
+  "h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[13px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]";
+
+const CELL_INPUT_CLASS =
+  "h-8.5 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-2.5 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]";
+
 function makeEmptyLine(idx: number): EditableOrderLine {
   return {
     id: `line-${Date.now()}-${idx}`,
@@ -437,7 +443,6 @@ export function OrderIntakeWorkspace() {
     const fingerprint = computeOrderFingerprint(warehouse, orderPayload);
     try {
       const res = await createStructuredIntake(warehouse, orderPayload);
-      // Reuse existing Idempotency-Key if exact same payload & intake_id; generate fresh if payload materially changed
       const idemKey =
         structuredFingerprint === fingerprint && structuredIdemKey
           ? structuredIdemKey
@@ -671,7 +676,7 @@ export function OrderIntakeWorkspace() {
   if (capabilities && authorizedWarehouses.length === 0) {
     return (
       <div
-        className="mx-auto max-w-[760px] p-4 lg:p-6 space-y-4"
+        className="mx-auto max-w-[780px] p-4 lg:p-6 space-y-4"
         data-testid="order-access-restricted"
       >
         <AccessNoticeCard
@@ -682,8 +687,8 @@ export function OrderIntakeWorkspace() {
         />
 
         {readableWarehouses.length > 0 && (
-          <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4 space-y-3">
-            <h3 className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 space-y-3.5">
+            <h3 className="text-[14px] font-semibold text-[var(--ink-primary)]">
               只读查询已有进件证据（已授权读仓：{readableWarehouses.join(", ")}）
             </h3>
             <div className="flex gap-2">
@@ -692,10 +697,11 @@ export function OrderIntakeWorkspace() {
                 value={lookupInput}
                 onChange={(e) => setLookupInput(e.target.value)}
                 placeholder="输入进件编号 (intake_id)"
-                className="h-9 flex-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px]"
+                className={INPUT_CLASS}
               />
               <Button
                 variant="secondary"
+                pill
                 loading={lookupLoading}
                 onClick={() => void handleLookupIntake(lookupInput)}
               >
@@ -720,17 +726,17 @@ export function OrderIntakeWorkspace() {
 
   return (
     <div
-      className="mx-auto max-w-[1200px] space-y-4 p-4 lg:p-6 pb-16"
+      className="mx-auto max-w-[1220px] space-y-5 p-4 sm:p-6 pb-20"
       data-testid="order-intake-workspace"
     >
       {/* Top Action Strip: Warehouse Selector, Mode Tabs & Saved Intake Lookup */}
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)]">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2.5">
+      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <label
                 htmlFor="order-warehouse-select"
-                className="text-[12px] font-medium text-[var(--ink-secondary)]"
+                className="text-[12.5px] font-medium text-[var(--ink-secondary)]"
               >
                 目标仓库
               </label>
@@ -746,7 +752,7 @@ export function OrderIntakeWorkspace() {
                   setStructuredError(null);
                 }}
                 data-testid="orders-warehouse-select"
-                className="h-8 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                className="h-9 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
               >
                 {authorizedWarehouses.map((wh) => (
                   <option key={wh} value={wh}>
@@ -756,12 +762,15 @@ export function OrderIntakeWorkspace() {
               </select>
             </div>
 
-            <span className="hidden sm:inline-block h-4 w-px bg-[var(--hairline-strong)]" />
+            <span
+              aria-hidden="true"
+              className="hidden sm:inline-block h-5 w-px bg-[var(--hairline)]"
+            />
 
             <div
               role="tablist"
               aria-label="订单进件方式"
-              className="flex flex-wrap items-center gap-1"
+              className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
             >
               {(
                 [
@@ -796,13 +805,13 @@ export function OrderIntakeWorkspace() {
                     data-testid={tab.testId}
                     onClick={() => setActiveTab(tab.id)}
                     className={[
-                      "inline-flex h-8 items-center gap-1.5 rounded-[4px] border px-3 text-[12.5px] font-medium transition-colors duration-[120ms] cursor-pointer",
+                      "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] transition-all duration-[165ms] cursor-pointer",
                       active
-                        ? "border-[var(--accent-border)] bg-[var(--bg-sheet)] text-[var(--accent)]"
-                        : "border-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-plane-hover)] hover:text-[var(--ink-primary)]",
+                        ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                        : "text-[var(--ink-secondary)] font-medium hover:text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
-                    <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <Icon className="h-3.5 w-3.5" strokeWidth={1.85} />
                     <span>{tab.label}</span>
                   </button>
                 );
@@ -824,11 +833,12 @@ export function OrderIntakeWorkspace() {
               onChange={(e) => setLookupInput(e.target.value)}
               placeholder="按 intake_id 查询历史进件"
               data-testid="orders-intake-lookup-input"
-              className="h-8 w-44 sm:w-52 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="h-9 w-48 sm:w-56 rounded-full border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3.5 font-mono-code text-[12px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
             />
             <Button
               type="submit"
               size="sm"
+              pill
               variant="secondary"
               loading={lookupLoading}
               data-testid="orders-intake-lookup-btn"
@@ -841,10 +851,10 @@ export function OrderIntakeWorkspace() {
 
         {/* Lookup Result Panel (if user searched or arrived via ?intake=...) */}
         {(lookupError || lookupDetail) && (
-          <div className="border-b border-[var(--hairline)] bg-[var(--bg-subtle)] p-4 space-y-3">
+          <div className="border-t border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-5 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-secondary)]">
-                SAVED INTAKE LOOKUP · 历史进件证据
+              <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
+                历史进件证据
               </span>
               <button
                 type="button"
@@ -852,7 +862,7 @@ export function OrderIntakeWorkspace() {
                   setLookupDetail(null);
                   setLookupError(null);
                 }}
-                className="text-[12px] text-[var(--ink-muted)] hover:text-[var(--ink-primary)] cursor-pointer"
+                className="rounded-full px-2.5 py-1 text-[12px] text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
               >
                 收起
               </button>
@@ -879,13 +889,13 @@ export function OrderIntakeWorkspace() {
             )}
             {lookupDetail &&
               lookupDetail.data.evidence.kind === "structured" && (
-                <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-3.5 space-y-2 text-[12.5px]">
+                <div className="rounded-tile bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)] p-4 space-y-2 text-[12.5px]">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-mono-code font-semibold text-[var(--ink-primary)]">
                       {lookupDetail.id} · {lookupDetail.data.warehouse} · PO{" "}
                       {lookupDetail.data.evidence.order.po}
                     </span>
-                    <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)]">
+                    <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
                       SHA-256{" "}
                       {formatShortDigest(
                         lookupDetail.data.evidence.artifact_sha256,
@@ -916,29 +926,35 @@ export function OrderIntakeWorkspace() {
           <form
             onSubmit={handleOneClickSubmitAndPrepare}
             data-testid="orders-structured-form"
-            className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)]"
+            className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
               <div>
-                <h2 className="text-[14px] font-semibold text-[var(--ink-primary)]">
-                  结构化采购单进件（两步确定性提交）
+                <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                  结构化采购单进件
                 </h2>
-                <p className="text-[12px] text-[var(--ink-muted)]">
-                  第 1 步写入内容寻址进件（POST /v1/intakes/{warehouse}/structured），第 2 步携带稳定 Idempotency-Key 生成 ERP 销售草稿提案。
+                <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
+                  第 1 步写入内容寻址进件（站点{" "}
+                  <span className="font-mono-code text-[var(--ink-secondary)]">
+                    {warehouse || "—"}
+                  </span>
+                  ），第 2 步携带稳定幂等键生成 ERP 销售草稿提案。
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="sm"
+                  pill
                   variant="secondary"
                   onClick={handlePrefillDemo}
                   data-testid="orders-prefill-demo-btn"
                 >
                   <Sparkles className="h-3.5 w-3.5 text-[var(--accent)]" />
-                  <span>载入合成演示样例 (FE-DEMO-001)</span>
+                  <span>载入演示样例 (FE-DEMO-001)</span>
                 </Button>
                 <Button
                   size="sm"
+                  pill
                   variant="ghost"
                   onClick={handleGenerateNewPoSuffix}
                   data-testid="orders-po-suffix-btn"
@@ -949,10 +965,10 @@ export function OrderIntakeWorkspace() {
               </div>
             </div>
 
-            <div className="p-4 space-y-4">
+            <div className="p-5 space-y-5">
               {/* Header Fields */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                <label className="block space-y-1">
+              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
+                <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                     采购单号 (PO)
                   </span>
@@ -965,7 +981,7 @@ export function OrderIntakeWorkspace() {
                     }
                     aria-invalid={fieldErrorMap.has("po") ? "true" : undefined}
                     data-testid="orders-input-po"
-                    className="h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[13px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                    className={INPUT_CLASS}
                   />
                   {fieldErrorMap.has("po") && (
                     <span className="block text-[11.5px] text-[var(--status-crimson)]">
@@ -974,7 +990,7 @@ export function OrderIntakeWorkspace() {
                   )}
                 </label>
 
-                <label className="block space-y-1">
+                <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                     买方编码 (Buyer)
                   </span>
@@ -989,7 +1005,7 @@ export function OrderIntakeWorkspace() {
                       fieldErrorMap.has("buyer") ? "true" : undefined
                     }
                     data-testid="orders-input-buyer"
-                    className="h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[13px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                    className={INPUT_CLASS}
                   />
                   {fieldErrorMap.has("buyer") && (
                     <span className="block text-[11.5px] text-[var(--status-crimson)]">
@@ -998,7 +1014,7 @@ export function OrderIntakeWorkspace() {
                   )}
                 </label>
 
-                <label className="block space-y-1">
+                <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                     币种 (ISO-4217)
                   </span>
@@ -1017,11 +1033,11 @@ export function OrderIntakeWorkspace() {
                       fieldErrorMap.has("currency") ? "true" : undefined
                     }
                     data-testid="orders-input-currency"
-                    className="h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[13px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                    className={INPUT_CLASS}
                   />
                 </label>
 
-                <label className="block space-y-1">
+                <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                     交付日期
                   </span>
@@ -1036,11 +1052,11 @@ export function OrderIntakeWorkspace() {
                       fieldErrorMap.has("delivery") ? "true" : undefined
                     }
                     data-testid="orders-input-delivery"
-                    className="h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[13px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                    className={INPUT_CLASS}
                   />
                 </label>
 
-                <label className="block space-y-1">
+                <label className="block space-y-1.5">
                   <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                     订单总额
                   </span>
@@ -1055,19 +1071,23 @@ export function OrderIntakeWorkspace() {
                       fieldErrorMap.has("total") ? "true" : undefined
                     }
                     data-testid="orders-input-total"
-                    className="h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 text-right font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                    className={`${INPUT_CLASS} text-right font-semibold tabular-nums`}
                   />
                 </label>
               </div>
 
-              {/* Line Items Table */}
-              <div className="rounded-[4px] border border-[var(--hairline)] overflow-hidden">
-                <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-3 py-2">
-                  <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-secondary)]">
-                    ORDER LINES · 商品明细行（{form.lines.length}）
+              {/* Line Items Well */}
+              <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
+                <div className="flex items-center justify-between border-b border-[var(--hairline-subtle)] px-4 py-2.5">
+                  <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
+                    商品明细行
+                    <span className="ml-1.5 font-mono-code tabular-nums text-[12px] font-normal text-[var(--ink-muted)]">
+                      ({form.lines.length})
+                    </span>
                   </span>
                   <Button
                     size="sm"
+                    pill
                     variant="secondary"
                     onClick={() =>
                       setForm((prev) => ({
@@ -1078,35 +1098,34 @@ export function OrderIntakeWorkspace() {
                         ],
                       }))
                     }
-                    className="h-6 px-2 text-[11.5px]"
                   >
-                    <Plus className="h-3 w-3" />
+                    <Plus className="h-3.5 w-3.5" />
                     <span>添加明细行</span>
                   </Button>
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-[12px]">
+                  <table className="w-full border-collapse text-left text-[12.5px]">
                     <thead>
-                      <tr className="border-b border-[var(--hairline)] bg-[var(--bg-subtle)] text-[11px] text-[var(--ink-muted)]">
-                        <th className="px-3 py-1.5 font-medium">SKU</th>
-                        <th className="px-3 py-1.5 font-medium">源单位</th>
-                        <th className="px-3 py-1.5 font-medium text-right">
+                      <tr className="border-b border-[var(--hairline-subtle)] text-[11.5px] text-[var(--ink-muted)]">
+                        <th className="px-3.5 py-2 font-medium">SKU</th>
+                        <th className="px-3.5 py-2 font-medium">源单位</th>
+                        <th className="px-3.5 py-2 font-medium text-right">
                           数量
                         </th>
-                        <th className="px-3 py-1.5 font-medium text-right">
+                        <th className="px-3.5 py-2 font-medium text-right">
                           单价
                         </th>
-                        <th className="px-3 py-1.5 font-medium text-right">
+                        <th className="px-3.5 py-2 font-medium text-right">
                           行金额
                         </th>
-                        <th className="px-2 py-1.5 w-10" />
+                        <th className="px-2 py-2 w-10" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--hairline-subtle)]">
                       {form.lines.map((line, idx) => (
                         <tr key={line.id}>
-                          <td className="p-2">
+                          <td className="px-3 py-2">
                             <input
                               type="text"
                               required
@@ -1115,10 +1134,10 @@ export function OrderIntakeWorkspace() {
                                 updateLine(idx, { sku: e.target.value })
                               }
                               data-testid={`orders-line-${idx}-sku`}
-                              className="h-8 w-full min-w-[110px] rounded-[4px] border border-[var(--hairline-strong)] px-2 font-mono-code text-[12.5px]"
+                              className={`${CELL_INPUT_CLASS} w-full min-w-[120px]`}
                             />
                           </td>
-                          <td className="p-2">
+                          <td className="px-3 py-2">
                             <input
                               type="text"
                               required
@@ -1127,10 +1146,10 @@ export function OrderIntakeWorkspace() {
                                 updateLine(idx, { unit: e.target.value })
                               }
                               data-testid={`orders-line-${idx}-unit`}
-                              className="h-8 w-24 rounded-[4px] border border-[var(--hairline-strong)] px-2 font-mono-code text-[12.5px]"
+                              className={`${CELL_INPUT_CLASS} w-24`}
                             />
                           </td>
-                          <td className="p-2">
+                          <td className="px-3 py-2">
                             <input
                               type="number"
                               min={1}
@@ -1145,10 +1164,10 @@ export function OrderIntakeWorkspace() {
                                 )
                               }
                               data-testid={`orders-line-${idx}-quantity`}
-                              className="h-8 w-24 ml-auto block rounded-[4px] border border-[var(--hairline-strong)] px-2 text-right font-mono-code text-[12.5px]"
+                              className={`${CELL_INPUT_CLASS} w-24 ml-auto block text-right tabular-nums`}
                             />
                           </td>
-                          <td className="p-2">
+                          <td className="px-3 py-2">
                             <input
                               type="text"
                               required
@@ -1161,10 +1180,10 @@ export function OrderIntakeWorkspace() {
                                 )
                               }
                               data-testid={`orders-line-${idx}-unit-price`}
-                              className="h-8 w-28 ml-auto block rounded-[4px] border border-[var(--hairline-strong)] px-2 text-right font-mono-code text-[12.5px]"
+                              className={`${CELL_INPUT_CLASS} w-28 ml-auto block text-right tabular-nums`}
                             />
                           </td>
-                          <td className="p-2">
+                          <td className="px-3 py-2">
                             <input
                               type="text"
                               required
@@ -1173,10 +1192,10 @@ export function OrderIntakeWorkspace() {
                                 updateLine(idx, { amount: e.target.value })
                               }
                               data-testid={`orders-line-${idx}-amount`}
-                              className="h-8 w-28 ml-auto block rounded-[4px] border border-[var(--hairline-strong)] px-2 text-right font-mono-code text-[12.5px] font-semibold"
+                              className={`${CELL_INPUT_CLASS} w-28 ml-auto block text-right font-semibold tabular-nums`}
                             />
                           </td>
-                          <td className="p-2 text-center">
+                          <td className="px-2 py-2 text-center">
                             <button
                               type="button"
                               disabled={form.lines.length <= 1}
@@ -1187,7 +1206,7 @@ export function OrderIntakeWorkspace() {
                                 }))
                               }
                               aria-label="删除行"
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:bg-[var(--status-crimson-wash)] hover:text-[var(--status-crimson)] disabled:opacity-35 cursor-pointer"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--status-crimson-wash)] hover:text-[var(--status-crimson)] disabled:opacity-30 transition-colors cursor-pointer"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1234,11 +1253,11 @@ export function OrderIntakeWorkspace() {
               )}
 
               {/* Step 1 + Step 2 Execution Footer */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--hairline)] pt-3.5">
-                <div className="space-y-0.5 text-[12px]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--hairline-subtle)] pt-4">
+                <div className="space-y-0.5 text-[12.5px]">
                   {structuredIntake && !formModifiedSinceIntake ? (
                     <div className="flex flex-wrap items-center gap-2 text-[var(--status-emerald)]">
-                      <CheckCircle2 className="h-4 w-4" strokeWidth={1.75} />
+                      <CheckCircle2 className="h-4 w-4" strokeWidth={1.85} />
                       <span>
                         步骤 1 完成 · 进件号{" "}
                         <span
@@ -1248,15 +1267,16 @@ export function OrderIntakeWorkspace() {
                           {structuredIntake.intake_id}
                         </span>
                       </span>
-                      <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-                        Idempotency-Key: {formatShortDigest(structuredIdemKey, 10, 6)}
+                      <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
+                        Idempotency-Key:{" "}
+                        {formatShortDigest(structuredIdemKey, 10, 6)}
                       </span>
                     </div>
                   ) : (
                     <span className="text-[var(--ink-muted)]">
                       {formModifiedSinceIntake
                         ? "表单字段已修改，将重新提交进件并生成新的幂等键（Idempotency-Key）。"
-                        : "支持分步提交或一键完成「写入进件 → 生成 ERP 销售草稿提案」。"}
+                        : "支持分步提交，或一键完成「写入进件 → 生成 ERP 销售草稿提案」。"}
                     </span>
                   )}
                 </div>
@@ -1265,6 +1285,7 @@ export function OrderIntakeWorkspace() {
                   <Button
                     type="button"
                     variant="secondary"
+                    pill
                     loading={structuredSubmitting}
                     onClick={() => void handleStep1SubmitStructured()}
                     data-testid="orders-submit-intake-btn"
@@ -1274,6 +1295,7 @@ export function OrderIntakeWorkspace() {
                   <Button
                     type="button"
                     variant="secondary"
+                    pill
                     disabled={!structuredIntake || formModifiedSinceIntake}
                     loading={structuredPreparing}
                     onClick={() => void handleStep2PrepareProposal()}
@@ -1284,6 +1306,7 @@ export function OrderIntakeWorkspace() {
                   <Button
                     type="submit"
                     variant="primary"
+                    pill
                     loading={structuredSubmitting || structuredPreparing}
                     data-testid="orders-submit-and-prepare-btn"
                   >
@@ -1319,19 +1342,24 @@ export function OrderIntakeWorkspace() {
       {/* ================================================================== */}
       {activeTab === "batch" && (
         <div className="space-y-4">
-          <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)]">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
               <div>
-                <h2 className="text-[14px] font-semibold text-[var(--ink-primary)]">
-                  批量结构化订单进件（POST /v1/intakes/{warehouse}/structured/batch）
+                <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                  批量结构化订单进件
                 </h2>
-                <p className="text-[12px] text-[var(--ink-muted)]">
-                  一次提交 1–50 条采购单，逐条返回 prepared（已生成提案）或 review（待人工复核及具体错误码）。
+                <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
+                  一次向站点{" "}
+                  <span className="font-mono-code text-[var(--ink-secondary)]">
+                    {warehouse || "—"}
+                  </span>{" "}
+                  提交 1–50 条采购单，逐条返回已生成提案或需人工复核原因。
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="sm"
+                  pill
                   variant="secondary"
                   onClick={handleLoadBatchSample}
                   data-testid="orders-batch-load-sample-btn"
@@ -1339,15 +1367,15 @@ export function OrderIntakeWorkspace() {
                   <FileSpreadsheet className="h-3.5 w-3.5 text-[var(--accent)]" />
                   <span>载入批量示例（1 正常 + 1 异常）</span>
                 </Button>
-                <div className="inline-flex rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] p-0.5">
+                <div className="inline-flex rounded-full bg-[var(--bg-surface-subtle)] p-1">
                   <button
                     type="button"
                     onClick={() => setBatchMode("rows")}
                     className={[
-                      "rounded-[2px] px-2.5 py-1 text-[11.5px] font-medium cursor-pointer",
+                      "rounded-full px-3 py-1 text-[12px] font-medium transition-all cursor-pointer",
                       batchMode === "rows"
-                        ? "bg-[var(--accent-wash)] text-[var(--accent)]"
-                        : "text-[var(--ink-muted)]",
+                        ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                        : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
                     多行表格
@@ -1359,10 +1387,10 @@ export function OrderIntakeWorkspace() {
                       setBatchMode("json");
                     }}
                     className={[
-                      "rounded-[2px] px-2.5 py-1 text-[11.5px] font-medium cursor-pointer",
+                      "rounded-full px-3 py-1 text-[12px] font-medium transition-all cursor-pointer",
                       batchMode === "json"
-                        ? "bg-[var(--accent-wash)] text-[var(--accent)]"
-                        : "text-[var(--ink-muted)]",
+                        ? "bg-[var(--bg-surface)] text-[var(--accent)] font-semibold shadow-[var(--shadow-subtle)]"
+                        : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
                     JSON 编辑
@@ -1371,28 +1399,28 @@ export function OrderIntakeWorkspace() {
               </div>
             </div>
 
-            <div className="p-4 space-y-3">
+            <div className="p-5 space-y-4">
               {batchMode === "rows" ? (
-                <div className="space-y-2">
-                  <div className="overflow-x-auto rounded-[4px] border border-[var(--hairline)]">
+                <div className="space-y-3">
+                  <div className="overflow-x-auto rounded-tile bg-[var(--bg-surface-tint)]">
                     <table className="w-full border-collapse text-left text-[12px]">
                       <thead>
-                        <tr className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] text-[11px] text-[var(--ink-muted)]">
-                          <th className="px-2.5 py-1.5 font-medium">#</th>
-                          <th className="px-2.5 py-1.5 font-medium">PO</th>
-                          <th className="px-2.5 py-1.5 font-medium">买方</th>
-                          <th className="px-2.5 py-1.5 font-medium">交期</th>
-                          <th className="px-2.5 py-1.5 font-medium">SKU</th>
-                          <th className="px-2.5 py-1.5 font-medium text-right">
+                        <tr className="border-b border-[var(--hairline-subtle)] text-[11.5px] text-[var(--ink-muted)]">
+                          <th className="px-3 py-2.5 font-medium">#</th>
+                          <th className="px-3 py-2.5 font-medium">PO</th>
+                          <th className="px-3 py-2.5 font-medium">买方</th>
+                          <th className="px-3 py-2.5 font-medium">交期</th>
+                          <th className="px-3 py-2.5 font-medium">SKU</th>
+                          <th className="px-3 py-2.5 font-medium text-right">
                             数量
                           </th>
-                          <th className="px-2.5 py-1.5 font-medium text-right">
+                          <th className="px-3 py-2.5 font-medium text-right">
                             单价
                           </th>
-                          <th className="px-2.5 py-1.5 font-medium text-right">
+                          <th className="px-3 py-2.5 font-medium text-right">
                             总额 (HKD)
                           </th>
-                          <th className="px-2 py-1.5 w-8" />
+                          <th className="px-2 py-2.5 w-10" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -1430,50 +1458,50 @@ export function OrderIntakeWorkspace() {
                           };
                           return (
                             <tr key={`batch-row-${idx}`}>
-                              <td className="px-2.5 py-2 font-mono-code text-[var(--ink-muted)]">
+                              <td className="px-3 py-2 font-mono-code text-[var(--ink-muted)]">
                                 {idx + 1}
                               </td>
-                              <td className="p-1.5">
+                              <td className="p-2">
                                 <input
                                   type="text"
                                   value={ord.po}
                                   onChange={(e) =>
                                     patchRow({ po: e.target.value })
                                   }
-                                  className="h-8 w-32 rounded-[4px] border border-[var(--hairline-strong)] px-2 font-mono-code text-[12px]"
+                                  className={`${CELL_INPUT_CLASS} w-32`}
                                 />
                               </td>
-                              <td className="p-1.5">
+                              <td className="p-2">
                                 <input
                                   type="text"
                                   value={ord.buyer}
                                   onChange={(e) =>
                                     patchRow({ buyer: e.target.value })
                                   }
-                                  className="h-8 w-24 rounded-[4px] border border-[var(--hairline-strong)] px-2 font-mono-code text-[12px]"
+                                  className={`${CELL_INPUT_CLASS} w-24`}
                                 />
                               </td>
-                              <td className="p-1.5">
+                              <td className="p-2">
                                 <input
                                   type="date"
                                   value={ord.delivery}
                                   onChange={(e) =>
                                     patchRow({ delivery: e.target.value })
                                   }
-                                  className="h-8 w-36 rounded-[4px] border border-[var(--hairline-strong)] px-2 font-mono-code text-[12px]"
+                                  className={`${CELL_INPUT_CLASS} w-36`}
                                 />
                               </td>
-                              <td className="p-1.5">
+                              <td className="p-2">
                                 <input
                                   type="text"
                                   value={firstLine.sku}
                                   onChange={(e) =>
                                     patchFirstLine({ sku: e.target.value })
                                   }
-                                  className="h-8 w-28 rounded-[4px] border border-[var(--hairline-strong)] px-2 font-mono-code text-[12px]"
+                                  className={`${CELL_INPUT_CLASS} w-28`}
                                 />
                               </td>
-                              <td className="p-1.5">
+                              <td className="p-2">
                                 <input
                                   type="number"
                                   min={1}
@@ -1485,10 +1513,10 @@ export function OrderIntakeWorkspace() {
                                         1,
                                     })
                                   }
-                                  className="h-8 w-20 ml-auto block rounded-[4px] border border-[var(--hairline-strong)] px-2 text-right font-mono-code text-[12px]"
+                                  className={`${CELL_INPUT_CLASS} w-20 ml-auto block text-right tabular-nums`}
                                 />
                               </td>
-                              <td className="p-1.5">
+                              <td className="p-2">
                                 <input
                                   type="text"
                                   value={firstLine.unit_price}
@@ -1497,13 +1525,13 @@ export function OrderIntakeWorkspace() {
                                       unit_price: e.target.value,
                                     })
                                   }
-                                  className="h-8 w-24 ml-auto block rounded-[4px] border border-[var(--hairline-strong)] px-2 text-right font-mono-code text-[12px]"
+                                  className={`${CELL_INPUT_CLASS} w-24 ml-auto block text-right tabular-nums`}
                                 />
                               </td>
-                              <td className="px-2.5 py-2 text-right font-mono-code font-semibold text-[var(--ink-primary)]">
+                              <td className="px-3 py-2 text-right font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
                                 {ord.total}
                               </td>
-                              <td className="p-1.5 text-center">
+                              <td className="p-2 text-center">
                                 <button
                                   type="button"
                                   disabled={batchOrders.length <= 1}
@@ -1512,7 +1540,7 @@ export function OrderIntakeWorkspace() {
                                       prev.filter((_, i) => i !== idx),
                                     )
                                   }
-                                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:text-[var(--status-crimson)] disabled:opacity-35 cursor-pointer"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--status-crimson-wash)] hover:text-[var(--status-crimson)] disabled:opacity-30 cursor-pointer"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </button>
@@ -1525,6 +1553,7 @@ export function OrderIntakeWorkspace() {
                   </div>
                   <Button
                     size="sm"
+                    pill
                     variant="secondary"
                     disabled={batchOrders.length >= 50}
                     onClick={() =>
@@ -1551,7 +1580,7 @@ export function OrderIntakeWorkspace() {
                       setBatchJsonError(null);
                     }}
                     data-testid="orders-batch-json-input"
-                    className="w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] p-3 font-mono-code text-[12px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                    className="w-full rounded-tile border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] p-3.5 font-mono-code text-[12px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
                   />
                   {batchJsonError && (
                     <p className="text-[12px] text-[var(--status-crimson)]">
@@ -1578,14 +1607,16 @@ export function OrderIntakeWorkspace() {
                 />
               )}
 
-              <div className="flex items-center justify-end border-t border-[var(--hairline)] pt-3">
+              <div className="flex items-center justify-end border-t border-[var(--hairline-subtle)] pt-3.5">
                 <Button
                   variant="primary"
+                  pill
                   loading={batchSubmitting}
                   onClick={() => void handleSubmitBatch()}
                   data-testid="orders-batch-submit-btn"
                 >
-                  批量校验并提交 ({batchMode === "rows" ? batchOrders.length : "JSON"})
+                  批量校验并提交 (
+                  {batchMode === "rows" ? batchOrders.length : "JSON"})
                 </Button>
               </div>
             </div>
@@ -1594,14 +1625,14 @@ export function OrderIntakeWorkspace() {
           {/* Per-item Batch Outcome Table */}
           {batchItems && (
             <div
-              className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
+              className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
               data-testid="orders-batch-results"
             >
-              <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2">
-                <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-secondary)]">
-                  BATCH OUTCOMES · 批量进件结果明细
+              <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-3.5">
+                <span className="text-[14px] font-semibold text-[var(--ink-primary)]">
+                  批量进件结果明细
                 </span>
-                <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)]">
+                <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
                   已生成{" "}
                   {batchItems.filter((i) => i.status === "prepared").length} ·
                   待复核{" "}
@@ -1611,31 +1642,38 @@ export function OrderIntakeWorkspace() {
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-[12.5px]">
                   <thead>
-                    <tr className="border-b border-[var(--hairline)] bg-[var(--bg-subtle)] text-[11px] text-[var(--ink-muted)]">
-                      <th className="px-3 py-2 font-medium">序号</th>
-                      <th className="px-3 py-2 font-medium">处理结果</th>
-                      <th className="px-3 py-2 font-medium">进件 / 提案编号</th>
-                      <th className="px-3 py-2 font-medium">详情 / 复核原因</th>
-                      <th className="px-3 py-2 font-medium text-right">操作</th>
+                    <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+                      <th className="px-4 py-2.5 font-medium">序号</th>
+                      <th className="px-3.5 py-2.5 font-medium">处理结果</th>
+                      <th className="px-3.5 py-2.5 font-medium">
+                        进件 / 提案编号
+                      </th>
+                      <th className="px-3.5 py-2.5 font-medium">
+                        详情 / 复核原因
+                      </th>
+                      <th className="px-4 py-2.5 font-medium text-right">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--hairline-subtle)]">
                     {batchItems.map((item) => (
-                      <tr key={`batch-res-${item.position}`}>
-                        <td className="px-3 py-2 font-mono-code text-[var(--ink-muted)]">
+                      <tr
+                        key={`batch-res-${item.position}`}
+                        className="hover:bg-[var(--bg-surface-tint)]/80 transition-colors"
+                      >
+                        <td className="px-4 py-3 font-mono-code text-[var(--ink-muted)]">
                           #{item.position + 1}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3.5 py-3">
                           {item.status === "prepared" ? (
                             <StatusBadge status={item.state} compact />
                           ) : (
-                            <span className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]">
                               <AlertTriangle className="h-3 w-3" />
                               <span>需人工复核</span>
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2 font-mono-code text-[12px]">
+                        <td className="px-3.5 py-3 font-mono-code text-[12px]">
                           {item.status === "prepared" ? (
                             <div>
                               <div className="font-semibold text-[var(--ink-primary)]">
@@ -1651,7 +1689,7 @@ export function OrderIntakeWorkspace() {
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-[12px]">
+                        <td className="px-3.5 py-3 text-[12px]">
                           {item.status === "prepared" ? (
                             <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)]">
                               digest {formatShortDigest(item.digest)}
@@ -1671,12 +1709,13 @@ export function OrderIntakeWorkspace() {
                             </div>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-right">
+                        <td className="px-4 py-3 text-right">
                           {item.status === "prepared" && (
                             <div className="inline-flex items-center gap-1.5">
                               <Button
                                 size="sm"
-                                variant="ghost"
+                                pill
+                                variant="quiet"
                                 onClick={(e) =>
                                   openDrawer(
                                     {
@@ -1693,10 +1732,10 @@ export function OrderIntakeWorkspace() {
                               </Button>
                               <Link
                                 href={`/proposals/${encodeURIComponent(item.proposal_id)}`}
-                                className="inline-flex h-7 items-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] px-2 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
+                                className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent)] transition-colors"
                               >
                                 <span>详情</span>
-                                <ArrowUpRight className="h-3 w-3" />
+                                <ArrowUpRight className="h-3.5 w-3.5" />
                               </Link>
                             </div>
                           )}
@@ -1716,20 +1755,20 @@ export function OrderIntakeWorkspace() {
       {/* ================================================================== */}
       {activeTab === "ocr" && (
         <div className="space-y-4">
-          <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4 space-y-3">
+          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-[14px] font-semibold text-[var(--ink-primary)]">
+                <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
                   单据图片 OCR 进件与坐标定位核对
                 </h2>
-                <p className="text-[12px] text-[var(--ink-muted)]">
-                  上传 PNG / JPEG 单据（≤ 8 MB），以 application/octet-stream 发送原始字节；本地预览通过 ObjectURL 管理，切换账号或离开页面时立即销毁。
+                <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
+                  上传 PNG / JPEG 单据（≤ 8 MB），本地预览通过临时对象地址管理，切换账号或离开页面时立即释放。
                 </p>
               </div>
               <SourceTag source="internal" />
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 rounded-[4px] border border-dashed border-[var(--hairline-strong)] bg-[var(--bg-subtle)] p-3.5">
+            <div className="flex flex-wrap items-center gap-3 rounded-tile border border-dashed border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] p-4.5">
               <input
                 type="file"
                 accept="image/png,image/jpeg,.png,.jpg,.jpeg"
@@ -1737,22 +1776,23 @@ export function OrderIntakeWorkspace() {
                   handleOcrFileSelect(e.target.files?.[0] ?? null)
                 }
                 data-testid="orders-ocr-file-input"
-                className="block max-w-full text-[12.5px] text-[var(--ink-secondary)] file:mr-3 file:rounded-[4px] file:border file:border-[var(--hairline-strong)] file:bg-[var(--bg-sheet)] file:px-3 file:py-1.5 file:text-[12px] file:font-medium file:text-[var(--ink-primary)] file:cursor-pointer hover:file:bg-[var(--bg-plane)]"
+                className="block max-w-full text-[12.5px] text-[var(--ink-secondary)] file:mr-3 file:rounded-full file:border-0 file:bg-[var(--bg-surface)] file:px-3.5 file:py-1.5 file:text-[12px] file:font-medium file:text-[var(--ink-primary)] file:shadow-[var(--shadow-subtle)] file:cursor-pointer hover:file:bg-[var(--bg-hover)]"
               />
               {ocrFile && (
-                <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)]">
+                <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono-code text-[11.5px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)]">
                   {ocrFile.name} · {(ocrFile.size / 1024).toFixed(1)} KB
                 </span>
               )}
               <div className="ml-auto">
                 <Button
                   variant="primary"
+                  pill
                   disabled={!ocrFile || !warehouse}
                   loading={ocrUploading}
                   onClick={() => void handleUploadOcr()}
                   data-testid="orders-ocr-upload-btn"
                 >
-                  <ImageUp className="h-4 w-4" strokeWidth={1.75} />
+                  <ImageUp className="h-4 w-4" strokeWidth={1.85} />
                   <span>上传并执行本地 OCR 提取</span>
                 </Button>
               </div>
@@ -1838,66 +1878,69 @@ function CreatedProposalBanner({
   return (
     <div
       data-testid="orders-created-proposal-card"
-      className="rounded-[4px] border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] p-4 space-y-3"
+      className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--status-emerald-wash)] px-5 py-3.5">
         <div className="flex items-center gap-2">
           <CheckCircle2
             className="h-4 w-4 text-[var(--status-emerald)]"
-            strokeWidth={1.75}
+            strokeWidth={1.9}
           />
           <span className="text-[14px] font-semibold text-[var(--ink-primary)]">
-            已生成提案 · 待审批
+            已生成 ERP 销售草稿提案
           </span>
           <StatusBadge status={proposal.state} compact />
         </div>
-        <span className="font-mono-code text-[12px] text-[var(--ink-muted)]">
+        <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono-code text-[11.5px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)]">
           digest {formatShortDigest(proposal.digest)}
         </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] px-3 py-2.5 text-[12px]">
-        <div>
-          <span className="text-[var(--ink-muted)]">提案编号：</span>
-          <span
-            className="font-mono-code font-semibold text-[var(--ink-primary)]"
-            data-testid="orders-created-proposal-id"
-          >
-            {proposal.id}
-          </span>
+      <div className="p-5 space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-[12.5px]">
+          <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2.5">
+            <div className="text-[11px] text-[var(--ink-muted)]">提案编号</div>
+            <div
+              className="mt-0.5 font-mono-code font-semibold text-[var(--ink-primary)]"
+              data-testid="orders-created-proposal-id"
+            >
+              {proposal.id}
+            </div>
+          </div>
+          <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2.5">
+            <div className="text-[11px] text-[var(--ink-muted)]">仓库站点</div>
+            <div className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]">
+              {proposal.warehouse}
+            </div>
+          </div>
+          <div className="rounded-sm bg-[var(--bg-surface-tint)] px-3.5 py-2.5">
+            <div className="text-[11px] text-[var(--ink-muted)]">业务目标</div>
+            <div className="mt-0.5 font-mono-code text-[var(--ink-primary)] break-all">
+              {proposal.plan.target}
+            </div>
+          </div>
         </div>
-        <div>
-          <span className="text-[var(--ink-muted)]">仓库站点：</span>
-          <span className="font-mono-code font-medium text-[var(--ink-primary)]">
-            {proposal.warehouse}
-          </span>
-        </div>
-        <div>
-          <span className="text-[var(--ink-muted)]">业务目标：</span>
-          <span className="font-mono-code text-[var(--ink-primary)]">
-            {proposal.plan.target}
-          </span>
-        </div>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Link
-          href={`/proposals/${encodeURIComponent(proposal.id)}`}
-          data-testid="orders-open-proposal-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-[4px] bg-[var(--accent)] px-3 text-[12.5px] font-medium text-white hover:bg-[var(--accent-hover)]"
-        >
-          <span>打开提案详情页</span>
-          <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
-        </Link>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={(e) => onInspectDrawer(e.currentTarget)}
-          data-testid="orders-inspect-drawer-btn"
-        >
-          <PanelRight className="h-3.5 w-3.5" strokeWidth={1.75} />
-          <span>在右侧面板核对</span>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={`/proposals/${encodeURIComponent(proposal.id)}`}
+            data-testid="orders-open-proposal-link"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-all duration-[160ms]"
+          >
+            <span>打开提案详情页</span>
+            <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </Link>
+          <Button
+            size="md"
+            pill
+            variant="secondary"
+            onClick={(e) => onInspectDrawer(e.currentTarget)}
+            data-testid="orders-inspect-drawer-btn"
+          >
+            <PanelRight className="h-3.5 w-3.5" strokeWidth={1.85} />
+            <span>在右侧面板核对</span>
+          </Button>
+        </div>
       </div>
     </div>
   );

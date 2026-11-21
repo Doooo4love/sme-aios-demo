@@ -182,31 +182,32 @@ export function OcrEvidenceViewer({
       data-testid="ocr-evidence-viewer"
     >
       {/* Left: Document Preview + Razor-Sharp SVG Bounding Box Overlay */}
-      <div className="flex flex-col rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-plane)] overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-sheet)] px-3.5 py-2">
+      <div className="flex flex-col rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] px-4.5 py-3">
           <div className="flex items-center gap-2 min-w-0">
-            <FileText
-              className="h-4 w-4 shrink-0 text-[var(--accent)]"
-              strokeWidth={1.75}
-            />
-            <span className="truncate text-[12.5px] font-semibold text-[var(--ink-primary)]">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+              <FileText className="h-3.5 w-3.5" strokeWidth={1.85} />
+            </span>
+            <span className="truncate text-[13px] font-semibold text-[var(--ink-primary)]">
               {filename || `单据进件 ${intakeId}`}
             </span>
-            <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
+            <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[10.5px] font-medium text-[var(--ink-secondary)]">
               {warehouse}
             </span>
           </div>
-          <div className="flex items-center gap-2.5 font-mono-code text-[11px] text-[var(--ink-muted)]">
+          <div className="flex items-center gap-2.5 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
             <span>
               {imgW}×{imgH}px
             </span>
-            <span>SHA-256 {formatShortDigest(evidence.artifact_sha256, 8, 4)}</span>
+            <span>
+              SHA-256 {formatShortDigest(evidence.artifact_sha256, 8, 4)}
+            </span>
           </div>
         </div>
 
-        <div className="p-3 sm:p-4 flex-1 flex items-center justify-center bg-[var(--bg-plane)]">
+        <div className="flex-1 flex items-center justify-center bg-[var(--bg-surface-tint)] p-4">
           <div
-            className="relative w-full overflow-hidden rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)]"
+            className="relative w-full overflow-hidden rounded-sm bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)]"
             style={{ aspectRatio: imageUrl ? undefined : `${imgW} / ${imgH}` }}
           >
             {imageUrl ? (
@@ -220,12 +221,12 @@ export function OcrEvidenceViewer({
             ) : (
               <div
                 data-testid="ocr-wireframe-fallback"
-                className="flex h-full w-full flex-col items-center justify-center bg-[var(--bg-subtle)] p-6 text-center text-[12px] text-[var(--ink-muted)]"
+                className="flex h-full w-full flex-col items-center justify-center bg-[var(--bg-surface-tint)] p-6 text-center text-[12.5px] text-[var(--ink-muted)]"
               >
-                <span className="font-mono-code text-[11px] uppercase tracking-[0.04em]">
-                  SAVED OCR GEOMETRY · 历史单据坐标视图
+                <span className="font-semibold text-[var(--ink-secondary)]">
+                  历史单据坐标视图
                 </span>
-                <span className="mt-1">
+                <span className="mt-1.5 max-w-[420px] leading-relaxed">
                   服务端仅持久化结构化证据与坐标（不留存原始图片字节），下方叠加层仍精确展示所有识别边界框。
                 </span>
               </div>
@@ -249,19 +250,19 @@ export function OcrEvidenceViewer({
 
                 const stroke = isActive
                   ? isDisputed
-                    ? "#B86E00"
-                    : "#0C6E91"
+                    ? "#B26200"
+                    : "#1668E3"
                   : isDisputed
-                    ? "rgba(184, 110, 0, 0.55)"
-                    : "rgba(12, 110, 145, 0.32)";
+                    ? "rgba(178, 98, 0, 0.55)"
+                    : "rgba(22, 104, 227, 0.34)";
 
                 const fill = isActive
                   ? isDisputed
-                    ? "rgba(184, 110, 0, 0.16)"
-                    : "rgba(12, 110, 145, 0.14)"
+                    ? "rgba(178, 98, 0, 0.16)"
+                    : "rgba(22, 104, 227, 0.14)"
                   : isSelected
-                    ? "rgba(12, 110, 145, 0.08)"
-                    : "rgba(12, 110, 145, 0.02)";
+                    ? "rgba(22, 104, 227, 0.08)"
+                    : "rgba(22, 104, 227, 0.02)";
 
                 return (
                   <rect
@@ -277,13 +278,14 @@ export function OcrEvidenceViewer({
                     data-testid="ocr-bbox-rect"
                     data-field-key={key}
                     data-active={isActive ? "true" : "false"}
-                    className="cursor-pointer transition-colors duration-[120ms]"
+                    className="cursor-pointer transition-colors duration-[150ms]"
                     onMouseEnter={() => setHoveredKey(key)}
                     onMouseLeave={() => setHoveredKey(null)}
                     onClick={() => setSelectedKey(key)}
                   >
                     <title>
-                      {labelForField(key)}: {field.confirmed ?? field.ocr?.value ?? "—"}
+                      {labelForField(key)}:{" "}
+                      {field.confirmed ?? field.ocr?.value ?? "—"}
                     </title>
                   </rect>
                 );
@@ -294,28 +296,26 @@ export function OcrEvidenceViewer({
 
         {/* Active BBox Readout Footer */}
         <div
-          className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline)] bg-[var(--bg-sheet)] px-3.5 py-2 text-[12px]"
+          className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] bg-[var(--bg-surface)] px-4.5 py-2.5 text-[12px]"
           data-testid="ocr-active-field-readout"
         >
           <div className="flex items-center gap-2 min-w-0">
             <Crosshair
               className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]"
-              strokeWidth={1.75}
+              strokeWidth={1.85}
             />
             <span className="text-[var(--ink-muted)] shrink-0">当前定位：</span>
             <span className="font-medium text-[var(--ink-primary)] truncate">
               {activeKey ? labelForField(activeKey) : "未选择字段"}
             </span>
             {activeField && (
-              <span className="font-mono-code font-semibold text-[var(--accent)] truncate">
+              <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent)] truncate">
                 {activeField.confirmed ?? activeField.ocr?.value ?? "—"}
               </span>
             )}
           </div>
-          <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
-            {activeBbox
-              ? `bbox [${activeBbox.join(", ")}]`
-              : "无坐标区域"}
+          <span className="font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
+            {activeBbox ? `bbox [${activeBbox.join(", ")}]` : "无坐标区域"}
             {activeField?.ocr?.score != null
               ? ` · 置信 ${activeField.ocr.score.toFixed(1)}%`
               : ""}
@@ -324,25 +324,23 @@ export function OcrEvidenceViewer({
       </div>
 
       {/* Right: Extracted Field Evidence Table + Draft Generation */}
-      <div className="flex flex-col rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden">
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-3.5 py-2">
-          <div>
-            <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-secondary)]">
-              OCR EVIDENCE · 字段提取明细
-            </span>
-          </div>
-          <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+      <div className="flex flex-col rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--hairline)] px-4.5 py-3">
+          <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+            字段提取明细
+          </span>
+          <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
             {evidence.reader_mode} · {orderedKeys.length} 字段
           </span>
         </div>
 
         <div className="flex-1 overflow-auto max-h-[460px]">
-          <table className="w-full border-collapse text-left text-[12px]">
+          <table className="w-full border-collapse text-left text-[12.5px]">
             <thead>
-              <tr className="sticky top-0 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] text-[11px] text-[var(--ink-muted)]">
-                <th className="px-3 py-2 font-medium">字段</th>
-                <th className="px-3 py-2 font-medium">OCR 识别值</th>
-                <th className="px-3 py-2 font-medium text-right">核验状态</th>
+              <tr className="sticky top-0 border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+                <th className="px-4 py-2.5 font-medium">字段</th>
+                <th className="px-3.5 py-2.5 font-medium">OCR 识别值</th>
+                <th className="px-4 py-2.5 font-medium text-right">核验状态</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -360,15 +358,15 @@ export function OcrEvidenceViewer({
                     onMouseLeave={() => setHoveredKey(null)}
                     onClick={() => setSelectedKey(key)}
                     className={[
-                      "transition-colors duration-[120ms] cursor-pointer",
+                      "transition-colors duration-[150ms] cursor-pointer",
                       isActive
                         ? "bg-[var(--accent-wash)]"
                         : isDisputed
                           ? "bg-[var(--status-amber-wash)]/55 hover:bg-[var(--status-amber-wash)]"
-                          : "hover:bg-[var(--bg-subtle)]",
+                          : "hover:bg-[var(--bg-surface-tint)]",
                     ].join(" ")}
                   >
-                    <td className="px-3 py-2">
+                    <td className="px-4 py-2.5">
                       <button
                         type="button"
                         onFocus={() => setSelectedKey(key)}
@@ -378,28 +376,28 @@ export function OcrEvidenceViewer({
                         {labelForField(key)}
                       </button>
                       {field.ocr?.bbox && (
-                        <div className="font-mono-code text-[10px] text-[var(--ink-muted)]">
+                        <div className="font-mono-code tabular-nums text-[10.5px] text-[var(--ink-muted)]">
                           [{field.ocr.bbox.join(", ")}]
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 font-mono-code text-[var(--ink-primary)]">
+                    <td className="px-3.5 py-2.5 font-mono-code text-[var(--ink-primary)]">
                       <div>{field.ocr?.value ?? "—"}</div>
                       {field.vision.length > 0 && field.vision[0]?.value && (
-                        <div className="text-[10.5px] text-[var(--ink-muted)]">
+                        <div className="text-[11px] text-[var(--ink-muted)]">
                           复核: {field.vision[0].value}
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-4 py-2.5 text-right">
                       {field.confirmed ? (
-                        <span className="inline-flex items-center gap-1 font-medium text-[var(--status-emerald)]">
-                          <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-emerald-wash)] px-2 py-0.5 text-[11px] font-medium text-[var(--status-emerald)]">
+                          <CheckCircle2 className="h-3 w-3" strokeWidth={1.85} />
                           <span>已确认</span>
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 font-medium text-[var(--status-amber-ink)]">
-                          <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-amber-wash)] px-2 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]">
+                          <AlertTriangle className="h-3 w-3" strokeWidth={1.85} />
                           <span>待人工复核</span>
                         </span>
                       )}
@@ -415,15 +413,15 @@ export function OcrEvidenceViewer({
         {onPrepareDraft && (
           <form
             onSubmit={handleSubmitDraft}
-            className="border-t border-[var(--hairline)] bg-[var(--bg-subtle)] p-3.5 space-y-3"
+            className="border-t border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4 space-y-3"
           >
             {needsManualReview && (
-              <div className="space-y-2 rounded-[4px] border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] p-3">
-                <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--status-amber-ink)]">
-                  <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  <span>以下存在 OCR 争议字段，请对照左侧原图确认值：</span>
+              <div className="space-y-2.5 rounded-tile bg-[var(--status-amber-wash)] p-3.5">
+                <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--status-amber-ink)]">
+                  <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.85} />
+                  <span>存在 OCR 争议字段，请对照左侧原图确认值：</span>
                 </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   {evidence.review_fields.map((fieldKey) => (
                     <label
                       key={fieldKey}
@@ -444,7 +442,7 @@ export function OcrEvidenceViewer({
                             [fieldKey]: e.target.value,
                           }))
                         }
-                        className="h-8 w-full rounded-[4px] border border-[var(--status-amber-border)] bg-[var(--bg-sheet)] px-2 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                        className="h-8.5 w-full rounded-sm border border-[var(--status-amber-border)] bg-[var(--bg-surface)] px-2.5 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
                       />
                     </label>
                   ))}
@@ -459,6 +457,7 @@ export function OcrEvidenceViewer({
               <Button
                 type="submit"
                 variant="primary"
+                pill
                 loading={preparing}
                 disabled={!evidence.complete && !needsManualReview}
                 data-testid="ocr-prepare-proposal-btn"

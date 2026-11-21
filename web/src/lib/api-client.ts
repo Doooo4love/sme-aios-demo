@@ -2,10 +2,15 @@ import type {
   Actor,
   AgentProfile,
   BriefResponse,
+  CalendarSyncResponse,
   Capabilities,
+  ChatRoom,
+  CompanyContactsResponse,
   DemoPersonaId,
   DemoPersonasResponse,
+  ExternalCalendarTarget,
   FieldValidationError,
+  McpStatusResponse,
   NormalizedApiError,
   NoticeDetail,
   NoticePage,
@@ -15,6 +20,8 @@ import type {
   TaskPage,
   TurnResult,
   WorkbenchToolCall,
+  ZoomBookingConfirmResponse,
+  ZoomBookingPreviewResponse,
 } from "@/lib/types";
 
 export type AuthResetReason =
@@ -726,6 +733,161 @@ export async function loginWithDemoPersona(
     setCsrfToken(res.csrf_token);
   }
   return res;
+}
+
+export async function loginWithCredentials(
+  username: string,
+  password: string,
+): Promise<{ csrf_token: string; expires_in: number }> {
+  const res = await apiFetch<{ csrf_token: string; expires_in: number }>(
+    "/api/auth/login",
+    {
+      method: "POST",
+      body: { username, password },
+      skipCsrf: true,
+      suppressAuthReset: true,
+    },
+  );
+  if (res?.csrf_token) {
+    setCsrfToken(res.csrf_token);
+  }
+  return res;
+}
+
+export const loginWithPassword = loginWithCredentials;
+
+export function fetchCompanyContacts(
+  query?: string,
+  options?: {
+    includeSelf?: boolean;
+    warehouse?: string;
+    limit?: number;
+    signal?: AbortSignal;
+  },
+) {
+  const sp = new URLSearchParams();
+  if (query && query.trim()) sp.set("q", query.trim());
+  if (options?.includeSelf) sp.set("include_self", "1");
+  if (options?.warehouse) sp.set("warehouse", options.warehouse);
+  if (options?.limit) sp.set("limit", String(options.limit));
+  const qs = sp.toString();
+  return apiFetch<CompanyContactsResponse>(
+    `/api/directory/contacts${qs ? `?${qs}` : ""}`,
+    { signal: options?.signal },
+  );
+}
+
+/**
+ * Opens an existing 1:1 room or creates one and admits the colleague BEFORE any message is sent.
+ */
+export async function openOrCreateDirectRoom(
+  contactSubject: string,
+  contactDisplayName?: string,
+  existingDirectRoomId?: string | null,
+): Promise<{ room: ChatRoom; created: boolean }> {
+  if (existingDirectRoomId) {
+    return {
+      room: {
+        id: existingDirectRoomId,
+        title: `私聊 · ${contactDisplayName || contactSubject}`,
+        owner: "",
+      },
+      created: false,
+    };
+  }
+  return apiFetch<{ room: ChatRoom; created: boolean }>(
+    "/api/directory/direct-room",
+    {
+      method: "POST",
+      body: {
+        target_subject: contactSubject,
+        target_display_name: contactDisplayName,
+      },
+    },
+  );
+}
+
+export function fetchMcpStatus(signal?: AbortSignal) {
+  return apiFetch<McpStatusResponse>("/api/integrations/mcp/status", { signal });
+}
+
+export function parseNaturalLanguageZoomBooking(
+  params: {
+    utterance: string;
+    timezone?: string;
+    tz_offset_minutes?: number;
+    room_id?: string | null;
+    default_calendar_targets?: ExternalCalendarTarget[];
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<ZoomBookingPreviewResponse>("/api/integrations/zoom/book", {
+    method: "POST",
+    body: {
+      action: "preview",
+      ...params,
+    },
+    skipCsrf: true,
+    signal,
+  });
+}
+
+export function confirmZoomBooking(
+  params: {
+    client_id: string;
+    title: string;
+    starts_at: string;
+    ends_at: string;
+    timezone?: string;
+    attendees?: string[];
+    room_id?: string | null;
+    create_zoom?: boolean;
+    notify_room?: boolean;
+    calendar_targets?: ExternalCalendarTarget[];
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<ZoomBookingConfirmResponse>("/api/integrations/zoom/book", {
+    method: "POST",
+    body: {
+      action: "confirm",
+      ...params,
+    },
+    signal,
+  });
+}
+
+export function triggerExternalCalendarSync(
+  params: {
+    calendar_targets?: ExternalCalendarTarget[];
+    event_id?: string;
+    join_url?: string | null;
+    timezone?: string;
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<CalendarSyncResponse>("/api/integrations/calendar-sync", {
+    method: "POST",
+    body: params,
+    signal,
+  });
+}
+
+export function getCalendarIcsUrl(params?: {
+  eventId?: string;
+  joinUrl?: string | null;
+  passcode?: string | null;
+  start?: string;
+  end?: string;
+}): string {
+  const sp = new URLSearchParams();
+  if (params?.eventId) sp.set("event_id", params.eventId);
+  if (params?.joinUrl) sp.set("join_url", params.joinUrl);
+  if (params?.passcode) sp.set("passcode", params.passcode);
+  if (params?.start) sp.set("start", params.start);
+  if (params?.end) sp.set("end", params.end);
+  const qs = sp.toString();
+  return `/api/calendar/ics${qs ? `?${qs}` : ""}`;
 }
 
 export async function logoutSession(): Promise<void> {

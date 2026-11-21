@@ -5,16 +5,14 @@ import Link from "next/link";
 import {
   Activity,
   ArrowRight,
-  Info,
   RefreshCw,
   Search,
-  ShieldCheck,
   Users,
   X,
 } from "lucide-react";
 import { isApiError, isStaleAuthError, type ApiError } from "@/lib/api-client";
 import { useSession } from "@/lib/session-context";
-import { AccessNoticeCard, Button } from "@/components/ui";
+import { AccessNoticeCard, Avatar, Button } from "@/components/ui";
 import {
   fetchModuleAccessCatalog,
   fetchModuleAccessEmployees,
@@ -136,7 +134,7 @@ export function PeopleDirectoryView() {
   if (!canManagePeople) {
     return (
       <div
-        className="mx-auto max-w-[820px] p-4 sm:p-6"
+        className="mx-auto max-w-[820px] px-4 py-8 sm:px-6"
         data-testid="people-access-denied"
       >
         <AccessNoticeCard
@@ -150,23 +148,32 @@ export function PeopleDirectoryView() {
     );
   }
 
+  const manageableWarehouses = catalog?.warehouses.length
+    ? catalog.warehouses.join(" / ")
+    : actor?.warehouses.join(" / ") || "—";
+  const moduleCount = catalog ? Object.keys(catalog.modules).length : 5;
+
   return (
     <div
-      className="mx-auto max-w-[1120px] space-y-4 p-4 sm:p-6"
+      className="mx-auto max-w-[1120px] space-y-5 px-4 py-6 sm:px-6 lg:py-7 pb-16"
       data-testid="people-directory-page"
     >
-      {/* Header Sheet */}
-      <section className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      {/* Unified Porcelain Page-Header Card (matches /work & /admin) */}
+      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <p className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
-              MODULE ACCESS GOVERNANCE · 员工模块授权目录
-            </p>
-            <h2 className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
               员工权限与模块授权
-            </h2>
-            <p className="mt-1 text-[13px] text-[var(--ink-muted)]">
-              按租户与仓库范围管理员工对订单、调度、发票审阅、仓库概览及审批模块的显式授权或撤销规则。
+            </h1>
+            <p className="mt-1 text-[13px] text-[var(--ink-secondary)]">
+              按仓库范围管理员工对订单、调度、发票审阅、仓库概览及审批模块的独立授权。
+            </p>
+            <p className="mt-1.5 text-[12px] text-[var(--ink-muted)] tabular-nums">
+              <span className="font-mono-code">{actor?.tenant ?? "—"}</span>
+              <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
+              <span className="font-mono-code">{manageableWarehouses}</span>
+              <span className="mx-1.5 text-[var(--ink-faint)]">·</span>
+              <span>{moduleCount} 个可配置模块</span>
             </p>
           </div>
 
@@ -174,58 +181,24 @@ export function PeopleDirectoryView() {
             {canAccessAdminOps && (
               <Link
                 href="/admin"
-                className="inline-flex h-8 items-center gap-1.5 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-plane)] transition-colors duration-[120ms]"
+                className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors duration-[150ms]"
               >
-                <Activity className="h-3.5 w-3.5 text-[var(--ink-muted)]" strokeWidth={1.75} />
-                <span>运维控制中心</span>
+                <Activity className="h-3.5 w-3.5" strokeWidth={1.85} />
+                <span>运维监控</span>
               </Link>
             )}
             <Button
               size="sm"
+              pill
               variant="secondary"
               loading={loading}
               data-testid="people-refresh-btn"
               onClick={() => void loadDirectory()}
             >
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>刷新目录</span>
             </Button>
           </div>
-        </div>
-
-        {/* Scope Metadata Strip */}
-        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-[var(--hairline)] pt-3 text-[12px]">
-          <div className="flex items-center gap-1.5 text-[var(--ink-secondary)]">
-            <ShieldCheck className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.75} />
-            <span>管理租户：</span>
-            <span className="font-mono-code font-medium text-[var(--ink-primary)]">
-              {actor?.tenant ?? "—"}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5 text-[var(--ink-secondary)]">
-            <span>可管理仓库范围：</span>
-            <span className="font-mono-code font-medium text-[var(--ink-primary)]">
-              {catalog?.warehouses.length
-                ? catalog.warehouses.join(", ")
-                : actor?.warehouses.join(", ") || "—"}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5 text-[var(--ink-secondary)]">
-            <span>可配置模块数：</span>
-            <span className="font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
-              {catalog ? Object.keys(catalog.modules).length : 5}
-            </span>
-          </div>
-        </div>
-
-        {/* Honest Directory Discovery Note */}
-        <div className="mt-3 flex items-start gap-2 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2 text-[12px] text-[var(--ink-secondary)] leading-relaxed">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" strokeWidth={1.75} />
-          <span>
-            员工会在首次登录工作台后自动登记进入本租户目录；当前目录接口按稳定{" "}
-            <code className="font-mono-code text-[11.5px]">subject</code>{" "}
-            游标分页返回员工主体标识，不含额外姓名检索索引。
-          </span>
         </div>
       </section>
 
@@ -237,47 +210,47 @@ export function PeopleDirectoryView() {
         />
       )}
 
-      {/* Directory Sheet */}
+      {/* Directory Porcelain Sheet (macOS Messages Contacts Aesthetic) */}
       {!error && (
-        <section className="rounded-[6px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden">
+        <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           {/* Client-Side Search & Filter Bar */}
-          <div className="flex flex-col gap-2.5 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-1 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+          <div className="flex flex-col gap-3 border-b border-[var(--hairline-subtle)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               <label
                 htmlFor="people-search-input"
-                className="text-[12px] font-medium text-[var(--ink-secondary)] whitespace-nowrap"
+                className="text-[12.5px] font-medium text-[var(--ink-secondary)] whitespace-nowrap"
               >
                 在已加载员工中筛选
               </label>
-              <div className="relative flex-1 max-w-[360px]">
+              <div className="relative flex-1 max-w-[380px]">
                 <Search
-                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
-                  strokeWidth={1.75}
+                  className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                  strokeWidth={1.85}
                 />
                 <input
                   id="people-search-input"
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="输入 subject 关键字（仅筛选已加载项）…"
+                  placeholder="输入员工标识关键字（仅筛选已加载项）…"
                   data-testid="people-search-input"
-                  className="h-8 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] pl-8 pr-8 font-mono-code text-[12.5px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
+                  className="h-9 w-full rounded-full bg-[var(--bg-surface-subtle)] pl-9 pr-9 font-mono-code text-[13px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-faint)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-all"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => setSearchQuery("")}
                     aria-label="清空筛选条件"
-                    className="absolute right-1.5 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[2px] text-[var(--ink-muted)] hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)] cursor-pointer"
+                    className="absolute right-2 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] cursor-pointer"
                   >
-                    <X className="h-3 w-3" strokeWidth={1.75} />
+                    <X className="h-3 w-3" strokeWidth={2} />
                   </button>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 font-mono-code text-[12px] text-[var(--ink-muted)] tabular-nums">
-              <Users className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <div className="inline-flex items-center gap-1.5 text-[12px] text-[var(--ink-muted)] tabular-nums self-start sm:self-auto">
+              <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>
                 显示 {filteredEmployees.length} / 已加载 {employees.length}
                 {nextCursor ? "+" : ""}
@@ -285,28 +258,28 @@ export function PeopleDirectoryView() {
             </div>
           </div>
 
-          {/* Employee Table */}
+          {/* Employee Contacts List */}
           {loading && employees.length === 0 ? (
-            <div className="px-4 py-12 text-center font-mono-code text-[12.5px] text-[var(--ink-muted)]">
+            <div className="px-6 py-14 text-center text-[13px] text-[var(--ink-muted)]">
               正在加载租户员工目录…
             </div>
           ) : filteredEmployees.length === 0 ? (
-            <div className="px-4 py-12 text-center text-[13px] text-[var(--ink-muted)]">
+            <div className="px-6 py-14 text-center text-[13.5px] text-[var(--ink-muted)]">
               {employees.length === 0
                 ? "当前租户暂无已登录登记的员工记录。"
-                : `在已加载的 ${employees.length} 位员工中未匹配到「${searchQuery.trim()}」${nextCursor ? "，可点击下方「加载更多」继续检索后续页。" : "。"}`}
+                : `在已加载的 ${employees.length} 位员工中未匹配到「${searchQuery.trim()}」${nextCursor ? "，可点击下方「加载更多员工」继续检索后续页。" : "。"}`}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
                 <thead>
-                  <tr className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] text-[11.5px] font-medium text-[var(--ink-secondary)]">
-                    <th className="px-4 py-2.5">员工主体标识 (subject)</th>
-                    <th className="px-4 py-2.5">授权操作范围</th>
-                    <th className="px-4 py-2.5 text-right">配置入口</th>
+                  <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[12px] font-medium text-[var(--ink-muted)]">
+                    <th className="px-5 py-3">员工账号</th>
+                    <th className="px-4 py-3">可配置说明</th>
+                    <th className="px-5 py-3 text-right">操作</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[var(--hairline)]">
+                <tbody className="divide-y divide-[var(--hairline-subtle)]">
                   {filteredEmployees.map((subject) => {
                     const isSelf = actor?.subject === subject;
                     const detailHref = `/admin/people/${encodeURIComponent(subject)}`;
@@ -314,44 +287,55 @@ export function PeopleDirectoryView() {
                       <tr
                         key={subject}
                         data-testid={`employee-row-${subject}`}
-                        className="transition-colors duration-[120ms] hover:bg-[var(--bg-subtle)]"
+                        className="group transition-colors duration-[140ms] hover:bg-[var(--bg-surface-tint)]/85"
                       >
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Link
-                              href={detailHref}
-                              className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] hover:underline"
-                            >
-                              {subject}
-                            </Link>
-                            {isSelf && (
-                              <span
-                                data-testid="employee-self-badge"
-                                className="inline-flex items-center rounded-[4px] border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]"
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <Avatar
+                              fallbackText={subject}
+                              name={subject}
+                              size="md"
+                              kind="user"
+                            />
+                            <div className="min-w-0 flex flex-wrap items-center gap-2">
+                              <Link
+                                href={detailHref}
+                                className="font-mono-code text-[13.5px] font-semibold text-[var(--ink-primary)] group-hover:text-[var(--accent)] transition-colors"
                               >
-                                当前本人账号 · 不可修改
-                              </span>
-                            )}
+                                {subject}
+                              </Link>
+                              {isSelf && (
+                                <span
+                                  data-testid="employee-self-badge"
+                                  className="inline-flex items-center rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--status-amber-ink)]"
+                                >
+                                  当前本人账号 · 只读
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-[12.5px] text-[var(--ink-muted)]">
+                        <td className="px-4 py-3.5 text-[13px] text-[var(--ink-muted)]">
                           {isSelf
-                            ? "管理员不能修改自己的模块授权（仅支持只读核对）"
-                            : "可配置 5 项工作台模块动作、仓库交集范围及到期时间"}
+                            ? "管理员不能修改自己的模块授权，仅支持只读核对"
+                            : "可配置 5 项模块动作、仓库范围及到期时间"}
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-5 py-3.5 text-right">
                           <Link
                             href={detailHref}
                             data-testid={`employee-open-${subject}`}
                             className={[
-                              "inline-flex h-8 items-center gap-1.5 rounded-[4px] border px-3 text-[12px] font-medium transition-colors duration-[120ms]",
+                              "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium transition-colors duration-[150ms]",
                               isSelf
-                                ? "border-[var(--hairline-strong)] bg-[var(--bg-subtle)] text-[var(--ink-secondary)] hover:bg-[var(--bg-plane)]"
-                                : "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent)] hover:bg-[var(--accent-wash-strong)]",
+                                ? "text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)]"
+                                : "text-[var(--accent)] hover:bg-[var(--accent-wash)]",
                             ].join(" ")}
                           >
-                            <span>{isSelf ? "只读查看" : "管理模块授权"}</span>
-                            <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+                            <span>{isSelf ? "只读查看" : "管理授权"}</span>
+                            <ArrowRight
+                              className="h-3.5 w-3.5"
+                              strokeWidth={1.85}
+                            />
                           </Link>
                         </td>
                       </tr>
@@ -362,17 +346,18 @@ export function PeopleDirectoryView() {
             </div>
           )}
 
-          {/* Cursor Pagination Footer */}
-          <div className="flex flex-col gap-2 border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+          {/* Cursor Pagination Footer with Honest Discovery Note */}
+          <div className="flex flex-col gap-2.5 border-t border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-[12px] text-[var(--ink-muted)] tabular-nums">
               {nextCursor
-                ? `当前游标 after=${nextCursor} · 仍有更多员工可加载`
-                : `已加载全部已登记员工（共 ${employees.length} 位）`}
+                ? `已加载 ${employees.length} 位员工，仍有更多记录 · 首次登录后自动登记`
+                : `共 ${employees.length} 位已登记员工 · 首次登录工作台后自动登记`}
             </span>
             {nextCursor && (
               <Button
                 size="sm"
-                variant="secondary"
+                pill
+                variant="quiet"
                 loading={loadingMore}
                 data-testid="people-load-more"
                 onClick={() => void handleLoadMore()}

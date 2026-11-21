@@ -10,6 +10,7 @@ import {
 } from "@/lib/api-client";
 import { useSession } from "@/lib/session-context";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
+import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import {
@@ -53,7 +54,6 @@ export function CreateEventModal({
   const submittingRef = useRef(false);
   const needsFreshClientIdRef = useRef(false);
 
-  // Reset form & fetch rooms when modal opens
   useEffect(() => {
     if (!open) return;
     const { start, end } = getNextRoundedSlot(60);
@@ -79,7 +79,6 @@ export function CreateEventModal({
     }
   }, [open, chatAvailable]);
 
-  // Load room members when a common room is picked
   useEffect(() => {
     if (!open || !selectedRoomId) {
       setRoomMembers([]);
@@ -207,7 +206,8 @@ export function CreateEventModal({
       footer={
         <>
           <Button
-            variant="secondary"
+            variant="ghost"
+            pill
             disabled={submitting}
             onClick={() => onOpenChange(false)}
           >
@@ -215,6 +215,7 @@ export function CreateEventModal({
           </Button>
           <Button
             variant="primary"
+            pill
             loading={submitting}
             disabled={submitting}
             data-testid="calendar-create-submit"
@@ -229,7 +230,7 @@ export function CreateEventModal({
         <div>
           <label
             htmlFor="cal-new-title"
-            className="block text-[12.5px] font-medium text-[var(--ink-secondary)]"
+            className="block text-[12px] font-medium text-[var(--ink-secondary)]"
           >
             日程主题
           </label>
@@ -246,7 +247,7 @@ export function CreateEventModal({
               markEdited();
             }}
             placeholder="例如：HK01 订单排期核对"
-            className="mt-1 h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-3 text-[13.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+            className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3.5 text-[13.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none transition-all"
           />
         </div>
 
@@ -254,7 +255,7 @@ export function CreateEventModal({
           <div>
             <label
               htmlFor="cal-new-start"
-              className="block text-[12.5px] font-medium text-[var(--ink-secondary)]"
+              className="block text-[12px] font-medium text-[var(--ink-secondary)]"
             >
               开始时间
             </label>
@@ -268,14 +269,14 @@ export function CreateEventModal({
                 setStartsLocal(e.target.value);
                 markEdited();
               }}
-              className="mt-1 h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
             />
           </div>
 
           <div>
             <label
               htmlFor="cal-new-end"
-              className="block text-[12.5px] font-medium text-[var(--ink-secondary)]"
+              className="block text-[12px] font-medium text-[var(--ink-secondary)]"
             >
               结束时间
             </label>
@@ -289,19 +290,18 @@ export function CreateEventModal({
                 setEndsLocal(e.target.value);
                 markEdited();
               }}
-              className="mt-1 h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
             />
           </div>
         </div>
 
-        {/* Optional Common Room Picker for Multi-Attendee Meetings */}
         {chatAvailable && (
           <div>
             <label
               htmlFor="cal-new-room"
-              className="block text-[12.5px] font-medium text-[var(--ink-secondary)]"
+              className="block text-[12px] font-medium text-[var(--ink-secondary)]"
             >
-              关联协作房间（可选 · 多人会议必选共同房间）
+              关联协作会话（可选 · 多人会议需选择共同会话）
             </label>
             <select
               id="cal-new-room"
@@ -311,12 +311,12 @@ export function CreateEventModal({
                 setSelectedRoomId(e.target.value);
                 markEdited();
               }}
-              className="mt-1 h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 text-[13px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
             >
-              <option value="">仅个人日程（不关联房间）</option>
+              <option value="">仅个人日程（不关联会话）</option>
               {rooms.map((room) => (
                 <option key={room.id} value={room.id}>
-                  # {room.title}
+                  {room.title}
                 </option>
               ))}
             </select>
@@ -328,32 +328,33 @@ export function CreateEventModal({
             <div className="flex items-center justify-between text-[12px] text-[var(--ink-secondary)]">
               <span className="flex items-center gap-1.5 font-medium">
                 <Users className="h-3.5 w-3.5" />
-                <span>选择房间参会人</span>
+                <span>选择会话参会人</span>
               </span>
               <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
                 {loadingMembers ? "加载成员…" : `${selectedAttendees.length} 人`}
               </span>
             </div>
-            <div className="mt-1.5 max-h-[130px] overflow-auto divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)]">
+            <div className="mt-1.5 max-h-[140px] overflow-y-auto divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)]">
               {roomMembers.map((subject) => {
                 const isSelf = actor?.subject === subject;
                 return (
                   <label
                     key={subject}
-                    className="flex items-center justify-between px-3 py-1.5 text-[12px] cursor-pointer hover:bg-[var(--bg-plane)]"
+                    className="flex items-center justify-between px-3.5 py-2 text-[12.5px] cursor-pointer hover:bg-[var(--bg-hover)]"
                   >
-                    <span className="flex items-center gap-2 font-mono-code text-[var(--ink-primary)]">
+                    <span className="flex items-center gap-2.5 font-mono-code text-[var(--ink-primary)]">
                       <input
                         type="checkbox"
                         checked={isSelf || selectedAttendees.includes(subject)}
                         disabled={isSelf}
                         onChange={() => toggleAttendee(subject)}
-                        className="h-3.5 w-3.5 rounded-[2px] accent-[var(--accent)]"
+                        className="h-4 w-4 rounded accent-[var(--accent)]"
                       />
+                      <Avatar fallbackText={subject} size="xs" />
                       <span>{subject}</span>
                     </span>
                     {isSelf && (
-                      <span className="font-mono-code text-[10.5px] text-[var(--accent)]">
+                      <span className="rounded-full bg-[var(--accent-wash)] px-2 py-0.5 text-[10.5px] font-sans font-medium text-[var(--accent)]">
                         组织人
                       </span>
                     )}
@@ -367,7 +368,7 @@ export function CreateEventModal({
         {validationError && (
           <div
             role="alert"
-            className="rounded-[4px] border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-3 py-2 text-[12.5px] text-[var(--status-crimson)]"
+            className="rounded-sm bg-[var(--status-crimson-wash)] px-3.5 py-2.5 text-[12.5px] text-[var(--status-crimson)]"
           >
             {validationError}
           </div>

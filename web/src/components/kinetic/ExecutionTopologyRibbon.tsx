@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { AlertTriangle, Check, XCircle } from "lucide-react";
 import { formatUnixTime } from "@/lib/format";
 import type { AuditEvent, ProposalState } from "@/lib/types";
 
@@ -9,6 +10,8 @@ export interface ExecutionTopologyRibbonProps {
   checks?: number;
   events?: AuditEvent[];
   variant?: "auto" | "horizontal" | "vertical-rail";
+  /** Optional inline header slot (e.g. BriefProgressChain variant="inline") */
+  headerRight?: React.ReactNode;
   className?: string;
 }
 
@@ -20,16 +23,11 @@ interface SpineNode {
 }
 
 const SPINE_NODES: readonly SpineNode[] = [
-  { index: "01", key: "PROPOSED", label: "已提案 · 待审批", code: "PROPOSED" },
-  { index: "02", key: "QUEUED", label: "已批准 · 待派发", code: "QUEUED" },
-  { index: "03", key: "SENDING", label: "ERP 写入中", code: "SENDING" },
-  {
-    index: "04",
-    key: "VERIFYING",
-    label: "回执核验中",
-    code: "VERIFYING / CHECKING",
-  },
-  { index: "05", key: "VERIFIED", label: "已核验入账", code: "VERIFIED" },
+  { index: "1", key: "PROPOSED", label: "待审批", code: "PROPOSED" },
+  { index: "2", key: "QUEUED", label: "已批准", code: "QUEUED" },
+  { index: "3", key: "SENDING", label: "ERP 写入", code: "SENDING" },
+  { index: "4", key: "VERIFYING", label: "回执核验", code: "VERIFYING" },
+  { index: "5", key: "VERIFIED", label: "已入账", code: "VERIFIED" },
 ];
 
 function getReachedStep(state: ProposalState, events?: AuditEvent[]): number {
@@ -90,6 +88,7 @@ export function ExecutionTopologyRibbon({
   checks = 0,
   events,
   variant = "auto",
+  headerRight,
   className = "",
 }: ExecutionTopologyRibbonProps) {
   const reached = getReachedStep(state, events);
@@ -129,216 +128,197 @@ export function ExecutionTopologyRibbon({
     return null;
   })();
 
-  const getNodeStyle = (idx: number) => {
-    const isCompleted = !isBranch ? idx < reached : idx < reached;
+  const getStepState = (idx: number): "verified" | "current" | "done" | "idle" => {
+    if (state === "VERIFIED" && idx === 4) return "verified";
     const isCurrent =
       !isBranch &&
       ((state === "PROPOSED" && idx === 0) ||
         (state === "QUEUED" && idx === 1) ||
         (state === "SENDING" && idx === 2) ||
-        ((state === "VERIFYING" || state === "CHECKING") && idx === 3) ||
-        (state === "VERIFIED" && idx === 4));
-
-    if (state === "VERIFIED" && idx === 4) {
-      return {
-        box: "border-[var(--status-emerald-border)] border-b-2 border-b-[var(--status-emerald)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]",
-        dot: "bg-[var(--status-emerald)]",
-      };
-    }
-    if (isCurrent) {
-      return {
-        box: "border-[var(--accent-border)] border-b-2 border-b-[var(--accent)] bg-[var(--accent-wash)] text-[var(--accent)]",
-        dot: "bg-[var(--accent)]",
-      };
-    }
-    if (isCompleted) {
-      return {
-        box: "border-[var(--hairline-strong)] border-b-2 border-b-[var(--ink-secondary)] bg-[var(--bg-sheet)] text-[var(--ink-primary)]",
-        dot: "bg-[var(--ink-secondary)]",
-      };
-    }
-    return {
-      box: "border-[var(--hairline)] bg-[var(--bg-subtle)] text-[var(--ink-faint)]",
-      dot: "bg-[var(--hairline-strong)]",
-    };
+        ((state === "VERIFYING" || state === "CHECKING") && idx === 3));
+    if (isCurrent) return "current";
+    if (idx < reached) return "done";
+    return "idle";
   };
+
+  const progressRatio = reached / (SPINE_NODES.length - 1);
 
   return (
     <div
       className={[
-        "rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-3.5",
+        "rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5",
         className,
       ].join(" ")}
     >
-      <div className="mb-2.5 flex items-center justify-between gap-2">
-        <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
-          EXECUTION TOPOLOGY · 状态流转图谱
-        </span>
-        {(checks > 0 || state === "CHECKING" || state === "OUTCOME_UNKNOWN") && (
-          <span className="font-mono-code text-[11px] text-[var(--status-amber-ink)]">
-            核验轮次 {checks}/3
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
+            单据执行进度
           </span>
-        )}
+          {(checks > 0 || state === "CHECKING" || state === "OUTCOME_UNKNOWN") && (
+            <span className="rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 font-mono-code text-[11px] font-medium text-[var(--status-amber-ink)]">
+              核验轮次 {checks}/3
+            </span>
+          )}
+        </div>
+        {headerRight && <div className="shrink-0">{headerRight}</div>}
       </div>
 
-      {/* Horizontal Drafting Schematic (>= 640px when auto, or forced horizontal) */}
+      {/* Horizontal Circular Stepper with continuous flush connectors behind nodes */}
       {showHorizontal && (
         <div className={variant === "auto" ? "hidden sm:block" : "block"}>
-          <div className="flex items-stretch gap-0">
+          <div className="relative grid grid-cols-5">
+            {/* Continuous background connector rail spanning exact center-to-center (10% to 90%) */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute top-[13.5px] left-[10%] right-[10%] h-[2px] rounded-full bg-[var(--hairline-strong)]"
+            >
+              <div
+                className="h-full rounded-full transition-[width] duration-[300ms] ease-[var(--ease-settle)]"
+                style={{
+                  width: `${Math.max(0, Math.min(100, progressRatio * 100))}%`,
+                  backgroundColor:
+                    state === "VERIFIED"
+                      ? "var(--status-emerald)"
+                      : "var(--accent)",
+                }}
+              />
+            </div>
+
             {SPINE_NODES.map((node, idx) => {
-              const style = getNodeStyle(idx);
+              const stepState = getStepState(idx);
               const ts = findTimestampForStep(node.key, events);
-              const connectorActive = idx < reached;
 
               return (
-                <React.Fragment key={node.key}>
+                <div
+                  key={node.key}
+                  className="relative z-10 flex min-w-0 flex-col items-center px-1 text-center"
+                >
+                  {/* Opaque circular step node so the rail terminates cleanly flush against each circle */}
                   <div
                     className={[
-                      "min-w-0 flex-1 rounded-[4px] border px-2.5 py-2 transition-colors duration-[150ms]",
-                      style.box,
+                      "flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-semibold ring-[3px] ring-[var(--bg-surface)] transition-all duration-[200ms]",
+                      stepState === "verified"
+                        ? "bg-[var(--status-emerald)] text-white shadow-[0_0_0_5px_var(--status-emerald-wash)]"
+                        : stepState === "current"
+                          ? "bg-[var(--accent)] text-white shadow-[0_0_0_5px_var(--accent-wash-strong)]"
+                          : stepState === "done"
+                            ? "bg-[#E7F4ED] text-[var(--status-emerald)]"
+                            : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]",
                     ].join(" ")}
                   >
-                    <div className="flex items-center justify-between gap-1 font-mono-code text-[10px]">
-                      <span>{node.index}</span>
-                      {node.key === "VERIFYING" &&
-                        (state === "CHECKING" || state === "VERIFYING") &&
-                        checks > 0 && <span>{checks}/3</span>}
-                    </div>
-                    <div className="mt-0.5 truncate text-[12px] font-semibold">
-                      {node.label}
-                    </div>
-                    <div className="mt-1 font-mono-code text-[10px] opacity-75 truncate">
-                      {ts ? formatUnixTime(ts, { withSeconds: true }).slice(11) : node.code.split(" ")[0]}
-                    </div>
+                    {stepState === "done" || stepState === "verified" ? (
+                      <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    ) : (
+                      <span className="font-mono-code text-[11px]">
+                        {node.index}
+                      </span>
+                    )}
                   </div>
 
-                  {idx < SPINE_NODES.length - 1 && (
-                    <div
-                      className="flex w-6 shrink-0 items-center justify-center"
-                      aria-hidden="true"
-                    >
-                      <svg
-                        width="24"
-                        height="12"
-                        viewBox="0 0 24 12"
-                        fill="none"
-                      >
-                        <line
-                          x1="0"
-                          y1="6"
-                          x2="20"
-                          y2="6"
-                          stroke={
-                            connectorActive
-                              ? "var(--accent)"
-                              : "var(--hairline-strong)"
-                          }
-                          strokeWidth={connectorActive ? "1.5" : "1"}
-                          className={
-                            connectorActive ? "aios-topology-trace" : undefined
-                          }
-                        />
-                        <polyline
-                          points="16,3 21,6 16,9"
-                          stroke={
-                            connectorActive
-                              ? "var(--accent)"
-                              : "var(--hairline-strong)"
-                          }
-                          strokeWidth="1.2"
-                          fill="none"
-                        />
-                      </svg>
-                    </div>
-                  )}
-                </React.Fragment>
+                  <div
+                    className={[
+                      "mt-2 text-[12.5px] font-medium truncate max-w-full",
+                      stepState === "idle"
+                        ? "text-[var(--ink-muted)]"
+                        : stepState === "current"
+                          ? "text-[var(--accent)] font-semibold"
+                          : stepState === "verified"
+                            ? "text-[var(--status-emerald)] font-semibold"
+                            : "text-[var(--ink-primary)]",
+                    ].join(" ")}
+                  >
+                    {node.label}
+                  </div>
+
+                  <div className="mt-0.5 font-mono-code text-[10.5px] text-[var(--ink-muted)]">
+                    {ts
+                      ? formatUnixTime(ts, { withSeconds: true }).slice(11)
+                      : node.key === "VERIFYING" &&
+                          (state === "CHECKING" || state === "VERIFYING") &&
+                          checks > 0
+                        ? `${checks}/3`
+                        : "—"}
+                  </div>
+                </div>
               );
             })}
           </div>
 
-          {/* Orthogonal Branch Track for OUTCOME_UNKNOWN / NEEDS_OPERATOR / REJECTED */}
           {branchInfo && (
-            <div className="mt-2.5 flex items-center gap-2 pl-3">
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 20 20"
-                fill="none"
-                aria-hidden="true"
-                className="shrink-0"
-              >
-                <path
-                  d="M2 0V12H18"
-                  stroke={
-                    branchInfo.tone === "amber"
-                      ? "var(--status-amber)"
-                      : "var(--status-crimson)"
-                  }
-                  strokeWidth="1.4"
-                  strokeDasharray={
-                    branchInfo.code === "OUTCOME_UNKNOWN" ? "3 2" : undefined
-                  }
-                />
-              </svg>
-              <div
-                className={[
-                  "flex flex-1 items-center justify-between gap-3 rounded-[4px] border border-b-2 px-3 py-1.5 text-[12px]",
-                  branchInfo.tone === "amber"
-                    ? "border-[var(--status-amber-border)] border-b-[var(--status-amber)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
-                    : "border-[var(--status-crimson-border)] border-b-[var(--status-crimson)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
-                ].join(" ")}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="font-mono-code text-[11px] font-semibold">
-                    {branchInfo.code}
-                  </span>
-                  <span className="font-medium">{branchInfo.label}</span>
-                </div>
-                {branchInfo.at && (
-                  <span className="font-mono-code text-[11px] opacity-80">
-                    {formatUnixTime(branchInfo.at, { withSeconds: true })}
-                  </span>
+            <div
+              className={[
+                "mt-4 flex items-center justify-between gap-3 rounded-sm px-3.5 py-2.5 text-[12.5px]",
+                branchInfo.tone === "amber"
+                  ? "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
+                  : "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
+              ].join(" ")}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                {branchInfo.tone === "amber" ? (
+                  <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.85} />
+                ) : (
+                  <XCircle className="h-4 w-4 shrink-0" strokeWidth={1.85} />
                 )}
+                <span className="font-medium truncate">{branchInfo.label}</span>
               </div>
+              {branchInfo.at && (
+                <span className="font-mono-code text-[11px] opacity-80 shrink-0">
+                  {formatUnixTime(branchInfo.at, { withSeconds: true })}
+                </span>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* Compact Vertical Drafting Rail (Drawer 360-440px & Mobile < 640px) */}
+      {/* Compact Vertical Rail (Drawer 360-440px & Mobile < 640px) */}
       {showVertical && (
         <div className={variant === "auto" ? "block sm:hidden" : "block"}>
-          <ol className="relative space-y-1.5 pl-4">
+          <ol className="relative space-y-2.5 pl-6">
             <span
               aria-hidden="true"
-              className="absolute bottom-2 left-[5px] top-2 w-px bg-[var(--hairline-strong)]"
+              className="absolute bottom-2.5 left-[9px] top-2.5 w-[1.5px] bg-[var(--hairline-strong)]"
             />
             {SPINE_NODES.map((node, idx) => {
-              const style = getNodeStyle(idx);
+              const stepState = getStepState(idx);
               const ts = findTimestampForStep(node.key, events);
               return (
                 <li
                   key={node.key}
-                  className="relative flex items-center justify-between gap-2 text-[12px]"
+                  className="relative flex items-center justify-between gap-2 text-[12.5px]"
                 >
                   <span
                     aria-hidden="true"
                     className={[
-                      "absolute -left-4 h-2.5 w-2.5 rounded-[2px] border border-[var(--bg-sheet)]",
-                      style.dot,
+                      "absolute -left-6 flex h-5 w-5 items-center justify-center rounded-full ring-2 ring-[var(--bg-surface)]",
+                      stepState === "verified"
+                        ? "bg-[var(--status-emerald)] text-white"
+                        : stepState === "current"
+                          ? "bg-[var(--accent)] text-white"
+                          : stepState === "done"
+                            ? "bg-[#E7F4ED] text-[var(--status-emerald)]"
+                            : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]",
                     ].join(" ")}
-                  />
+                  >
+                    {stepState === "done" || stepState === "verified" ? (
+                      <Check className="h-3 w-3" strokeWidth={2.4} />
+                    ) : (
+                      <span className="font-mono-code text-[9.5px] font-semibold">
+                        {node.index}
+                      </span>
+                    )}
+                  </span>
                   <span
                     className={[
                       "font-medium",
-                      idx <= reached
-                        ? "text-[var(--ink-primary)]"
-                        : "text-[var(--ink-faint)]",
+                      stepState === "idle"
+                        ? "text-[var(--ink-faint)]"
+                        : stepState === "current"
+                          ? "text-[var(--accent)] font-semibold"
+                          : "text-[var(--ink-primary)]",
                     ].join(" ")}
                   >
-                    <span className="font-mono-code text-[11px] text-[var(--ink-muted)] mr-1.5">
-                      {node.index}
-                    </span>
                     {node.label}
                   </span>
                   <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
@@ -351,20 +331,15 @@ export function ExecutionTopologyRibbon({
             {branchInfo && (
               <li
                 className={[
-                  "relative mt-2 flex items-center justify-between gap-2 rounded-[4px] border px-2.5 py-1.5 text-[12px]",
+                  "relative mt-2 flex items-center justify-between gap-2 rounded-sm px-3 py-2 text-[12px]",
                   branchInfo.tone === "amber"
-                    ? "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
-                    : "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
+                    ? "bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
+                    : "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
                 ].join(" ")}
               >
-                <span className="font-medium">
-                  <span className="font-mono-code text-[11px] mr-1.5">
-                    {branchInfo.code}
-                  </span>
-                  {branchInfo.label}
-                </span>
+                <span className="font-medium truncate">{branchInfo.label}</span>
                 {branchInfo.at && (
-                  <span className="font-mono-code text-[11px]">
+                  <span className="font-mono-code text-[11px] shrink-0">
                     {formatUnixTime(branchInfo.at, { withSeconds: true }).slice(11)}
                   </span>
                 )}

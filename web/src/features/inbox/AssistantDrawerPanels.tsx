@@ -77,19 +77,19 @@ export function AssistantBriefDrawer() {
   }, [authGeneration, windowDays, load]);
 
   return (
-    <div className="space-y-3" data-testid="drawer-brief-panel">
+    <div className="space-y-4" data-testid="drawer-brief-panel">
       <div className="flex items-center justify-between gap-2">
-        <div className="inline-flex rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] p-0.5">
+        <div className="inline-flex rounded-full bg-[var(--bg-surface-subtle)] p-0.5">
           {([1, 7] as const).map((days) => (
             <button
               key={days}
               type="button"
               onClick={() => setWindowDays(days)}
               className={[
-                "rounded-[3px] px-2.5 py-1 text-[11.5px] font-medium transition-colors duration-[120ms] cursor-pointer",
+                "rounded-full px-3 py-1 text-[12px] font-medium transition-all duration-[140ms] cursor-pointer",
                 windowDays === days
-                  ? "bg-[var(--bg-sheet)] text-[var(--ink-primary)] border border-[var(--hairline-strong)]"
-                  : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)] border border-transparent",
+                  ? "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)]"
+                  : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
               ].join(" ")}
             >
               {days === 1 ? "今日" : "未来 7 天"}
@@ -99,12 +99,13 @@ export function AssistantBriefDrawer() {
         <Button
           size="sm"
           variant="ghost"
+          pill
           onClick={() => void load(windowDays)}
           disabled={loading}
         >
           <RefreshCw
             className={["h-3.5 w-3.5", loading ? "animate-spin" : ""].join(" ")}
-            strokeWidth={1.75}
+            strokeWidth={1.85}
           />
           <span>刷新</span>
         </Button>
@@ -122,31 +123,31 @@ export function AssistantBriefDrawer() {
 
       {brief && !error && (
         <>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3">
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
               <div className="text-[11.5px] text-[var(--ink-muted)]">待我审批</div>
-              <div className="mt-1 font-mono-code text-[22px] font-semibold text-[var(--ink-primary)]">
+              <div className="mt-1 font-mono-code text-[24px] font-semibold text-[var(--ink-primary)] tabular-nums">
                 {brief.pending_approvals}
                 {brief.pending_approvals_capped ? "+" : ""}
               </div>
             </div>
-            <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3">
+            <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
               <div className="text-[11.5px] text-[var(--ink-muted)]">
                 {windowDays === 1 ? "今日会议" : "7 天内会议"}
               </div>
-              <div className="mt-1 font-mono-code text-[22px] font-semibold text-[var(--ink-primary)]">
+              <div className="mt-1 font-mono-code text-[24px] font-semibold text-[var(--ink-primary)] tabular-nums">
                 {brief.meetings}
               </div>
             </div>
           </div>
 
-          <div className="rounded-[4px] border border-[var(--hairline)]">
-            <div className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--ink-secondary)]">
+          <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
+            <div className="px-3.5 py-2.5 text-[12px] font-medium text-[var(--ink-secondary)] border-b border-[var(--hairline-subtle)]">
               我提交的单据状态分布
             </div>
             <div className="divide-y divide-[var(--hairline-subtle)]">
               {Object.entries(brief.submitted_current_states).length === 0 ? (
-                <div className="px-3 py-4 text-center text-[12px] text-[var(--ink-muted)]">
+                <div className="px-3.5 py-5 text-center text-[12px] text-[var(--ink-muted)]">
                   暂无已提交单据
                 </div>
               ) : (
@@ -154,10 +155,10 @@ export function AssistantBriefDrawer() {
                   ([stateKey, count]) => (
                     <div
                       key={stateKey}
-                      className="flex items-center justify-between px-3 py-2 text-[12px]"
+                      className="flex items-center justify-between px-3.5 py-2.5 text-[12px]"
                     >
                       <StatusBadge status={stateKey} compact />
-                      <span className="font-mono-code font-semibold text-[var(--ink-primary)]">
+                      <span className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                         {count}
                       </span>
                     </div>
@@ -167,23 +168,26 @@ export function AssistantBriefDrawer() {
             </div>
           </div>
 
-          <div className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+          <div className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
             快照时间：{formatUnixTime(brief.as_of)}
           </div>
 
           <div className="grid grid-cols-2 gap-2 pt-1">
             <Link
               href="/work"
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-full bg-[var(--bg-surface)] px-3 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-all"
             >
               <span>打开工作台</span>
-              <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.85} />
             </Link>
             <Link
               href="/calendar"
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-full bg-[var(--bg-surface)] px-3 text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] transition-all"
             >
-              <Calendar className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <Calendar
+                className="h-3.5 w-3.5 text-[var(--accent)]"
+                strokeWidth={1.85}
+              />
               <span>打开日历</span>
             </Link>
           </div>
@@ -248,10 +252,13 @@ export function AssistantProposalDrawer({
   const { action, before, after } = proposal.plan;
 
   return (
-    <div className="space-y-3.5" data-testid="drawer-proposal-panel">
+    <div className="space-y-4" data-testid="drawer-proposal-panel">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] truncate">
-          {proposal.id}
+        <span
+          title={proposal.id}
+          className="truncate font-mono-code text-[13.5px] font-semibold text-[var(--ink-primary)]"
+        >
+          {formatShortDigest(proposal.id, 8, 6)}
         </span>
         <div className="flex items-center gap-1.5">
           <StatusBadge status={proposal.state} compact />
@@ -259,9 +266,9 @@ export function AssistantProposalDrawer({
             type="button"
             onClick={() => void load()}
             aria-label="刷新提案快照"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-[var(--ink-muted)] hover:bg-[var(--bg-plane)] cursor-pointer"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] cursor-pointer"
           >
-            <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
           </button>
         </div>
       </div>
@@ -273,26 +280,26 @@ export function AssistantProposalDrawer({
         variant="vertical-rail"
       />
 
-      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
-        <div className="flex justify-between gap-2 px-3 py-2">
+      <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
+        <div className="flex justify-between gap-2 px-3.5 py-2.5">
           <dt className="text-[var(--ink-muted)]">动作类型</dt>
           <dd className="font-medium text-[var(--ink-primary)]">
             {formatProposalAction(action)}
           </dd>
         </div>
-        <div className="flex justify-between gap-2 px-3 py-2">
+        <div className="flex justify-between gap-2 px-3.5 py-2.5">
           <dt className="text-[var(--ink-muted)]">目标对象</dt>
           <dd className="font-mono-code text-[var(--ink-primary)]">
             {proposal.plan.target}
           </dd>
         </div>
-        <div className="flex justify-between gap-2 px-3 py-2">
+        <div className="flex justify-between gap-2 px-3.5 py-2.5">
           <dt className="text-[var(--ink-muted)]">发起人 / 审批人</dt>
           <dd className="font-mono-code text-[var(--ink-primary)]">
             {proposal.requester} / {proposal.approver || "待定"}
           </dd>
         </div>
-        <div className="flex justify-between gap-2 px-3 py-2">
+        <div className="flex justify-between gap-2 px-3.5 py-2.5">
           <dt className="text-[var(--ink-muted)]">摘要锁</dt>
           <dd className="font-mono-code text-[var(--ink-primary)]">
             {formatShortDigest(proposal.digest)}
@@ -300,19 +307,18 @@ export function AssistantProposalDrawer({
         </div>
       </dl>
 
-      {/* Diff summary */}
       {action === "shipment.reschedule" && (
-        <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-3 text-[12px]">
-          <div className="font-mono-code text-[10.5px] uppercase text-[var(--ink-muted)]">
+        <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5 text-[12px]">
+          <div className="text-[11.5px] font-medium text-[var(--ink-muted)]">
             字段变更比对
           </div>
-          <div className="mt-1.5 flex items-center gap-2">
+          <div className="mt-2 flex items-center gap-2">
             <span className="text-[var(--ink-muted)]">交付日期</span>
             <span className="font-mono-code line-through text-[var(--ink-secondary)]">
               {String(before.delivery_date ?? "—")}
             </span>
-            <ArrowRight className="h-3 w-3 text-[var(--ink-muted)]" />
-            <span className="font-mono-code font-semibold text-[var(--accent)]">
+            <ArrowRight className="h-3 w-3 text-[var(--ink-faint)]" />
+            <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent)]">
               {String(after.delivery_date ?? "—")}
             </span>
           </div>
@@ -320,9 +326,9 @@ export function AssistantProposalDrawer({
       )}
 
       {proposal.state === "VERIFIED" && proposal.receipt && (
-        <div className="rounded-[4px] border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] p-3 text-[12px]">
+        <div className="rounded-tile bg-[var(--status-emerald-wash)] p-3.5 text-[12px]">
           <div className="flex items-center gap-1.5 font-semibold text-[var(--status-emerald)]">
-            <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <CheckCircle2 className="h-4 w-4" strokeWidth={1.9} />
             <span>ERP 回执已核对一致</span>
           </div>
           <div className="mt-1.5 space-y-1 font-mono-code text-[11px] text-[var(--ink-secondary)]">
@@ -333,20 +339,20 @@ export function AssistantProposalDrawer({
       )}
 
       {proposal.events.length > 0 && (
-        <div className="rounded-[4px] border border-[var(--hairline)]">
-          <div className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--ink-secondary)]">
+        <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
+          <div className="px-3.5 py-2 text-[11.5px] font-medium text-[var(--ink-secondary)] border-b border-[var(--hairline-subtle)]">
             审计事件轨迹 ({proposal.events.length})
           </div>
           <ul className="divide-y divide-[var(--hairline-subtle)] text-[11.5px]">
             {proposal.events.slice(-5).map((ev, idx) => (
               <li
                 key={`${ev.event}-${ev.at}-${idx}`}
-                className="flex items-center justify-between gap-2 px-3 py-1.5"
+                className="flex items-center justify-between gap-2 px-3.5 py-2"
               >
-                <span className="font-mono-code text-[var(--ink-primary)] truncate">
+                <span className="truncate font-mono-code text-[var(--ink-primary)]">
                   {ev.event}
                 </span>
-                <span className="shrink-0 font-mono-code text-[10.5px] text-[var(--ink-muted)]">
+                <span className="shrink-0 font-mono-code text-[10.5px] text-[var(--ink-muted)] tabular-nums">
                   {ev.subject} · {formatUnixTime(ev.at)}
                 </span>
               </li>
@@ -358,10 +364,10 @@ export function AssistantProposalDrawer({
       <Link
         href={`/proposals/${encodeURIComponent(proposal.id)}`}
         data-testid="drawer-proposal-open-full"
-        className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-[4px] bg-[var(--accent)] px-3 text-[13px] font-medium text-white hover:bg-[var(--accent-hover)]"
+        className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--accent)] px-4 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] transition-colors"
       >
         <span>打开完整单据与正式审批页</span>
-        <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+        <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.9} />
       </Link>
     </div>
   );
@@ -393,7 +399,7 @@ export function AssistantResultDrawer({
 
   if (!result) {
     return (
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3 text-[12.5px] text-[var(--ink-muted)]">
+      <div className="rounded-tile bg-[var(--bg-surface-tint)] p-4 text-[12.5px] text-[var(--ink-muted)]">
         请选择具体业务记录查看详情。
       </div>
     );
@@ -447,7 +453,7 @@ export function AssistantResultDrawer({
   };
 
   return (
-    <div className="space-y-3.5" data-testid="drawer-result-panel">
+    <div className="space-y-4" data-testid="drawer-result-panel">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono-code text-[12px] text-[var(--ink-muted)]">
           {result.tool}
@@ -457,26 +463,26 @@ export function AssistantResultDrawer({
 
       {shipment && (
         <>
-          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
-            <div className="flex justify-between px-3 py-2">
+          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">运单编号</dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
                 {shipment.shipment_id}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">仓库站点</dt>
               <dd className="font-mono-code text-[var(--ink-primary)]">
                 {shipment.warehouse}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">当前交付日期</dt>
-              <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
+              <dd className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                 {shipment.delivery_date}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">状态 / 版本</dt>
               <dd className="flex items-center gap-2">
                 <StatusBadge status={shipment.status} compact />
@@ -490,18 +496,18 @@ export function AssistantResultDrawer({
           {canReschedule && (
             <form
               onSubmit={(e) => void handleReschedule(e)}
-              className="rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] p-3 space-y-2.5"
+              className="rounded-card bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)] space-y-3"
             >
-              <div className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
+              <div className="text-[13px] font-semibold text-[var(--ink-primary)]">
                 发起运单改期提案
               </div>
-              <p className="text-[11.5px] text-[var(--ink-muted)]">
-                提交后将生成待审批提案（PROPOSED），需独立审批人确认后方写入 ERP。
+              <p className="text-[12px] text-[var(--ink-muted)] leading-relaxed">
+                提交后将生成待审批提案，需独立审批人确认后方写入 ERP。
               </p>
               <div>
                 <label
                   htmlFor="drawer-reschedule-date"
-                  className="block text-[11.5px] text-[var(--ink-secondary)]"
+                  className="block text-[11.5px] font-medium text-[var(--ink-secondary)]"
                 >
                   新交付日期 (YYYY-MM-DD)
                 </label>
@@ -511,7 +517,7 @@ export function AssistantResultDrawer({
                   required
                   value={newDate}
                   onChange={(e) => setNewDate(e.target.value)}
-                  className="mt-1 h-8 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+                  className="mt-1 h-9 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent)] focus:outline-none"
                 />
               </div>
               {rescheduleError && <AccessNoticeCard error={rescheduleError} />}
@@ -519,6 +525,7 @@ export function AssistantResultDrawer({
                 type="submit"
                 size="sm"
                 variant="primary"
+                pill
                 loading={submitting}
                 disabled={!newDate}
                 className="w-full"
@@ -532,27 +539,27 @@ export function AssistantResultDrawer({
 
       {result.tool === "finance.invoice.read" &&
         typeof rawData.invoice_id === "string" && (
-          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
-            <div className="flex justify-between px-3 py-2">
+          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">发票编号</dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
                 {(rawData as unknown as InvoiceView).invoice_id}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">仓库</dt>
               <dd className="font-mono-code text-[var(--ink-primary)]">
                 {(rawData as unknown as InvoiceView).warehouse}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">金额</dt>
-              <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
+              <dd className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                 {(rawData as unknown as InvoiceView).currency}{" "}
                 {(rawData as unknown as InvoiceView).amount}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">状态</dt>
               <dd>
                 <StatusBadge
@@ -566,22 +573,22 @@ export function AssistantResultDrawer({
 
       {result.tool === "decision.warehouse.summary" &&
         typeof rawData.open_shipments === "number" && (
-          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
-            <div className="flex justify-between px-3 py-2">
+          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">仓库站点</dt>
               <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
                 {(rawData as unknown as WarehouseDecisionSummary).warehouse}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">未关闭运单数</dt>
-              <dd className="font-mono-code font-semibold text-[var(--ink-primary)]">
+              <dd className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
                 {(rawData as unknown as WarehouseDecisionSummary).open_shipments}
               </dd>
             </div>
-            <div className="flex justify-between px-3 py-2">
+            <div className="flex justify-between px-3.5 py-2.5">
               <dt className="text-[var(--ink-muted)]">统计日期</dt>
-              <dd className="font-mono-code text-[var(--ink-primary)]">
+              <dd className="font-mono-code text-[var(--ink-primary)] tabular-nums">
                 {(rawData as unknown as WarehouseDecisionSummary).as_of}
               </dd>
             </div>
@@ -591,12 +598,14 @@ export function AssistantResultDrawer({
       {!shipment &&
         result.tool !== "finance.invoice.read" &&
         result.tool !== "decision.warehouse.summary" && (
-          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] text-[12px]">
+          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] text-[12px]">
             {Object.entries(rawData).map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-2 px-3 py-2">
+              <div key={k} className="flex justify-between gap-2 px-3.5 py-2">
                 <dt className="font-mono-code text-[var(--ink-muted)]">{k}</dt>
                 <dd className="font-mono-code text-right text-[var(--ink-primary)] break-all">
-                  {typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+                  {typeof v === "string" ||
+                  typeof v === "number" ||
+                  typeof v === "boolean"
                     ? String(v)
                     : JSON.stringify(v)}
                 </dd>

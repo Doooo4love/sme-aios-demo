@@ -4,11 +4,13 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   Calendar,
+  Download,
   RefreshCw,
   Trash2,
   Users,
 } from "lucide-react";
 import {
+  getCalendarIcsUrl,
   isApiError,
   isStaleAuthError,
   type ApiError,
@@ -44,7 +46,6 @@ export function CalendarEventDrawer({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
 
-  // Edit form fields
   const [title, setTitle] = useState("");
   const [startsLocal, setStartsLocal] = useState("");
   const [endsLocal, setEndsLocal] = useState("");
@@ -53,11 +54,9 @@ export function CalendarEventDrawer({
   const [saveApiError, setSaveApiError] = useState<ApiError | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-  // Optimistic lock 409 diff banner state
   const [conflictSnapshot, setConflictSnapshot] =
     useState<CalendarEventDetail | null>(null);
 
-  // Cancel ConfirmDialog state
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
@@ -165,7 +164,6 @@ export function CalendarEventDrawer({
           setLoadError(err);
           return;
         }
-        // Optimistic lock 409: distinguish busy attendee vs stale revision
         if (
           err.status === 409 &&
           !err.message.includes("冲突") &&
@@ -228,7 +226,10 @@ export function CalendarEventDrawer({
 
   if (loadError) {
     return (
-      <AccessNoticeCard error={loadError} onRetry={() => void loadDetail(false)} />
+      <AccessNoticeCard
+        error={loadError}
+        onRetry={() => void loadDetail(false)}
+      />
     );
   }
 
@@ -239,18 +240,18 @@ export function CalendarEventDrawer({
   return (
     <div className="space-y-4" data-testid="calendar-event-drawer">
       {/* Header Summary */}
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-3.5">
+      <div className="rounded-card bg-[var(--bg-surface-tint)] p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <h3
               className={[
-                "text-[14.5px] font-semibold text-[var(--ink-primary)] break-words",
+                "text-[15px] font-semibold text-[var(--ink-primary)] break-words",
                 detail.cancelled ? "line-through opacity-70" : "",
               ].join(" ")}
             >
               {detail.title}
             </h3>
-            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono-code text-[11.5px] text-[var(--ink-muted)]">
+            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono-code text-[12px] text-[var(--ink-muted)] tabular-nums">
               <span>{formatUnixTime(detail.starts_at, { dateOnly: true })}</span>
               <span>{formatClockRange(detail.starts_at, detail.ends_at)}</span>
             </div>
@@ -261,40 +262,55 @@ export function CalendarEventDrawer({
           </div>
         </div>
 
-        <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--hairline-subtle)] pt-2.5 text-[11.5px]">
+        <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-[var(--hairline-subtle)] pt-3 text-[12px]">
           <div>
             <dt className="text-[var(--ink-muted)]">组织人</dt>
             <dd className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
               {detail.organizer}
             </dd>
           </div>
-          <div className="text-right">
+          <div>
             <dt className="text-[var(--ink-muted)]">乐观锁版本</dt>
             <dd className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
               r{detail.revision}
             </dd>
           </div>
         </dl>
+
+        <div className="mt-3 pt-2.5 border-t border-[var(--hairline-subtle)]">
+          <a
+            href={getCalendarIcsUrl({ eventId: detail.id })}
+            download
+            className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 text-[12px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:text-[var(--accent)] transition-all"
+          >
+            <Download className="h-3.5 w-3.5 text-[var(--accent)]" />
+            <span>导出本日程 .ics</span>
+          </a>
+        </div>
       </div>
 
       {/* Attendees List */}
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)]">
-        <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--ink-secondary)]">
+      <div className="rounded-card bg-[var(--bg-surface-tint)] overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[var(--hairline-subtle)] px-4 py-2.5 text-[12px] font-medium text-[var(--ink-secondary)]">
           <span className="flex items-center gap-1.5">
-            <Users className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
             <span>参会成员</span>
           </span>
-          <span className="font-mono-code">{detail.attendees.length} 人</span>
+          <span className="font-mono-code tabular-nums">
+            {detail.attendees.length} 人
+          </span>
         </div>
-        <ul className="divide-y divide-[var(--hairline-subtle)] text-[12px]">
+        <ul className="divide-y divide-[var(--hairline-subtle)] text-[12.5px]">
           {detail.attendees.map((subject) => (
             <li
               key={subject}
-              className="flex items-center justify-between px-3 py-1.5 font-mono-code text-[var(--ink-primary)]"
+              className="flex items-center justify-between px-4 py-2 font-mono-code text-[var(--ink-primary)]"
             >
               <span>{subject}</span>
               {subject === detail.organizer && (
-                <span className="text-[10.5px] text-[var(--accent)]">组织人</span>
+                <span className="rounded-full bg-[var(--accent-wash)] px-2 py-0.5 text-[10.5px] font-sans font-medium text-[var(--accent)]">
+                  组织人
+                </span>
               )}
             </li>
           ))}
@@ -306,30 +322,30 @@ export function CalendarEventDrawer({
         <div
           role="alert"
           data-testid="calendar-conflict-banner"
-          className="rounded-[4px] border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] p-3 text-[12px] space-y-2"
+          className="rounded-card bg-[var(--status-amber-wash)] p-3.5 text-[12px] space-y-2.5"
         >
           <div className="flex items-center gap-1.5 font-semibold text-[var(--status-amber-ink)]">
-            <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+            <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.85} />
             <span>日程版本已更新（最新 r{conflictSnapshot.revision}）</span>
           </div>
           <p className="text-[var(--ink-secondary)] leading-relaxed">
             该日程在其他会话中已被修改。请核对服务端最新快照后再决定是否重新提交：
           </p>
-          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] text-[11.5px]">
-            <div className="flex justify-between gap-2 px-2.5 py-1.5">
+          <dl className="divide-y divide-[var(--hairline-subtle)] rounded-sm bg-[var(--bg-surface)] text-[11.5px]">
+            <div className="flex justify-between gap-2 px-3 py-2">
               <dt className="text-[var(--ink-muted)]">最新主题</dt>
               <dd className="font-medium text-[var(--ink-primary)] text-right">
                 {conflictSnapshot.title}
               </dd>
             </div>
-            <div className="flex justify-between gap-2 px-2.5 py-1.5">
+            <div className="flex justify-between gap-2 px-3 py-2">
               <dt className="text-[var(--ink-muted)]">最新时间</dt>
-              <dd className="font-mono-code text-[var(--ink-primary)]">
+              <dd className="font-mono-code text-[var(--ink-primary)] tabular-nums">
                 {formatUnixTime(conflictSnapshot.starts_at)} –{" "}
                 {formatUnixTime(conflictSnapshot.ends_at)}
               </dd>
             </div>
-            <div className="flex justify-between gap-2 px-2.5 py-1.5">
+            <div className="flex justify-between gap-2 px-3 py-2">
               <dt className="text-[var(--ink-muted)]">最新状态</dt>
               <dd className="font-mono-code text-[var(--ink-primary)]">
                 {conflictSnapshot.cancelled ? "已取消" : "有效"}
@@ -340,6 +356,7 @@ export function CalendarEventDrawer({
             <Button
               size="sm"
               variant="secondary"
+              pill
               onClick={() => {
                 syncFormFromDetail(conflictSnapshot);
                 setConflictSnapshot(null);
@@ -351,9 +368,10 @@ export function CalendarEventDrawer({
               <Button
                 size="sm"
                 variant="primary"
+                pill
                 onClick={() => setConflictSnapshot(null)}
               >
-                保留我的输入并基于 r{conflictSnapshot.revision} 重试
+                基于 r{conflictSnapshot.revision} 重试
               </Button>
             )}
           </div>
@@ -363,7 +381,7 @@ export function CalendarEventDrawer({
       {saveSuccess && (
         <div
           role="status"
-          className="rounded-[4px] border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-3 py-2 text-[12px] text-[var(--status-emerald)]"
+          className="rounded-sm bg-[var(--status-emerald-wash)] px-3.5 py-2.5 text-[12.5px] text-[var(--status-emerald)]"
         >
           {saveSuccess}
         </div>
@@ -376,17 +394,17 @@ export function CalendarEventDrawer({
         <form
           onSubmit={(e) => void handleSave(e)}
           data-testid="calendar-edit-form"
-          className="rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] p-3.5 space-y-3"
+          className="rounded-card bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)] space-y-3"
         >
           <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--ink-primary)]">
+            <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ink-primary)]">
               <Calendar className="h-3.5 w-3.5 text-[var(--accent)]" />
               <span>编辑 / 改期日程</span>
             </span>
             <button
               type="button"
               onClick={() => void loadDetail(false)}
-              className="inline-flex items-center gap-1 text-[11px] text-[var(--ink-muted)] hover:text-[var(--ink-primary)] cursor-pointer"
+              className="inline-flex items-center gap-1 text-[11.5px] text-[var(--ink-muted)] hover:text-[var(--ink-primary)] cursor-pointer"
             >
               <RefreshCw className="h-3 w-3" />
               <span>刷新快照</span>
@@ -411,7 +429,7 @@ export function CalendarEventDrawer({
                 setTitle(e.target.value);
                 setFormError(null);
               }}
-              className="mt-1 h-8 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="mt-1 h-9 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
             />
           </div>
 
@@ -432,7 +450,7 @@ export function CalendarEventDrawer({
                 setStartsLocal(e.target.value);
                 setFormError(null);
               }}
-              className="mt-1 h-8 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="mt-1 h-9 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
             />
           </div>
 
@@ -453,28 +471,29 @@ export function CalendarEventDrawer({
                 setEndsLocal(e.target.value);
                 setFormError(null);
               }}
-              className="mt-1 h-8 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
+              className="mt-1 h-9 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
             />
           </div>
 
           {formError && (
             <div
               role="alert"
-              className="rounded-[4px] border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-2 text-[12px] text-[var(--status-crimson)]"
+              className="rounded-sm bg-[var(--status-crimson-wash)] px-3 py-2 text-[12px] text-[var(--status-crimson)]"
             >
               {formError}
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
+          <div className="flex items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-3">
             <Button
               type="button"
               size="sm"
               variant="danger"
+              pill
               data-testid="calendar-cancel-event-btn"
               onClick={() => setCancelDialogOpen(true)}
             >
-              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>取消会议</span>
             </Button>
 
@@ -482,6 +501,7 @@ export function CalendarEventDrawer({
               type="submit"
               size="sm"
               variant="primary"
+              pill
               loading={saving}
               data-testid="calendar-save-edit-btn"
             >
@@ -490,14 +510,13 @@ export function CalendarEventDrawer({
           </div>
         </form>
       ) : (
-        <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] px-3 py-2.5 text-[12px] text-[var(--ink-muted)]">
+        <div className="rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-3 text-[12px] text-[var(--ink-muted)]">
           {detail.cancelled
             ? "该会议已取消，不可再编辑。"
             : `仅组织人（${detail.organizer}）可调整或取消此会议。`}
         </div>
       )}
 
-      {/* Cancel ConfirmDialog */}
       <ConfirmDialog
         open={cancelDialogOpen}
         onOpenChange={setCancelDialogOpen}

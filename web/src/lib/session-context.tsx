@@ -19,6 +19,7 @@ import {
   getAuthGeneration,
   isApiError,
   isStaleAuthError,
+  loginWithCredentials,
   loginWithDemoPersona,
   logoutSession,
   onAuthReset,
@@ -62,6 +63,8 @@ export interface SessionContextValue {
   bumpAvatarVersion: () => void;
   bumpAgentAvatarVersion: () => void;
   loginAsDemo: (persona: DemoPersonaId) => Promise<Actor | null>;
+  loginWithPassword: (username: string, password: string) => Promise<Actor | null>;
+  loginWithCredentials: (username: string, password: string) => Promise<Actor | null>;
   switchDemoPersona: (persona: DemoPersonaId) => Promise<Actor | null>;
   logout: () => Promise<void>;
   handleAccessChanged: () => Promise<void>;
@@ -243,6 +246,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [loadAuthenticatedBundle],
   );
 
+  const loginWithPassword = useCallback(
+    async (username: string, password: string): Promise<Actor | null> => {
+      isSwitchingRef.current = true;
+      setSwitchingPersona(true);
+      try {
+        bumpAuthGeneration("persona_switch");
+        await loginWithCredentials(username, password);
+        const me = await loadAuthenticatedBundle(true);
+        return me;
+      } finally {
+        isSwitchingRef.current = false;
+        setSwitchingPersona(false);
+      }
+    },
+    [loadAuthenticatedBundle],
+  );
+
   const switchDemoPersona = useCallback(
     async (persona: DemoPersonaId): Promise<Actor | null> => {
       isSwitchingRef.current = true;
@@ -339,6 +359,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       bumpAvatarVersion,
       bumpAgentAvatarVersion,
       loginAsDemo,
+      loginWithPassword,
+      loginWithCredentials: loginWithPassword,
       switchDemoPersona,
       logout,
       handleAccessChanged,
@@ -368,6 +390,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       bumpAvatarVersion,
       bumpAgentAvatarVersion,
       loginAsDemo,
+      loginWithPassword,
       switchDemoPersona,
       logout,
       handleAccessChanged,

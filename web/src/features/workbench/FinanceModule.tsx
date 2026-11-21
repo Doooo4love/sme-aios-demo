@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  FileCheck2,
   Maximize2,
   PanelRight,
   Receipt,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/api-client";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
+import { Interactive3DCard } from "@/components/kinetic/Interactive3DCard";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -106,28 +108,32 @@ export function FinanceModule() {
     }
   };
 
+  const reviewClauseCount = SYNTHETIC_CONTRACT_CLAUSES.filter(
+    (c) => c.riskLevel === "review",
+  ).length;
+
   return (
-    <div className="space-y-4" data-testid="workbench-finance-module">
-      {/* Real Invoice Lookup (POST /v1/workbench/calls finance.invoice.read) */}
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)]">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+    <div className="space-y-5" data-testid="workbench-finance-module">
+      {/* Real Invoice Lookup Porcelain Card */}
+      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
           <div>
-            <h2 className="text-[14px] font-semibold text-[var(--ink-primary)]">
-              实时发票审阅查询（finance.invoice.read）
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+              实时发票审阅查询
             </h2>
-            <p className="text-[12px] text-[var(--ink-muted)]">
-              按当前账号获授权仓库实时调用财务发票查询接口，支持权责即时收回与跨仓隔离校验。
+            <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
+              按当前账号授权仓库实时调用财务发票查询接口，支持权责即时收回与跨仓隔离校验。
             </p>
           </div>
           {invoiceTool && <SourceTag source={invoiceTool.source} />}
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="p-5 space-y-4">
           {authorizedWarehouses.length === 0 ? (
             <AccessNoticeCard
               variant="ACCESS_RESTRICTED"
               title="当前账号未开通发票查询站点"
-              message="如需查询仓库发票（例如 HK01 · INV-100），请由权限管理员授予 invoice-review（finance.read）模块权限。"
+              message="如需查询仓库发票（例如 HK01 · INV-100），请由权限管理员授予发票审阅模块权限。"
             />
           ) : (
             <form
@@ -137,7 +143,7 @@ export function FinanceModule() {
               }}
               className="flex flex-wrap items-end gap-3"
             >
-              <label className="block space-y-1">
+              <label className="block space-y-1.5">
                 <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                   授权仓库
                 </span>
@@ -145,7 +151,7 @@ export function FinanceModule() {
                   value={warehouse}
                   onChange={(e) => setWarehouse(e.target.value)}
                   data-testid="finance-warehouse-select"
-                  className="h-9 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[12.5px] font-semibold"
+                  className="h-9 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
                 >
                   {authorizedWarehouses.map((wh) => (
                     <option key={wh} value={wh}>
@@ -155,7 +161,7 @@ export function FinanceModule() {
                 </select>
               </label>
 
-              <label className="block flex-1 min-w-[200px] space-y-1">
+              <label className="block flex-1 min-w-[200px] space-y-1.5">
                 <span className="text-[12px] font-medium text-[var(--ink-secondary)]">
                   发票编号
                 </span>
@@ -166,7 +172,7 @@ export function FinanceModule() {
                   onChange={(e) => setInvoiceId(e.target.value)}
                   placeholder="例如 INV-100"
                   data-testid="finance-invoice-id-input"
-                  className="h-9 w-full rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2.5 font-mono-code text-[13px]"
+                  className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[13px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
                 />
               </label>
 
@@ -183,6 +189,7 @@ export function FinanceModule() {
               {authorizedWarehouses.includes("HK01") && (
                 <Button
                   size="sm"
+                  pill
                   variant="secondary"
                   onClick={() => {
                     setWarehouse("HK01");
@@ -190,6 +197,7 @@ export function FinanceModule() {
                     void handleLookupInvoice({ wh: "HK01", id: "INV-100" });
                   }}
                   data-testid="finance-sample-inv100-btn"
+                  className="font-mono-code"
                 >
                   HK01 · INV-100
                 </Button>
@@ -217,18 +225,17 @@ export function FinanceModule() {
           {invoiceResult && (
             <div
               data-testid="finance-invoice-result"
-              className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-subtle)] p-4 space-y-3"
+              className="rounded-tile bg-[var(--bg-surface-tint)] p-4.5 space-y-3.5"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Receipt
-                    className="h-4 w-4 text-[var(--accent)]"
-                    strokeWidth={1.75}
-                  />
-                  <span className="font-mono-code text-[14px] font-semibold text-[var(--ink-primary)]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                    <Receipt className="h-4 w-4" strokeWidth={1.85} />
+                  </span>
+                  <span className="font-mono-code text-[14.5px] font-semibold text-[var(--ink-primary)]">
                     {invoiceResult.data.invoice_id}
                   </span>
-                  <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-1.5 py-0.5 font-mono-code text-[11px]">
+                  <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
                     {invoiceResult.data.warehouse}
                   </span>
                   <StatusBadge status={invoiceResult.data.state} compact />
@@ -237,6 +244,7 @@ export function FinanceModule() {
 
                 <Button
                   size="sm"
+                  pill
                   variant="secondary"
                   onClick={(e) =>
                     openDrawer(
@@ -259,24 +267,30 @@ export function FinanceModule() {
                 </Button>
               </div>
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] p-3 text-[12.5px]">
-                <div>
-                  <span className="text-[var(--ink-muted)]">发票金额：</span>
-                  <span className="font-mono-code text-[14px] font-semibold text-[var(--ink-primary)]">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-[12.5px]">
+                <div className="rounded-sm bg-[var(--bg-surface)] px-3.5 py-2.5 shadow-[var(--shadow-subtle)]">
+                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                    发票金额
+                  </div>
+                  <div className="mt-0.5 font-mono-code tabular-nums text-[16px] font-semibold text-[var(--ink-primary)]">
                     {invoiceResult.data.currency} {invoiceResult.data.amount}
-                  </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[var(--ink-muted)]">所属站点：</span>
-                  <span className="font-mono-code text-[var(--ink-primary)]">
+                <div className="rounded-sm bg-[var(--bg-surface)] px-3.5 py-2.5 shadow-[var(--shadow-subtle)]">
+                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                    所属站点
+                  </div>
+                  <div className="mt-0.5 font-mono-code text-[14px] font-medium text-[var(--ink-primary)]">
                     {invoiceResult.data.warehouse}
-                  </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[var(--ink-muted)]">结算状态：</span>
-                  <span className="font-mono-code text-[var(--ink-primary)]">
+                <div className="rounded-sm bg-[var(--bg-surface)] px-3.5 py-2.5 shadow-[var(--shadow-subtle)]">
+                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                    结算状态
+                  </div>
+                  <div className="mt-0.5 font-mono-code text-[14px] font-medium text-[var(--ink-primary)]">
                     {invoiceResult.data.state}
-                  </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -286,80 +300,108 @@ export function FinanceModule() {
 
       {/* Real Assurance Contract Cases (when actor has assurance.contract grant) */}
       {hasContractAssurance && (
-        <div className="space-y-2">
-          <div className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-muted)]">
-            CONTRACT ASSURANCE · 关联受控合同预审案件
-          </div>
+        <div className="space-y-2.5">
+          <h3 className="px-1 text-[13.5px] font-semibold text-[var(--ink-secondary)]">
+            关联受控合同预审案件
+          </h3>
           <AssurancePanel fixedKinds={["contract"]} />
         </div>
       )}
 
-      {/* Clearly Labeled Synthetic Contract Clause & Payment Milestone Card */}
-      <div
-        className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
-        data-testid="finance-synthetic-contract-card"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2">
-          <div className="flex items-center gap-2">
-            <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-secondary)]">
-              CONTRACT CLAUSES & PAYMENT MILESTONES · 合同条款与付款里程碑核对
-            </span>
-            <SourceTag source="synthetic" />
-          </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setClauseModalOpen(true)}
-            data-testid="finance-contract-fullscreen-btn"
-            className="h-6 px-2 text-[11.5px]"
-          >
-            <Maximize2 className="h-3 w-3" />
-            <span>全屏条款对比</span>
-          </Button>
-        </div>
+      {/* Clearly Labeled Synthetic Contract Clause & Payment Milestone Section */}
+      <div className="space-y-3" data-testid="finance-synthetic-contract-card">
+        {/* Sheen-only Porcelain Highlight Banner for Synthetic Contract Summary */}
+        <Interactive3DCard
+          interactive={false}
+          sheenIntensity="subtle"
+          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5 min-w-0">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent)]">
+                <FileCheck2 className="h-5 w-5" strokeWidth={1.85} />
+              </span>
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                    合同条款与付款里程碑核对
+                  </h3>
+                  <SourceTag source="synthetic" />
+                </div>
+                <p className="text-[12.5px] text-[var(--ink-muted)] leading-relaxed">
+                  共{" "}
+                  <span className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
+                    {SYNTHETIC_CONTRACT_CLAUSES.length}
+                  </span>{" "}
+                  项演示条款，其中{" "}
+                  <span className="font-mono-code tabular-nums font-semibold text-[var(--status-amber-ink)]">
+                    {reviewClauseCount}
+                  </span>{" "}
+                  项偏离标准模板（账期与自动续约），不代表真实外部 ERP 写入记录。
+                </p>
+              </div>
+            </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-[12px]">
-            <thead>
-              <tr className="border-b border-[var(--hairline)] bg-[var(--bg-subtle)] text-[11px] text-[var(--ink-muted)]">
-                <th className="px-3 py-2 font-medium">条款号</th>
-                <th className="px-3 py-2 font-medium">条款主题</th>
-                <th className="px-3 py-2 font-medium">付款里程碑</th>
-                <th className="px-3 py-2 font-medium text-right">核对状态</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--hairline-subtle)]">
-              {SYNTHETIC_CONTRACT_CLAUSES.map((clause) => (
-                <tr
-                  key={clause.clauseId}
-                  className="hover:bg-[var(--bg-subtle)]"
-                >
-                  <td className="px-3 py-2 font-mono-code font-semibold text-[var(--ink-primary)]">
-                    {clause.clauseId}
-                  </td>
-                  <td className="px-3 py-2 font-medium text-[var(--ink-primary)]">
-                    {clause.topic}
-                  </td>
-                  <td className="px-3 py-2 text-[var(--ink-secondary)]">
-                    {clause.paymentMilestone}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {clause.riskLevel === "review" ? (
-                      <span className="inline-flex items-center gap-1 font-medium text-[var(--status-amber-ink)]">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        <span>偏离标准条款</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 font-medium text-[var(--status-emerald)]">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>符合标准模板</span>
-                      </span>
-                    )}
-                  </td>
+            <Button
+              size="sm"
+              pill
+              variant="secondary"
+              onClick={() => setClauseModalOpen(true)}
+              data-testid="finance-contract-fullscreen-btn"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+              <span>全屏条款对比</span>
+            </Button>
+          </div>
+        </Interactive3DCard>
+
+        {/* Flat Steady Data Table Sheet */}
+        <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-[12.5px]">
+              <thead>
+                <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+                  <th className="px-4 py-2.5 font-medium">条款号</th>
+                  <th className="px-3.5 py-2.5 font-medium">条款主题</th>
+                  <th className="px-3.5 py-2.5 font-medium">付款里程碑</th>
+                  <th className="px-4 py-2.5 font-medium text-right">
+                    核对状态
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[var(--hairline-subtle)]">
+                {SYNTHETIC_CONTRACT_CLAUSES.map((clause) => (
+                  <tr
+                    key={clause.clauseId}
+                    className="hover:bg-[var(--bg-surface-tint)]/80 transition-colors duration-[150ms]"
+                  >
+                    <td className="px-4 py-3 font-mono-code font-semibold text-[var(--ink-primary)]">
+                      {clause.clauseId}
+                    </td>
+                    <td className="px-3.5 py-3 font-medium text-[var(--ink-primary)]">
+                      {clause.topic}
+                    </td>
+                    <td className="px-3.5 py-3 text-[var(--ink-secondary)]">
+                      {clause.paymentMilestone}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {clause.riskLevel === "review" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-amber-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--status-amber-ink)]">
+                          <AlertTriangle className="h-3 w-3" />
+                          <span>偏离标准条款</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-emerald-wash)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--status-emerald)]">
+                          <CheckCircle2 className="h-3 w-3" />
+                          <span>符合标准模板</span>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -373,30 +415,28 @@ export function FinanceModule() {
         expandable
       >
         <div
-          className="space-y-3"
+          className="space-y-3.5"
           data-testid="finance-contract-fullscreen-modal"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <SourceTag source="synthetic" />
             <span className="text-[12px] text-[var(--ink-muted)]">
-              演示合同模板，不代表真实外部 ERP/法务系统写入记录
+              演示合同模板，不代表真实外部 ERP / 法务系统写入记录
             </span>
           </div>
-          <div className="overflow-x-auto rounded-[4px] border border-[var(--hairline)]">
+          <div className="overflow-x-auto rounded-tile bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)]">
             <table className="w-full border-collapse text-left text-[13px]">
               <thead>
-                <tr className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] text-[12px] text-[var(--ink-secondary)]">
-                  <th className="px-3.5 py-2.5 font-medium w-[90px]">编号</th>
-                  <th className="px-3.5 py-2.5 font-medium w-[18%]">条款主题</th>
-                  <th className="px-3.5 py-2.5 font-medium w-[27%]">
+                <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[12px] text-[var(--ink-secondary)]">
+                  <th className="px-4 py-3 font-medium w-[90px]">编号</th>
+                  <th className="px-4 py-3 font-medium w-[18%]">条款主题</th>
+                  <th className="px-4 py-3 font-medium w-[27%]">
                     标准模板条款
                   </th>
-                  <th className="px-3.5 py-2.5 font-medium w-[28%]">
+                  <th className="px-4 py-3 font-medium w-[28%]">
                     拟签合同条款
                   </th>
-                  <th className="px-3.5 py-2.5 font-medium w-[18%]">
-                    付款里程碑
-                  </th>
+                  <th className="px-4 py-3 font-medium w-[18%]">付款里程碑</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--hairline-subtle)]">
@@ -409,19 +449,19 @@ export function FinanceModule() {
                         : ""
                     }
                   >
-                    <td className="px-3.5 py-3 font-mono-code font-semibold text-[var(--ink-primary)]">
+                    <td className="px-4 py-3.5 font-mono-code font-semibold text-[var(--ink-primary)]">
                       {clause.clauseId}
                     </td>
-                    <td className="px-3.5 py-3 font-medium text-[var(--ink-primary)]">
+                    <td className="px-4 py-3.5 font-medium text-[var(--ink-primary)]">
                       {clause.topic}
                     </td>
-                    <td className="px-3.5 py-3 text-[var(--ink-muted)]">
+                    <td className="px-4 py-3.5 text-[var(--ink-muted)]">
                       {clause.standardTerm}
                     </td>
-                    <td className="px-3.5 py-3 font-medium text-[var(--ink-primary)]">
+                    <td className="px-4 py-3.5 font-medium text-[var(--ink-primary)]">
                       {clause.proposedTerm}
                     </td>
-                    <td className="px-3.5 py-3 text-[var(--ink-secondary)]">
+                    <td className="px-4 py-3.5 text-[var(--ink-secondary)]">
                       {clause.paymentMilestone}
                     </td>
                   </tr>

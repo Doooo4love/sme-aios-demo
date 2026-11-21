@@ -4,8 +4,10 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
+  Check,
   CheckCircle2,
   ClipboardCheck,
+  Copy,
   PanelRight,
   RefreshCw,
   ShieldCheck,
@@ -57,6 +59,7 @@ export function ApprovalsModule() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
 
@@ -127,6 +130,18 @@ export function ApprovalsModule() {
       if (isApiError(err)) setError(err);
     } finally {
       if (startGen === getAuthGeneration()) setLoadingMore(false);
+    }
+  };
+
+  const handleCopyId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedId(id);
+      window.setTimeout(() => {
+        setCopiedId((prev) => (prev === id ? null : prev));
+      }, 1500);
+    } catch {
+      // Clipboard may be unavailable
     }
   };
 
@@ -218,43 +233,45 @@ export function ApprovalsModule() {
 
   return (
     <div className="space-y-4" data-testid="workbench-approvals-module">
-      <div className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
           <div>
-            <h2 className="text-[14px] font-semibold text-[var(--ink-primary)]">
-              主管审批队列（GET /v1/workbench/approvals）
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+              主管审批队列
             </h2>
-            <p className="text-[12px] text-[var(--ink-muted)]">
-              按需加载详情与摘要锁，列表渲染零 N+1 请求；勾选多条后可核对摘要并批量批准入队。
+            <p className="mt-0.5 text-[12.5px] text-[var(--ink-muted)]">
+              按需核对摘要并支持单笔或批量批准入队。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {selectedList.length > 0 && (
               <Button
                 size="sm"
+                pill
                 variant="primary"
                 onClick={() => void openBatchConfirmModal()}
                 data-testid="batch-approve-trigger-btn"
               >
-                <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.85} />
                 <span>批量批准已选 ({selectedList.length})</span>
               </Button>
             )}
             <Button
               size="sm"
+              pill
               variant="secondary"
               loading={loading}
               onClick={() => void loadApprovals()}
               data-testid="approvals-refresh-btn"
             >
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>刷新审批列表</span>
             </Button>
           </div>
         </div>
 
         {error && (
-          <div className="p-4">
+          <div className="p-5">
             <AccessNoticeCard
               error={error}
               onRetry={() => void loadApprovals()}
@@ -263,61 +280,63 @@ export function ApprovalsModule() {
         )}
 
         {!error && loading && items.length === 0 && (
-          <div className="py-12 text-center text-[12.5px] text-[var(--ink-muted)]">
+          <div className="py-14 text-center text-[13px] text-[var(--ink-muted)]">
             正在加载待审批提案…
           </div>
         )}
 
         {!error && !loading && items.length === 0 && (
           <div
-            className="flex flex-col items-center gap-2 py-12 text-center text-[13px] text-[var(--ink-muted)]"
+            className="flex flex-col items-center gap-2.5 py-14 text-center text-[13px] text-[var(--ink-muted)]"
             data-testid="approvals-empty-state"
           >
-            <ClipboardCheck className="h-5 w-5 opacity-55" strokeWidth={1.5} />
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]">
+              <ClipboardCheck className="h-5 w-5" strokeWidth={1.6} />
+            </span>
             <span>当前授权仓库暂无待您审批的提案</span>
           </div>
         )}
 
         {items.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-[12.5px]">
+            <table className="w-full border-collapse text-left text-[13px]">
               <thead>
-                <tr className="border-b border-[var(--hairline)] bg-[var(--bg-plane)] text-[11.5px] text-[var(--ink-muted)]">
-                  <th className="w-10 px-3 py-2">
+                <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+                  <th className="w-11 px-4 py-2.5">
                     <input
                       type="checkbox"
                       checked={allSelected}
                       onChange={toggleAll}
                       aria-label="全选当前页待审批提案"
                       data-testid="approvals-select-all"
-                      className="h-3.5 w-3.5 rounded-[2px] accent-[var(--accent)] cursor-pointer"
+                      className="h-4 w-4 rounded accent-[var(--accent)] cursor-pointer"
                     />
                   </th>
-                  <th className="px-3 py-2 font-medium">提案编号</th>
-                  <th className="px-3 py-2 font-medium">动作类型</th>
-                  <th className="px-3 py-2 font-medium">站点</th>
-                  <th className="px-3 py-2 font-medium">状态</th>
-                  <th className="px-3 py-2 font-medium">审批有效期</th>
-                  <th className="px-3 py-2 font-medium text-right">操作</th>
+                  <th className="px-3.5 py-2.5 font-medium">审批单据</th>
+                  <th className="px-3.5 py-2.5 font-medium">站点</th>
+                  <th className="px-3.5 py-2.5 font-medium">状态</th>
+                  <th className="px-3.5 py-2.5 font-medium">审批有效期</th>
+                  <th className="px-4 py-2.5 font-medium text-right">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--hairline-subtle)]">
                 {items.map((item) => {
                   const checked = Boolean(selectedIds[item.id]);
                   const expiry = formatRelativeCountdown(item.expires);
+                  const shortId = formatShortDigest(item.id, 4, 4);
                   return (
                     <tr
                       key={item.id}
                       data-testid="approval-row"
                       data-proposal-id={item.id}
                       className={[
-                        "transition-colors duration-[120ms]",
+                        "group transition-colors duration-[160ms]",
                         checked
-                          ? "bg-[var(--accent-wash)]/60"
-                          : "hover:bg-[var(--bg-subtle)]",
+                          ? "bg-[var(--accent-wash)]/70"
+                          : "hover:bg-[var(--bg-surface-tint)]/80",
                       ].join(" ")}
                     >
-                      <td className="px-3 py-2.5">
+                      <td className="px-4 py-3.5">
                         <input
                           type="checkbox"
                           checked={checked}
@@ -329,54 +348,75 @@ export function ApprovalsModule() {
                           }
                           aria-label={`选择提案 ${item.id}`}
                           data-testid={`approval-select-${item.id}`}
-                          className="h-3.5 w-3.5 rounded-[2px] accent-[var(--accent)] cursor-pointer"
+                          className="h-4 w-4 rounded accent-[var(--accent)] cursor-pointer"
                         />
                       </td>
-                      <td className="px-3 py-2.5">
-                        <Link
-                          href={`/proposals/${encodeURIComponent(item.id)}`}
-                          className="font-mono-code font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] hover:underline"
-                        >
-                          {item.id}
-                        </Link>
+                      <td className="px-3.5 py-3.5">
+                        <div className="flex flex-col gap-0.5">
+                          <Link
+                            href={`/proposals/${encodeURIComponent(item.id)}`}
+                            className="font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] transition-colors"
+                          >
+                            {formatProposalAction(item.action)} · {item.warehouse}
+                          </Link>
+                          <div className="inline-flex items-center gap-1 text-[11.5px] text-[var(--ink-muted)]">
+                            <span
+                              title={item.id}
+                              className="font-mono-code tabular-nums"
+                            >
+                              {shortId}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyId(item.id)}
+                              title={`复制完整单号 ${item.id}`}
+                              aria-label={`复制单号 ${item.id}`}
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--ink-faint)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-all cursor-pointer"
+                            >
+                              {copiedId === item.id ? (
+                                <Check className="h-3 w-3 text-[var(--status-emerald)]" />
+                              ) : (
+                                <Copy className="h-3 w-3" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
                       </td>
-                      <td className="px-3 py-2.5 text-[var(--ink-primary)]">
-                        {formatProposalAction(item.action)}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className="rounded-[2px] border border-[var(--hairline-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)]">
+                      <td className="px-3.5 py-3.5">
+                        <span className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)]">
                           {item.warehouse}
                         </span>
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className="px-3.5 py-3.5">
                         <StatusBadge status={item.state} compact />
                       </td>
-                      <td className="px-3 py-2.5 font-mono-code text-[12px]">
+                      <td className="px-3.5 py-3.5 font-mono-code tabular-nums text-[12px]">
                         <div className="text-[var(--ink-primary)]">
                           {formatUnixTime(item.expires)}
                         </div>
                         <div
                           className={
                             expiry.dueSoon || expiry.expired
-                              ? "text-[11px] font-semibold text-[var(--status-amber-ink)]"
-                              : "text-[11px] text-[var(--ink-muted)]"
+                              ? "mt-0.5 text-[11px] font-semibold text-[var(--status-amber-ink)]"
+                              : "mt-0.5 text-[11px] text-[var(--ink-muted)]"
                           }
                         >
                           {expiry.label}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
                           <Button
                             size="sm"
-                            variant="primary"
+                            pill
+                            variant="quiet"
                             onClick={(e) =>
                               openDrawer(
                                 {
                                   kind: "proposal",
                                   id: item.id,
                                   warehouse: item.warehouse,
-                                  title: `审批核对 · ${item.id}`,
+                                  title: `审批核对 · ${shortId}`,
                                 },
                                 { tab: "current", trigger: e.currentTarget },
                               )
@@ -389,10 +429,10 @@ export function ApprovalsModule() {
                           <Link
                             href={`/proposals/${encodeURIComponent(item.id)}`}
                             data-testid={`approval-open-link-${item.id}`}
-                            className="inline-flex h-7 items-center gap-1 rounded-[4px] border border-[var(--hairline-strong)] bg-[var(--bg-sheet)] px-2 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-subtle)]"
+                            className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent)] transition-colors duration-[150ms]"
                           >
                             <span>详情页</span>
-                            <ArrowUpRight className="h-3 w-3" />
+                            <ArrowUpRight className="h-3.5 w-3.5" />
                           </Link>
                         </div>
                       </td>
@@ -405,9 +445,10 @@ export function ApprovalsModule() {
         )}
 
         {nextCursor && (
-          <div className="flex justify-center border-t border-[var(--hairline)] bg-[var(--bg-subtle)] px-4 py-2.5">
+          <div className="flex justify-center border-t border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] px-5 py-3">
             <Button
               size="sm"
+              pill
               variant="secondary"
               loading={loadingMore}
               onClick={() => void handleLoadMore()}
@@ -422,14 +463,14 @@ export function ApprovalsModule() {
       {/* Per-item Batch Approval Results */}
       {batchResults && (
         <div
-          className="rounded-[4px] border border-[var(--hairline)] bg-[var(--bg-sheet)] overflow-hidden"
+          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
           data-testid="batch-approve-results"
         >
-          <div className="flex items-center justify-between border-b border-[var(--hairline)] bg-[var(--bg-plane)] px-4 py-2">
-            <span className="font-mono-code text-[11px] uppercase tracking-[0.04em] text-[var(--ink-secondary)]">
-              BATCH APPROVAL RESULTS · 批量审批逐项结果
+          <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-3.5">
+            <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+              批量审批逐项结果
             </span>
-            <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)]">
+            <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
               成功 {batchResults.filter((r) => r.status === 202).length} / 共{" "}
               {batchResults.length}
             </span>
@@ -457,39 +498,38 @@ export function ApprovalsModule() {
                 <div
                   key={res.proposal_id}
                   data-testid={`batch-result-${res.proposal_id}`}
-                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-[12.5px]"
+                  className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-[13px]"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5">
                     {ok ? (
                       <CheckCircle2
                         className="h-4 w-4 text-[var(--status-emerald)]"
-                        strokeWidth={1.75}
+                        strokeWidth={1.85}
                       />
                     ) : (
                       <XCircle
                         className="h-4 w-4 text-[var(--status-crimson)]"
-                        strokeWidth={1.75}
+                        strokeWidth={1.85}
                       />
                     )}
                     <Link
                       href={`/proposals/${encodeURIComponent(res.proposal_id)}`}
-                      className="font-mono-code font-semibold text-[var(--ink-primary)] hover:underline"
+                      title={res.proposal_id}
+                      className="font-mono-code font-semibold text-[var(--ink-primary)] hover:text-[var(--accent)] transition-colors"
                     >
-                      {res.proposal_id}
+                      {formatShortDigest(res.proposal_id, 6, 4)}
                     </Link>
                   </div>
                   <div className="flex items-center gap-2">
                     <span
                       className={[
-                        "font-mono-code text-[11.5px] font-medium",
+                        "rounded-full px-2.5 py-0.5 font-mono-code text-[11.5px] font-medium",
                         ok
-                          ? "text-[var(--status-emerald)]"
-                          : "text-[var(--status-crimson)]",
+                          ? "bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+                          : "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
                       ].join(" ")}
                     >
-                      {ok
-                        ? "202 · 已批准并入队 (QUEUED)"
-                        : `${res.status} · ${detailText}`}
+                      {ok ? "已批准并入队" : `${res.status} · ${detailText}`}
                     </span>
                   </div>
                 </div>
@@ -504,7 +544,7 @@ export function ApprovalsModule() {
         open={batchModalOpen}
         onOpenChange={setBatchModalOpen}
         title={`批量批准确认（已选 ${selectedList.length} 条提案）`}
-        subtitle="提交前已按需读取所选提案的最新权威摘要锁（Digest），逐条独立提交并互不阻塞。"
+        subtitle="提交前已按需读取所选提案的最新权威摘要锁，逐条独立提交并互不阻塞。"
         size="lg"
         footer={
           <>
@@ -529,20 +569,24 @@ export function ApprovalsModule() {
       >
         <div className="space-y-3" data-testid="batch-approve-modal">
           {batchPreparing ? (
-            <div className="py-8 text-center text-[12.5px] text-[var(--ink-muted)]">
+            <div className="py-8 text-center text-[13px] text-[var(--ink-muted)]">
               正在获取已选提案的权威快照与摘要锁…
             </div>
           ) : (
-            <div className="divide-y divide-[var(--hairline)] rounded-[4px] border border-[var(--hairline)]">
+            <div className="divide-y divide-[var(--hairline-subtle)] rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
               {batchRows.map((row) => (
-                <div key={row.item.id} className="p-3 text-[12px] space-y-1">
+                <div key={row.item.id} className="p-3.5 text-[12.5px] space-y-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono-code font-semibold text-[var(--ink-primary)]">
-                      {row.item.id} · {row.item.warehouse}
+                    <span
+                      title={row.item.id}
+                      className="font-mono-code font-semibold text-[var(--ink-primary)]"
+                    >
+                      {formatShortDigest(row.item.id, 6, 4)} ·{" "}
+                      {row.item.warehouse}
                     </span>
-                    <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+                    <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)]">
                       {row.proposal
-                        ? `digest ${formatShortDigest(row.proposal.digest)}`
+                        ? formatShortDigest(row.proposal.digest)
                         : "读取失败"}
                     </span>
                   </div>

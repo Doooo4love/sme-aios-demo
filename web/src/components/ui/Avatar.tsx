@@ -3,31 +3,78 @@
 import React, { useEffect, useState } from "react";
 import { getMonogram } from "@/lib/format";
 
+export type AvatarStatus = "online" | "busy" | "offline" | "verified";
+
 export interface AvatarProps {
   src?: string | null;
   name?: string | null;
   fallbackText: string;
-  size?: "xs" | "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg" | "xl";
   kind?: "user" | "agent";
+  status?: AvatarStatus;
   className?: string;
 }
 
 const SIZE_MAP: Record<
   NonNullable<AvatarProps["size"]>,
-  { box: string; text: string; radius: string }
+  { box: string; text: string; dot: string; agentIcon: string }
 > = {
   xs: {
     box: "h-6 w-6",
-    text: "text-[9px] tracking-tighter",
-    radius: "rounded-[4px]",
+    text: "text-[10.5px]",
+    dot: "h-2 w-2 right-0 bottom-0 ring-[1.5px]",
+    agentIcon: "h-3 w-3",
   },
   sm: {
-    box: "h-7 w-7",
-    text: "text-[10.5px] tracking-tight",
-    radius: "rounded-[4px]",
+    box: "h-8 w-8",
+    text: "text-[12px]",
+    dot: "h-2.5 w-2.5 right-0 bottom-0 ring-2",
+    agentIcon: "h-3.5 w-3.5",
   },
-  md: { box: "h-8 w-8", text: "text-[12px]", radius: "rounded-[4px]" },
-  lg: { box: "h-[72px] w-[72px]", text: "text-[20px]", radius: "rounded-[6px]" },
+  md: {
+    box: "h-9 w-9",
+    text: "text-[13px]",
+    dot: "h-2.5 w-2.5 right-0 bottom-0 ring-2",
+    agentIcon: "h-4 w-4",
+  },
+  lg: {
+    box: "h-14 w-14",
+    text: "text-[19px]",
+    dot: "h-3.5 w-3.5 right-0.5 bottom-0.5 ring-2",
+    agentIcon: "h-6 w-6",
+  },
+  xl: {
+    box: "h-[72px] w-[72px]",
+    text: "text-[24px]",
+    dot: "h-4 w-4 right-0.5 bottom-0.5 ring-2",
+    agentIcon: "h-8 w-8",
+  },
+};
+
+/**
+ * 4 restrained editorial identity hues (<= 8% wash), harmonized with Frosted Porcelain:
+ * Cobalt slate, botanical sage, desaturated slate-teal, and warm sand.
+ */
+const USER_TONES = [
+  "bg-[rgba(22,104,227,0.08)] text-[#1D5BC4]",
+  "bg-[rgba(18,122,70,0.08)] text-[#127A46]",
+  "bg-[rgba(34,104,120,0.08)] text-[#1E5C6B]",
+  "bg-[rgba(154,108,52,0.08)] text-[#855920]",
+] as const;
+
+function pickUserTone(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  return USER_TONES[Math.abs(hash) % USER_TONES.length]!;
+}
+
+const STATUS_DOT_COLOR: Record<AvatarStatus, string> = {
+  online: "bg-[#19A957]",
+  busy: "bg-[#D98218]",
+  offline: "bg-[#98A2B3]",
+  verified: "bg-[var(--accent)]",
 };
 
 export function Avatar({
@@ -36,6 +83,7 @@ export function Avatar({
   fallbackText,
   size = "sm",
   kind = "user",
+  status,
   className = "",
 }: AvatarProps) {
   const [failed, setFailed] = useState(false);
@@ -47,70 +95,82 @@ export function Avatar({
   const dims = SIZE_MAP[size];
   const label = name || fallbackText;
   const rawMonogram = getMonogram(name, fallbackText);
-  const monogram =
-    size === "xs" && /[\u4e00-\u9fff]/.test(rawMonogram)
-      ? rawMonogram.slice(0, 1)
-      : rawMonogram;
+  // Single clean CJK glyph (surname/first hanzi) avoids cramped 2-char circular fallbacks
+  const monogram = /[\u4e00-\u9fff]/.test(rawMonogram)
+    ? rawMonogram.slice(0, 1)
+    : rawMonogram;
 
-  if (src && !failed) {
-    return (
-      <span
-        className={[
-          "relative inline-flex shrink-0 overflow-hidden border border-[var(--hairline-strong)] bg-[var(--bg-subtle)]",
-          dims.box,
-          dims.radius,
-          className,
-        ].join(" ")}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt={label}
-          className="h-full w-full object-cover"
-          onError={() => setFailed(true)}
-        />
-      </span>
-    );
-  }
+  const userTone = pickUserTone(fallbackText || label);
 
   return (
     <span
-      role="img"
-      aria-label={label}
       className={[
-        "inline-flex shrink-0 items-center justify-center overflow-hidden whitespace-nowrap leading-none border font-mono-code font-semibold select-none",
-        kind === "agent"
-          ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent)]"
-          : "border-[var(--hairline-strong)] bg-[var(--bg-sheet)] text-[var(--ink-secondary)]",
+        "relative inline-flex shrink-0 rounded-full select-none",
         dims.box,
-        dims.text,
-        dims.radius,
         className,
       ].join(" ")}
     >
-      {kind === "agent" ? (
-        <svg
-          viewBox="0 0 16 16"
-          className={size === "lg" ? "h-8 w-8" : "h-3.5 w-3.5"}
-          fill="none"
-          aria-hidden="true"
-        >
-          <polygon
-            points="8,1.5 14.5,5.25 14.5,10.75 8,14.5 1.5,10.75 1.5,5.25"
-            stroke="currentColor"
-            strokeWidth="1.4"
+      {src && !failed ? (
+        <span className="inline-flex h-full w-full overflow-hidden rounded-full bg-[var(--bg-surface-subtle)] ring-1 ring-black/[0.06]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={label}
+            className="h-full w-full object-cover"
+            onError={() => setFailed(true)}
           />
-          <rect
-            x="6.25"
-            y="6.25"
-            width="3.5"
-            height="3.5"
-            transform="rotate(45 8 8)"
-            fill="currentColor"
-          />
-        </svg>
+        </span>
       ) : (
-        monogram
+        <span
+          role="img"
+          aria-label={label}
+          className={[
+            "inline-flex h-full w-full items-center justify-center overflow-hidden rounded-full whitespace-nowrap leading-none font-semibold ring-1",
+            kind === "agent"
+              ? "bg-[image:var(--agent-surface)] text-[var(--accent)] ring-[var(--agent-ring)]"
+              : `${userTone} ring-black/[0.05]`,
+            dims.text,
+          ].join(" ")}
+        >
+          {kind === "agent" ? (
+            <svg
+              viewBox="0 0 20 20"
+              className={dims.agentIcon}
+              fill="none"
+              aria-hidden="true"
+            >
+              <circle
+                cx="10"
+                cy="10"
+                r="7.2"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeOpacity="0.35"
+              />
+              <circle
+                cx="10"
+                cy="10"
+                r="4.2"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              />
+              <circle cx="10" cy="10" r="1.6" fill="currentColor" />
+            </svg>
+          ) : (
+            monogram
+          )}
+        </span>
+      )}
+
+      {status && (
+        <span
+          aria-hidden="true"
+          className={[
+            "absolute rounded-full ring-white",
+            dims.dot,
+            STATUS_DOT_COLOR[status],
+          ].join(" ")}
+        />
       )}
     </span>
   );

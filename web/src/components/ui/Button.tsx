@@ -6,6 +6,7 @@ export type ButtonVariant =
   | "primary"
   | "secondary"
   | "ghost"
+  | "quiet"
   | "danger"
   | "danger-solid";
 export type ButtonSize = "sm" | "md" | "lg";
@@ -14,26 +15,29 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  pill?: boolean;
   loading?: boolean;
 }
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    "bg-[var(--accent)] text-[var(--accent-fg)] border border-[var(--accent)] hover:bg-[var(--accent-hover)] active:bg-[var(--accent-active)]",
+    "bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_12px_-2px_rgba(22,104,227,0.32)] active:bg-[var(--accent-active)] disabled:bg-[var(--bg-surface-subtle)] disabled:text-[var(--ink-muted)] disabled:shadow-none disabled:opacity-75",
   secondary:
-    "bg-[var(--bg-sheet)] text-[var(--ink-primary)] border border-[var(--hairline-strong)] hover:bg-[var(--bg-subtle)] hover:border-[var(--ink-muted)]",
+    "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface-tint)] hover:shadow-[var(--shadow-card)] disabled:opacity-45",
   ghost:
-    "bg-transparent text-[var(--ink-secondary)] border border-transparent hover:bg-[var(--bg-plane)] hover:text-[var(--ink-primary)]",
+    "bg-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] disabled:opacity-45",
+  quiet:
+    "bg-transparent text-[var(--accent)] hover:bg-[var(--accent-wash)] active:bg-[var(--accent-wash-strong)] disabled:opacity-45",
   danger:
-    "bg-[var(--bg-sheet)] text-[var(--status-crimson)] border border-[var(--status-crimson-border)] hover:bg-[var(--status-crimson-wash)]",
+    "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)] hover:bg-[rgba(201,42,55,0.14)] disabled:opacity-45",
   "danger-solid":
-    "bg-[var(--status-crimson)] text-white border border-[var(--status-crimson)] hover:opacity-92",
+    "bg-[var(--status-crimson)] text-white shadow-[0_1px_2px_rgba(201,42,55,0.24)] hover:opacity-92 disabled:opacity-45",
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
-  sm: "h-7 px-2.5 text-[12px] gap-1.5",
-  md: "h-9 px-3.5 text-[13.5px] gap-2",
-  lg: "h-11 px-4 text-[14px] gap-2",
+  sm: "h-8 px-3 text-[12.5px] gap-1.5",
+  md: "h-9 px-3.5 text-[13px] gap-2",
+  lg: "h-11 px-4.5 text-[14px] gap-2",
 };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
@@ -41,6 +45,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     {
       variant = "secondary",
       size = "md",
+      pill = false,
       loading = false,
       disabled,
       className = "",
@@ -58,8 +63,9 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={loading || undefined}
         className={[
           "inline-flex shrink-0 items-center justify-center whitespace-nowrap font-medium select-none",
-          "rounded-[4px] transition-[background-color,border-color,color,opacity] duration-[120ms]",
-          "cursor-pointer disabled:cursor-not-allowed disabled:opacity-45",
+          pill ? "rounded-full" : "rounded-sm",
+          "transition-[background-color,box-shadow,color,opacity,transform] duration-[150ms] ease-[var(--ease-settle)]",
+          "active:scale-[0.98] cursor-pointer disabled:cursor-not-allowed disabled:active:scale-100",
           VARIANT_CLASSES[variant],
           SIZE_CLASSES[size],
           className,
