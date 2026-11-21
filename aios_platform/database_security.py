@@ -19,9 +19,9 @@ def verify_database(database: Database, *, worker: bool):
                   'aios_request_key', 'aios_write_control', 'aios_suspension', 'aios_planner_budget',
                   'aios_chat_room', 'aios_chat_member', 'aios_chat_message',
                   'aios_assurance_head', 'aios_assurance_audit', 'aios_assurance_review',
-                  'aios_assurance_attempt')
+                  'aios_assurance_attempt', 'aios_employee', 'aios_module_access')
         """).fetchall()
-        if len(tables) != 14 or any(row["owner_member"] or not row["relrowsecurity"]
+        if len(tables) != 16 or any(row["owner_member"] or not row["relrowsecurity"]
                                 or not row["relforcerowsecurity"] for row in tables):
             raise RuntimeError("Apply platform migrations and forced row-level security as the migration owner")
         privileges = run("""
@@ -46,8 +46,22 @@ def verify_database(database: Database, *, worker: bool):
                    has_table_privilege('aios_assurance_attempt', 'DELETE, TRUNCATE, TRIGGER')
                        OR has_column_privilege('aios_assurance_attempt', 'tenant', 'UPDATE')
                        OR has_column_privilege('aios_assurance_attempt', 'id', 'UPDATE')
-                       OR has_column_privilege('aios_assurance_attempt', 'binding', 'UPDATE') AS attempt_mutable_key
+                       OR has_column_privilege('aios_assurance_attempt', 'binding', 'UPDATE') AS attempt_mutable_key,
+                   has_table_privilege('aios_employee', 'SELECT, INSERT')
+                       OR has_any_column_privilege('aios_employee', 'SELECT, INSERT') AS directory_access,
+                   has_table_privilege('aios_module_access', 'SELECT') AS module_read,
+                   has_table_privilege('aios_module_access', 'INSERT')
+                       OR has_any_column_privilege('aios_module_access', 'INSERT, UPDATE') AS module_write,
+                   has_any_column_privilege('aios_employee', 'UPDATE')
+                       OR has_table_privilege('aios_employee', 'DELETE, TRUNCATE')
+                       OR has_table_privilege('aios_module_access', 'DELETE, TRUNCATE')
+                       OR has_column_privilege('aios_module_access', 'tenant', 'UPDATE')
+                       OR has_column_privilege('aios_module_access', 'subject', 'UPDATE')
+                       OR has_column_privilege('aios_module_access', 'module', 'UPDATE') AS module_mutable_key
         """).fetchone()
+        if (not privileges["module_read"] or privileges["module_mutable_key"]
+                or privileges["directory_access"] == worker or privileges["module_write"] == worker):
+            raise RuntimeError("Platform PostgreSQL grants do not match the module access boundary")
         if privileges["audit_mutable"] or privileges["chat_mutable"] or privileges["audit_disclosed"] or (
             worker and (privileges["can_propose"] or privileges["can_change_pause"]
                         or privileges["can_read_intakes"] or privileges["can_read_chat"]

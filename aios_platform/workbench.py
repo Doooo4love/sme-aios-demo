@@ -1,4 +1,5 @@
 """Employee workbench. Parsed language and typed calls share one enforcement path."""
+import re
 from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -8,8 +9,9 @@ from aios_demo.storage import digest_of
 
 from .contracts import Actor, Clarify, Identifier, Plan, Strict
 from .erp import ERPRejected, ERP_TRANSPORT_ERRORS
+from .providers import approval_sites, can_approve, order_read_sites
 from .service import Services
-from .workbench_tools import CALL, OrderDraft, ShipmentChange, ToolCall, TOOLS, WorkData, scoped_data, local_turn
+from .workbench_tools import OrderDraft, ShipmentChange, ToolCall, TOOLS, WorkData, scoped_data, local_turn
 from .workflow import Conflict
 
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key", pattern=r"^[A-Za-z0-9._:-]{1,128}$")]
@@ -41,10 +43,25 @@ class Clarification(Strict):
     question: Annotated[str, Field(min_length=1, max_length=300)]
 
 
-TurnResult = Annotated[WorkResult | WorkProposal | Clarification, Field(discriminator="kind")]
+class ApprovalIntent(Strict):
+    kind: Literal["approval_intent"]
+    proposal_id: Identifier
 
 
-def workbench_routes(runtime: Services, authenticate, require_policy, visible_proposal, prepare_order,
+class ApprovalPreview(Strict):
+    kind: Literal["approval_preview"] = "approval_preview"
+    proposal: dict
+
+
+class PlannedTurn(Strict):
+    intent: ToolCall | ApprovalIntent | Clarification
+
+
+TurnResult = Annotated[WorkResult | WorkProposal | ApprovalPreview | Clarification, Field(discriminator="kind")]
+APPROVAL_TEXT = re.compile(r"(?:approve proposal |(?:批准|审批)提案\s*)([A-Za-z0-9_-]{1,64})", re.IGNORECASE)
+
+
+def workbench_routes(runtime: Services, authenticate, refresh_actor, require_policy, visible_proposal, prepare_order,
                      *, data: WorkData | None, chat_available: bool, planner: WorkbenchPlanner | None,
                      planner_limit: int) -> APIRouter:
     router = APIRouter(prefix="/v1/workbench", tags=["Employee workbench"])
@@ -105,27 +122,34 @@ def workbench_routes(runtime: Services, authenticate, require_policy, visible_pr
 
     def execute(actor: Actor, request: ToolCall, key: str | None) -> WorkResult | WorkProposal:
         spec = TOOLS[request.tool]
-        if not spec.allowed(actor, warehouse=getattr(request, "warehouse", None)):
+        warehouse = getattr(request, "warehouse", None)
+        if not spec.allowed(actor, warehouse=warehouse):
             workflow.audit(actor, request.tool, "WORKBENCH_DENIED")
-            raise HTTPException(403, "Tool is outside your assigned permissions")
+            raise HTTPException(403, {"code": "ACCESS_RESTRICTED"})
         if spec.mode == "proposal":
             return propose(actor, request, key)
         result = read_or_preview(actor, request)
         if isinstance(result, Plan):
             raise RuntimeError("Read tools cannot produce a plan")
+        if not spec.allowed(refresh_actor(actor), warehouse=warehouse):
+            workflow.audit(actor, request.tool, "WORKBENCH_DENIED")
+            raise HTTPException(403, {"code": "ACCESS_CHANGED"})
         workflow.audit(actor, request.tool, "WORKBENCH_READ")
         return WorkResult(tool=request.tool, source=source(request.tool), data=result)
 
     def offered_tools(actor):
-        return [name for name, spec in TOOLS.items()
-                if spec.allowed(actor) and (spec.domain == "mail" or actor.warehouses)]
+        return [name for name, spec in TOOLS.items() if spec.allowed(actor)]
 
     @router.get("/capabilities")
     def capabilities(actor: Actor = Depends(authenticate)):
         return {"tools": [
-            {"id": name, "mode": TOOLS[name].mode, "available": source(name) != "unconfigured", "source": source(name)}
+            {"id": name, "mode": TOOLS[name].mode, "available": source(name) != "unconfigured",
+             "source": source(name),
+             "warehouses": sorted(TOOLS[name].sites(actor)) if TOOLS[name].domain != "mail" else []}
             for name in offered_tools(actor)
-        ], "planner": "local_rules" if planner is None else "configured",
+        ], "order_read_warehouses": sorted(order_read_sites(actor)), "approval_warehouses": {
+            action: sorted(approval_sites(actor, action)) for action in ("sales_order.create_draft", "shipment.reschedule")
+        }, "planner": "local_rules" if planner is None else "configured",
            "chat_available": chat_available and "chat.use" in actor.grants}
 
     @router.get("/approvals")
@@ -148,24 +172,38 @@ def workbench_routes(runtime: Services, authenticate, require_policy, visible_pr
 
     @router.post("/turns", response_model=TurnResult)
     def turns(body: Turn, actor: Actor = Depends(authenticate), key: IdempotencyKey = None):
-        if planner is None:
-            request = local_turn(body.text)
-            if isinstance(request, Clarify):
+        match = APPROVAL_TEXT.fullmatch(body.text.strip())
+        request = ApprovalIntent(kind="approval_intent", proposal_id=match[1]) if match else local_turn(body.text)
+        if isinstance(request, Clarify):
+            if planner is None:
                 return Clarification(question=request.question)
-        else:
             offered = tuple(name for name in offered_tools(actor) if source(name) != "unconfigured")
+            if any(approval_sites(actor, action) for action in ("shipment.reschedule", "sales_order.create_draft")):
+                offered += ("approval.preview",)
             if not offered:
                 return Clarification(question="No workbench tools are available for this account.")
             if not workflow.take_planner_budget(actor.tenant, planner_limit):
                 raise HTTPException(429, "Tenant planner budget exhausted", headers={"Retry-After": "60"})
             try:
                 proposed = planner.plan(body.text, offered)
-                request = (Clarification.model_validate(proposed) if proposed.get("kind") == "clarification"
-                           else CALL.validate_python(proposed))
+                request = PlannedTurn.model_validate({"intent": proposed}).intent
             except (*ERP_TRANSPORT_ERRORS, TypeError, AttributeError) as error:
                 raise HTTPException(503, "Workbench planner could not return a valid intent") from error
+            actor = refresh_actor(actor)
             if isinstance(request, Clarification):
-                return request
-        return execute(actor, request, key)
+                return Clarification(question="Choose an available operation and include the reference or warehouse.")
+        try:
+            if isinstance(request, ApprovalIntent):
+                proposal = visible_proposal(actor, request.proposal_id, include_events=False)
+                plan = Plan.model_validate(proposal["plan"])
+                if not can_approve(actor, proposal["requester"], plan):
+                    workflow.audit(actor, "approval.preview", "WORKBENCH_DENIED")
+                    raise HTTPException(403, {"code": "ACTION_NOT_ALLOWED", "next_step": "view_proposal"})
+                return ApprovalPreview(proposal=proposal)
+            return execute(actor, request, key)
+        except HTTPException as error:
+            if error.status_code == 404:
+                raise HTTPException(404, {"code": "RECORD_UNAVAILABLE"}) from error
+            raise
 
     return router

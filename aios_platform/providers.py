@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .contracts import INTENT, Actor, Clarify, Intent, Plan
+from .contracts import INTENT, Actor, Clarify, Grant, Intent, Plan
 
 
 def https_base(value: str) -> str:
@@ -83,23 +83,53 @@ class CompatiblePlanner:
         return checked_intent(json.loads(content))
 
 
+ACTION_GRANTS: dict[str, tuple[Grant, ...]] = {
+    "shipment.read": ("shipment.read",),
+    "shipment.reschedule": ("shipment.read", "shipment.reschedule"),
+    "sales_order.create_draft": ("order.work",),
+}
+
+
+def action_sites(actor: Actor, action: str) -> frozenset[str]:
+    required = ACTION_GRANTS.get(action)
+    if required is None or (action != "shipment.read" and actor.role not in {"operator", "manager", "admin"}):
+        return frozenset()
+    return actor.warehouses.intersection(*(actor.sites_for(grant) for grant in required))
+
+
+def order_read_sites(actor: Actor) -> frozenset[str]:
+    if "order.read" in actor.module_scopes or "order.read" in actor.grants:
+        return actor.sites_for("order.read")
+    return action_sites(actor, "sales_order.create_draft")
+
+
 def can_use_action(actor: Actor, action: str) -> bool:
-    if action == "shipment.read":
-        return "shipment.read" in actor.grants
-    if actor.role not in {"operator", "manager", "admin"}:
-        return False
-    if action == "shipment.reschedule":
-        return {"shipment.read", "shipment.reschedule"} <= actor.grants
-    return action == "sales_order.create_draft" and "order.work" in actor.grants
+    return bool(action_sites(actor, action))
 
 
 def allowed(actor: Actor, action: str, warehouse: str) -> bool:
-    return warehouse in actor.warehouses and can_use_action(actor, action)
+    return warehouse in action_sites(actor, action)
+
+
+APPROVAL_GRANTS: dict[str, Grant] = {
+    "shipment.reschedule": "workbench.approve.shipments",
+    "sales_order.create_draft": "workbench.approve.orders",
+}
+
+
+def approval_sites(actor: Actor, action: str) -> frozenset[str]:
+    grant = APPROVAL_GRANTS.get(action)
+    if grant is None or actor.role not in {"manager", "admin"}:
+        return frozenset()
+    sites = actor.sites_for(grant)
+    if grant in actor.module_scopes:
+        return sites
+    return sites & action_sites(actor, action)
 
 
 def can_approve(actor: Actor, requester: str, plan: Plan) -> bool:
-    return actor.tenant == plan.tenant and actor.subject != requester and allowed(actor, plan.action, plan.warehouse) \
-        and actor.role in {"manager", "admin"}
+    return (actor.tenant == plan.tenant and actor.subject != requester
+            and plan.warehouse in approval_sites(actor, plan.action))
 
 
 class OPA:

@@ -18,6 +18,7 @@ class DemoIdentity:
         "operator": ("harbour", "operator", ["HK01"]),
         "manager": ("harbour", "manager", ["HK01"]),
         "admin": ("harbour", "admin", ["HK01"]),
+        "access-admin": ("harbour", "admin", ["HK01", "HK02"]),
         "other-manager": ("harbour", "manager", ["HK02"]),
         "island-manager": ("island", "manager", ["HK01"]),
         "finance": ("harbour", "viewer", ["HK01"]),
@@ -62,6 +63,8 @@ class DemoIdentity:
             grants.add("assurance.procurement")
         if name == "admin":
             grants.add("assurance.audit")
+        if name == "access-admin":
+            grants.add("workbench.access.manage")
         return Actor(subject=name, tenant=tenant, role=role, warehouses=warehouses, grants=grants)
 
 
@@ -85,6 +88,7 @@ class OIDCIdentity:
             if not isinstance(grants, list):
                 raise ValueError("Invalid workbench grants")
             return Actor(subject=claims["sub"], tenant=claims["aios_tenant"],
-                         role=claims["aios_role"], warehouses=claims["aios_warehouses"], grants=grants)
+                         role=claims["aios_role"], warehouses=claims["aios_warehouses"],
+                         grants=[grant for grant in grants if grant not in {"workbench.approve.orders", "workbench.approve.shipments"}])
         except (KeyError, jwt.PyJWTError, ValidationError) as error:
             raise ValueError("Invalid access token") from error

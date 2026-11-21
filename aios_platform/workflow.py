@@ -10,7 +10,8 @@ from aios_demo.storage import Database, canonical, digest_of
 
 from .contracts import Actor, Plan, Receipt
 from .erp import ERP, ERPRejected, ERP_TRANSPORT_ERRORS, plan_digest
-from .providers import can_approve, can_use_action
+from .module_access import ModuleScopeChanged, dispatch_permitted, lock_employee, refresh_scope
+from .providers import ACTION_GRANTS, APPROVAL_GRANTS, allowed, approval_sites, can_approve
 
 
 class Conflict(ValueError):
@@ -24,7 +25,7 @@ class Workflow:
     def initialize(self):
         with self.db.transaction() as run:
             sources = ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql",
-                       "assurance_runtime.sql")
+                       "assurance_runtime.sql", "module_access.sql")
             for name in sources:
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():
@@ -52,6 +53,13 @@ class Workflow:
     def is_suspended(self, actor: Actor) -> bool:
         with self.tx(actor.tenant, write=False) as run:
             return self._suspended(run, actor.tenant, actor.subject)
+
+    def _lock_scope(self, run, actor):
+        if self.db.dsn:
+            lock_employee(run, actor.tenant, actor.subject, exclusive=False)
+        if self._suspended(run, actor.tenant, actor.subject):
+            raise ModuleScopeChanged
+        return refresh_scope(run, actor)
 
     @staticmethod
     def _paused(run, tenant: str) -> bool:
@@ -136,7 +144,9 @@ class Workflow:
     def add_intake(self, actor: Actor, warehouse: str, document: dict) -> str:
         intake_id = (self.structured_intake_id(warehouse, document)
                      if document["kind"] == "structured" else uuid4().hex)
-        with self.tx(actor.tenant) as run:
+        with self.tx(actor.tenant, bounded=True) as run:
+            if not allowed(self._lock_scope(run, actor), "sales_order.create_draft", warehouse):
+                raise ModuleScopeChanged
             self._store_intake(run, actor, warehouse, document, intake_id)
         return intake_id
 
@@ -146,7 +156,9 @@ class Workflow:
         prepared = {}
         # Consistent lock acquisition for concurrent submissions containing the same items.
         ordered = sorted(entries, key=lambda entry: self.structured_intake_id(warehouse, entry[0]))
-        with self.tx(actor.tenant) as run:
+        with self.tx(actor.tenant, bounded=True) as run:
+            if not allowed(self._lock_scope(run, actor), "sales_order.create_draft", warehouse):
+                raise ModuleScopeChanged
             for document, plan in ordered:
                 intake_id = self.structured_intake_id(warehouse, document)
                 self._store_intake(run, actor, warehouse, document, intake_id)
@@ -168,7 +180,9 @@ class Workflow:
         return {"warehouse": row["warehouse"], "evidence": json.loads(row["document"])}
 
     def propose(self, actor: Actor, plan: Plan, *, idempotency: tuple[str, str] | None = None) -> str:
-        with self.tx(actor.tenant) as run:
+        with self.tx(actor.tenant, bounded=True) as run:
+            if actor.tenant != plan.tenant or not allowed(self._lock_scope(run, actor), plan.action, plan.warehouse):
+                raise ModuleScopeChanged
             return self._store_proposal(run, actor, plan, idempotency)
 
     def _store_proposal(self, run, actor: Actor, plan: Plan, idempotency: tuple[str, str] | None) -> str:
@@ -243,35 +257,39 @@ class Workflow:
         return [dict(row) for row in rows]
 
     def pending_approvals(self, actor: Actor, limit: int, after: tuple[float, str] | None) -> list[dict]:
-        warehouses = sorted(actor.warehouses)
-        actions = [action for action in ("shipment.reschedule", "sales_order.create_draft")
-                   if can_use_action(actor, action)]
-        if actor.role not in {"manager", "admin"} or not warehouses or not actions:
-            return []
-        warehouse_slots = ",".join("?" for _ in warehouses)
-        action_slots = ",".join("?" for _ in actions)
+        scopes = [(action, sorted(approval_sites(actor, action)))
+                  for action in ("shipment.reschedule", "sales_order.create_draft")]
         action_field = ("CASE WHEN plan IS JSON THEN CAST(plan AS JSONB) ->> 'action' END" if self.db.dsn
                         else "CASE WHEN json_valid(plan) THEN json_extract(plan, '$.action') END")
+        predicates, params = [], []
+        for action, warehouses in scopes:
+            if warehouses:
+                marks = ",".join("?" for _ in warehouses)
+                predicates.append(f"({action_field} = ? AND warehouse IN ({marks}))")
+                params.extend([action, *warehouses])
+        if not predicates:
+            return []
+        action_scope = " OR ".join(predicates)
         cursor = "AND (due, id) > (?, ?)" if after else ""
         with self.tx(actor.tenant, write=False) as run:
             rows = run(
                 f"""SELECT id, warehouse, state, expires, due, {action_field} AS action
                     FROM aios_proposal WHERE tenant = ? AND state = 'PROPOSED'
-                      AND requester != ? AND expires > ? AND warehouse IN ({warehouse_slots})
-                      AND {action_field} IN ({action_slots}) {cursor}
+                      AND requester != ? AND expires > ? AND ({action_scope}) {cursor}
                     ORDER BY due, id LIMIT ?""",
-                (actor.tenant, actor.subject, time.time(), *warehouses, *actions, *(after or ()), limit),
+                (actor.tenant, actor.subject, time.time(), *params, *(after or ()), limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
     def approve(self, actor: Actor, proposal_id: str, digest: str):
-        with self.tx(actor.tenant) as run:
+        with self.tx(actor.tenant, bounded=True) as run:
             row = run("SELECT * FROM aios_proposal WHERE tenant = ? AND id = ?",
                       (actor.tenant, proposal_id)).fetchone()
             if not row:
                 raise KeyError(proposal_id)
             plan = Plan.model_validate_json(row["plan"])
-            if not can_approve(actor, row["requester"], plan):
+            current_actor = self._lock_scope(run, actor)
+            if not can_approve(current_actor, row["requester"], plan):
                 raise PermissionError("This action requires an independent warehouse approver")
             if self._suspended(run, actor.tenant, actor.subject, row["requester"]):
                 raise PermissionError("Requester or approver access is suspended")
@@ -351,8 +369,15 @@ class Workflow:
                 return "OUTCOME_UNKNOWN", "LEASE_LOST_BEFORE_SEND"
             if self._suspended(run, tenant, job["requester"], job["approver"]):
                 return "REJECTED", "ACCESS_SUSPENDED_BEFORE_SEND"
-            if job["expires"] <= time.time():
+            now = time.time()
+            if job["expires"] <= now:
                 return "REJECTED", "APPROVAL_EXPIRED_BEFORE_SEND"
+            plan = Plan.model_validate_json(job["plan"])
+            required = ACTION_GRANTS[plan.action]
+            if not (dispatch_permitted(run, tenant, job["requester"], plan.warehouse, required, now=now)
+                    and dispatch_permitted(run, tenant, job["approver"], plan.warehouse, required,
+                                           now=now, approval_grant=APPROVAL_GRANTS[plan.action])):
+                return "REJECTED", "MODULE_ACCESS_REVOKED_BEFORE_SEND"
             if self._paused(run, tenant):
                 return "QUEUED", "WRITES_PAUSED_BEFORE_SEND"
         return None
