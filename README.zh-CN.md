@@ -83,3 +83,5 @@ flowchart LR
 ## 适用范围
 
 工作台采用合成单据、固定本地审核人和独立 ERP 沙盒库，预设场景默认使用脚本模拟视觉模型。新上传默认本地 OCR，命令库默认 SQLite，可选 PostgreSQL 和 HTTPS 视觉接口。后端平台另有权限控制及 ERP bridge 客户端。客户 ERP 事务、身份对接和写入验收属于试点集成。[实现边界](docs/demo.zh-CN.md#实现边界)
+
+员工级工作台模块、Agent 越权处理与上线步骤见[工作台后端与授权](docs/workbench-backend.zh-CN.md)。
