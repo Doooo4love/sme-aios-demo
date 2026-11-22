@@ -53,16 +53,20 @@ class AgentHistory:
         reference = None
         if result is None:
             outcome = "unavailable" if status in {403, 404} else "failed" if status and status < 429 else None
-        elif result.kind in {"proposal", "approval_preview"}:
+        elif getattr(result, "kind", None) in {"proposal", "approval_preview"}:
             outcome = result.kind
             reference = {"proposal_id": result.proposal["id"]}
             if outcome == "proposal":
                 reference["tool"] = result.tool
-        elif result.kind == "result" and result.tool in READ_REFERENCES:
+        elif getattr(result, "kind", None) == "result" and result.tool in READ_REFERENCES and all(
+            field in result.data for field in READ_REFERENCES[result.tool]
+        ):
             outcome = "read"
             reference = {"tool": result.tool, **{field: result.data[field] for field in READ_REFERENCES[result.tool]}}
-        elif result.kind == "clarification":
+        elif getattr(result, "kind", None) == "clarification":
             outcome = "clarification"
+        elif getattr(result, "kind", None) in {"message", "refusal"}:
+            outcome = "ephemeral"
         else:
             outcome = "ephemeral"
         with subject_tx(self.workflow, actor, write=True) as run:

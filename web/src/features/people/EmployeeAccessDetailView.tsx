@@ -689,7 +689,7 @@ export function EmployeeAccessDetailView({
       </div>
 
       {/* Unified Porcelain / Obsidian Employee Header Sheet */}
-      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+      <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4 min-w-0">
             <Avatar
@@ -702,19 +702,19 @@ export function EmployeeAccessDetailView({
               <div className="flex flex-wrap items-center gap-2.5">
                 {hasDistinctName ? (
                   <>
-                    <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
+                    <h1 className="aios-display text-[20px] font-semibold text-[var(--ink-primary)] leading-tight">
                       {persona.displayName}
                     </h1>
                     <span
                       data-testid="employee-detail-subject"
-                      className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[12px] font-medium text-[var(--ink-secondary)]"
+                      className="inline-flex items-center rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[12px] font-medium text-[var(--ink-secondary)]"
                     >
                       {subject}
                     </span>
                   </>
                 ) : (
                   <h1
-                    className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] break-all leading-tight"
+                    className="aios-display text-[20px] font-semibold text-[var(--ink-primary)] break-all leading-tight"
                     data-testid="employee-detail-subject"
                   >
                     {subject}
@@ -889,7 +889,7 @@ export function EmployeeAccessDetailView({
                 key={moduleId}
                 data-testid={`module-card-${moduleId}`}
                 data-module-state={stateInfo.status}
-                className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
+                className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
               >
                 {/* Module Card Header (raw module slug tucked into title tooltip) */}
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -904,7 +904,7 @@ export function EmployeeAccessDetailView({
                           },
                           { id: moduleId },
                         )}
-                        className="text-[16px] font-semibold tracking-[-0.015em] text-[var(--ink-primary)]"
+                        className="aios-display text-[16px] font-semibold text-[var(--ink-primary)]"
                       >
                         {meta.title}
                       </h2>

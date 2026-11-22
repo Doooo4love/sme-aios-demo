@@ -167,7 +167,7 @@ export function LoginView() {
       {/* Balanced Desktop Grid: items-center so Login Card hugs natural vertical rhythm (zero awkward empty void) */}
       <div className="mx-auto grid w-full max-w-[1340px] grid-cols-1 items-center gap-8 px-5 py-6 sm:px-8 lg:grid-cols-[minmax(420px,468px)_minmax(0,1fr)] lg:gap-10 lg:px-12 lg:py-10">
         {/* Left Floating Porcelain / Obsidian Authentication Card */}
-        <section className="mx-auto flex w-full max-w-[468px] flex-col rounded-xl bg-[var(--bg-surface)] p-7 shadow-[var(--shadow-card)] sm:p-9 lg:mx-0">
+        <section className="mx-auto flex w-full max-w-[468px] flex-col rounded-modal border border-[var(--hairline)] bg-[var(--bg-surface)] p-7 shadow-[var(--shadow-card)] sm:p-9 lg:mx-0">
           {/* Theodic Brand Wordmark & Architectural Tagline */}
           <div className="flex flex-col items-start gap-1.5">
             <TheodicLogo height={26} priority />
@@ -361,7 +361,7 @@ export function LoginView() {
                 data-open={demoHelperOpen ? "true" : "false"}
               >
                 <div className="aios-accordion-inner">
-                  <div className="mt-2.5 space-y-3 max-h-[260px] overflow-auto rounded-md bg-[var(--bg-surface-tint)] p-3">
+                  <div className="mt-2.5 space-y-3 max-h-[260px] overflow-auto rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
                     {GROUP_ORDER.map((group) => {
                       const items = demoConfig.personas.filter(
                         (p) => p.group === group,
@@ -369,7 +369,7 @@ export function LoginView() {
                       if (items.length === 0) return null;
                       return (
                         <div key={group}>
-                          <div className="mb-1.5 px-1 text-[11px] font-medium text-[var(--ink-muted)]">
+                          <div className="mb-1.5 px-1 aios-micro-label">
                             {t(GROUP_TITLE_KEYS[group])}
                           </div>
                           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -389,7 +389,7 @@ export function LoginView() {
                                   onClick={() =>
                                     void handleDemoQuickLogin(persona)
                                   }
-                                  className="flex items-center gap-2.5 rounded-sm bg-[var(--bg-surface)] px-2.5 py-2 text-left shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:ring-1 hover:ring-[var(--accent-border)] transition-all duration-[140ms] cursor-pointer disabled:opacity-55"
+                                  className="flex items-center gap-2.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] px-2.5 py-2 text-left shadow-[var(--shadow-subtle)] hover:border-[var(--accent-border)] hover:shadow-[var(--shadow-card)] transition-all duration-[140ms] cursor-pointer disabled:opacity-55"
                                 >
                                   <Avatar
                                     name={localized.displayName || localized.label}
@@ -463,14 +463,14 @@ export function LoginView() {
             maxTilt={0}
             interactive={false}
             sheenIntensity="medium"
-            className="h-full w-full overflow-hidden rounded-xl shadow-[var(--shadow-card)]"
+            className="h-full w-full overflow-hidden rounded-modal border border-[var(--hairline)] shadow-[var(--shadow-card)]"
           >
             <ArchitecturalRelayCanvas />
           </Interactive3DCard>
         </aside>
 
         {/* Mobile Compact Porcelain / Obsidian 3D Preview */}
-        <div className="h-[200px] w-full overflow-hidden rounded-lg shadow-[var(--shadow-card)] lg:hidden">
+        <div className="h-[200px] w-full overflow-hidden rounded-card border border-[var(--hairline)] shadow-[var(--shadow-card)] lg:hidden">
           <ArchitecturalRelayCanvas compact />
         </div>
       </div>

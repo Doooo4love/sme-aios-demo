@@ -1,4 +1,8 @@
 import { callMcpTool, validateMcpEndpointUrl } from "@/lib/mcp/client";
+import {
+  getEmailConnectorMode,
+  isEmailConfigured,
+} from "@/lib/mcp/email-connector";
 import { isValidZoomJoinUrl } from "@/lib/mcp/ics";
 import {
   CALENDAR_CONNECTOR_LABELS_I18N,
@@ -140,6 +144,8 @@ export function getMcpConnectorsStatus(
   const google = getCalendarConnectorEnv("google", locale);
   const icloud = getCalendarConnectorEnv("icloud", locale);
   const outlook = getCalendarConnectorEnv("outlook", locale);
+  const emailMode = getEmailConnectorMode();
+  const emailConfigured = isEmailConfigured();
 
   return [
     {
@@ -153,6 +159,31 @@ export function getMcpConnectorsStatus(
       protocol: "AIOS Internal Calendar API",
       supports_sync: true,
       setup_env_keys: [],
+    },
+    {
+      connector: "email",
+      connector_id: "email",
+      label: CALENDAR_CONNECTOR_LABELS_I18N.email[locale],
+      category: "email",
+      configured: emailConfigured,
+      status: emailConfigured ? "connected" : "sandbox_ready",
+      mode: emailMode,
+      protocol:
+        emailMode === "live_mcp"
+          ? "MCP Streamable HTTP (Email)"
+          : emailMode === "live_smtp"
+            ? "Direct TLS SMTP"
+            : "Governed Outbox / Internal Push",
+      supports_sync: true,
+      setup_env_keys: [
+        "AIOS_MCP_EMAIL_URL",
+        "AIOS_MCP_EMAIL_TOKEN",
+        "AIOS_SMTP_HOST",
+        "AIOS_SMTP_PORT",
+        "AIOS_SMTP_USER",
+        "AIOS_SMTP_PASS",
+        "AIOS_SMTP_FROM",
+      ],
     },
     {
       connector: "zoom",

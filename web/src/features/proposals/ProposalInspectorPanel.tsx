@@ -1094,14 +1094,14 @@ export function ProposalInspectorPanel({
       }
     >
       {/* Header Porcelain Card — Human Business Title First + Compact Short ID Pill */}
-      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5">
+      <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2.5">
               {!isDrawer && (
                 <Link
                   href="/work"
-                  className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors"
+                  className="inline-flex h-8 items-center gap-1 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3 text-[12px] font-medium text-[var(--ink-secondary)] hover:border-[var(--hairline-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.85} />
                   <span>
@@ -1115,7 +1115,7 @@ export function ProposalInspectorPanel({
               )}
               <h1
                 className={[
-                  "font-semibold tracking-[-0.02em] text-[var(--ink-primary)]",
+                  "aios-display font-semibold text-[var(--ink-primary)]",
                   isDrawer ? "text-[15.5px]" : "text-[18px]",
                 ].join(" ")}
               >
@@ -1582,9 +1582,9 @@ export function ProposalInspectorPanel({
           />
 
           {/* Digest & Ownership Metadata Card */}
-          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+          <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
             <div className="border-b border-[var(--hairline)] px-4.5 py-3">
-              <h3 className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+              <h3 className="aios-display text-[13.5px] font-semibold text-[var(--ink-primary)]">
                 {tx({
                   "zh-CN": "摘要锁与审批责任",
                   "zh-HK": "摘要鎖與審批責任",
@@ -1778,7 +1778,7 @@ export function ProposalInspectorPanel({
           {/* Clickable Intake Evidence Panel (for sales_order.create_draft) */}
           {intakeId && (
             <div
-              className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
+              className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
               data-testid="proposal-intake-evidence-panel"
             >
               <button
@@ -2000,7 +2000,7 @@ export function ProposalInspectorPanel({
               hoverLiftPx={-1}
               sheenIntensity="subtle"
               data-testid="proposal-receipt-card"
-              className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
+              className="rounded-card border border-[var(--status-emerald-border)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
             >
               <div className="flex items-center gap-2 bg-[var(--status-emerald-wash)] px-4.5 py-3.5 text-[13.5px] font-semibold text-[var(--status-emerald)]">
                 <CheckCircle2
@@ -2140,14 +2140,14 @@ export function ProposalInspectorPanel({
 
           {/* Ordered Audit Event Timeline with Localized Labels & 1px Vertical Rail */}
           <div
-            className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
+            className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
             data-testid="proposal-events-timeline"
           >
             <div className="flex items-center justify-between border-b border-[var(--hairline)] px-4.5 py-3">
-              <h3 className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+              <h3 className="aios-display text-[13.5px] font-semibold text-[var(--ink-primary)]">
                 {t("proposal.timeline.title")}
               </h3>
-              <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 tabular-nums text-[11px] text-[var(--ink-muted)]">
+              <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code tabular-nums text-[11px] text-[var(--ink-muted)]">
                 {tp(
                   {
                     "zh-CN": "{count} 条记录",

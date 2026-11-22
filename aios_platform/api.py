@@ -21,6 +21,7 @@ from aios_demo.extract_po import analyze_upload
 from aios_demo.parsing import MAX_UPLOAD_BYTES
 from aios_demo.storage import business_key, digest_of
 
+from .assistant_agent import AssistantAgent, resolve_llm_api_key, resolve_llm_base_url, resolve_llm_model
 from .assurance import Assurance, assurance_routes
 from .assurance_audit import AuditKeys, SignedAudit
 from .assurance_gateway import ReviewGateway
@@ -31,6 +32,8 @@ from .chat import DirectoryLookup, chat_routes
 from .collaboration import InvalidCollaborationRequest, MissingResource
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
 from .erp import ERPRejected
+from .events import EventHub
+from .governance import GovernanceService, governance_routes
 from .identity import Identity
 from .module_access import ModuleAccess, ModuleScopeChanged, module_routes
 from .observability import instrument
@@ -84,9 +87,12 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
               chat_directory: DirectoryLookup | None = None,
               workbench_data: WorkData | None = None, workbench_planner: WorkbenchPlanner | None = None,
               assurance: Assurance | None = None, assurance_concurrency: int = 8,
-              browser: BrowserConfig | None = None, directory_actor=None) -> FastAPI:
+              browser: BrowserConfig | None = None, directory_actor=None,
+              assistant_agent: AssistantAgent | None = None,
+              event_hub: EventHub | None = None,
+              governance: GovernanceService | None = None) -> FastAPI:
     if assurance is not None:
-        if not isinstance(planner, DemoPlanner) or workbench_planner is not None:
+        if not isinstance(planner, DemoPlanner) or workbench_planner is not None or assistant_agent is not None:
             raise ValueError("Assurance requires disabling planners outside the governed provider gateway")
         if assurance.workflow is not runtime.workflow:
             raise ValueError("Assurance must use the current tenant workflow")
@@ -101,6 +107,9 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     erp = runtime.erp
     bearer = HTTPBearer(auto_error=False)
     module_access = ModuleAccess(workflow)
+    hub = event_hub if event_hub is not None else EventHub()
+    workflow.event_hub = hub
+    known_actors: dict[tuple[str, str], Actor] = {}
     if browser is not None and browser.demo != runtime.demo:
         raise ValueError("Browser session profile must match the service profile")
     sessions = BrowserSessions(workflow, browser, runtime.profiles) if browser else None
@@ -167,7 +176,10 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             raise HTTPException(401, "A valid access token is required",
                                 headers={"WWW-Authenticate": "Bearer"}) from error
         try:
-            return module_access.authenticate(actor)
+            scoped_actor = module_access.authenticate(actor)
+            if len(known_actors) < 1000:
+                known_actors[(scoped_actor.tenant, scoped_actor.subject)] = scoped_actor
+            return scoped_actor
         except PermissionError as error:
             raise HTTPException(403, "AIOS access is suspended") from error
 
@@ -515,10 +527,49 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
         workbench_data = SyntheticWorkData()
     if not runtime.demo and isinstance(workbench_data, SyntheticWorkData):
         raise ValueError("Synthetic workbench data requires the demo profile")
+
+    def resolve_approvers(tenant: str, plan: Plan, requester: str) -> list[str]:
+        candidates: set[str] = set()
+        if hasattr(identity, "PEOPLE"):
+            for name, (person_tenant, role, _wh) in identity.PEOPLE.items():
+                if person_tenant == tenant and role in {"manager", "admin"}:
+                    candidates.add(name)
+        with workflow.tx(tenant, write=False) as run:
+            rows = run("SELECT subject FROM aios_employee WHERE tenant = ?", (tenant,)).fetchall()
+            for row in rows:
+                candidates.add(row["subject"])
+        for cached_tenant, cached_subject in list(known_actors):
+            if cached_tenant == tenant:
+                candidates.add(cached_subject)
+        candidates.discard(requester)
+        lookup = directory_actor or getattr(identity, "directory_actor", None)
+        eligible: list[str] = []
+        for subject in sorted(candidates):
+            candidate = lookup(tenant, subject) if lookup is not None else known_actors.get((tenant, subject))
+            if candidate is None:
+                continue
+            try:
+                scoped = module_access.refresh(candidate)
+            except PermissionError:
+                continue
+            if can_approve(scoped, requester, plan):
+                eligible.append(subject)
+        return eligible
+
+    workflow.approver_resolver = resolve_approvers
+    governance_service = governance if governance is not None else GovernanceService(
+        workflow, hub, known_subject=chat_directory,
+    )
+    active_assistant = assistant_agent
+    if assurance is None and active_assistant is None and workbench_planner is None:
+        active_assistant = AssistantAgent(workflow, governance_service, hub, api_key=None, demo=runtime.demo)
+
     app.include_router(module_routes(module_access, authenticate, runtime.profiles))
     app.include_router(workbench_routes(runtime, authenticate, refresh_actor, require_policy, visible_proposal, prepare_order,
                                        data=workbench_data, chat_available=chat_directory is not None,
-                                       planner=workbench_planner, planner_limit=planner_limit))
+                                       planner=workbench_planner, planner_limit=planner_limit,
+                                       assistant=active_assistant, event_hub=hub))
+    app.include_router(governance_routes(governance_service, workflow, authenticate, refresh_actor))
     app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
     app.include_router(assurance_routes(authenticate, assurance, concurrency=assurance_concurrency))
     app.include_router(profile_routes(workflow, authenticate, chat_available=chat_directory is not None))
@@ -552,14 +603,33 @@ def create_app() -> FastAPI:
         assurance = Assurance(DemoCaseSource(), ReviewGateway(audit, "hk-factory"),
                               review_ttl=int(setting("AIOS_ASSURANCE_REVIEW_TTL", "3600")))
     workbench_planner = None
+    assistant_agent = None
     planner_kind = os.getenv("AIOS_WORKBENCH_PLANNER", "local")
-    if planner_kind == "pydantic-ai":
-        from .workbench_planner import PydanticWorkbenchPlanner
-
-        workbench_planner = PydanticWorkbenchPlanner(
-            *(setting(name) for name in ("AIOS_LLM_BASE_URL", "AIOS_LLM_MODEL", "AIOS_LLM_API_KEY")))
-    elif planner_kind != "local":
+    if planner_kind not in {"local", "pydantic-ai", "deepseek"}:
         raise ValueError("Unknown AIOS workbench planner")
+    identity = identity_for(runtime.demo)
+    chat_dir = workspace_source.known_subject if workspace_source else (
+        getattr(identity, "known_subject", None) if runtime.demo else None
+    )
+    hub = EventHub()
+    governance_service = GovernanceService(runtime.workflow, hub, known_subject=chat_dir)
+    if assurance is not None:
+        if planner_kind != "local":
+            raise ValueError("Assurance requires disabling planners outside the governed provider gateway")
+    else:
+        llm_api_key = resolve_llm_api_key()
+        if planner_kind == "pydantic-ai" and not llm_api_key:
+            raise ValueError("Configure AIOS_LLM_API_KEY or AIOS_LLM_API_KEY_FILE")
+        if llm_api_key:
+            assistant_agent = AssistantAgent(
+                runtime.workflow,
+                governance_service,
+                hub,
+                api_key=llm_api_key,
+                base_url=resolve_llm_base_url(),
+                model=resolve_llm_model(),
+                demo=runtime.demo,
+            )
     browser = None
     if os.getenv("AIOS_BROWSER_ORIGIN") or os.getenv("AIOS_BROWSER_ORIGIN_FILE"):
         oidc = None
@@ -568,10 +638,11 @@ def create_app() -> FastAPI:
                                setting("AIOS_BFF_OIDC_CLIENT_SECRET"))
         browser = BrowserConfig(setting("AIOS_BROWSER_ORIGIN"), bytes.fromhex(setting("AIOS_BROWSER_SESSION_KEY")),
                                 demo=runtime.demo, oidc=oidc)
-    return build_app(runtime, identity_for(runtime.demo), planner_for(runtime.demo), optional_opa(),
+    return build_app(runtime, identity, planner_for(runtime.demo), optional_opa(),
                      planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")),
                      metrics_token=metrics, assurance=assurance, workbench_planner=workbench_planner,
                      assurance_concurrency=int(setting("AIOS_ASSURANCE_CONCURRENCY", "8")), browser=browser,
                      chat_directory=workspace_source.known_subject if workspace_source else None,
                      directory_actor=workspace_source.directory_actor if workspace_source else None,
-                     workbench_data=workspace_source)
+                     workbench_data=workspace_source, assistant_agent=assistant_agent,
+                     event_hub=hub, governance=governance_service)

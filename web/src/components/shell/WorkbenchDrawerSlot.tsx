@@ -462,9 +462,9 @@ export function WorkbenchDrawerSlot() {
         aria-hidden={!drawerOpen}
         data-testid="workbench-drawer"
         className={[
-          "aios-drawer-transition flex flex-col bg-[var(--bg-sheet)]/94 backdrop-blur-2xl overflow-hidden",
-          // Frosted Porcelain / Obsidian Slide-Over (380-420px): floating below xl, docked with crisp ambient left shadow >= xl
-          "fixed bottom-2.5 right-2.5 top-2.5 z-40 rounded-card xl:static xl:z-auto xl:top-auto xl:bottom-auto xl:right-auto xl:h-full xl:rounded-none xl:border-l xl:border-[var(--hairline)]",
+          "aios-drawer-transition flex flex-col bg-[var(--bg-surface)]/95 backdrop-blur-2xl overflow-hidden",
+          // Frosted Porcelain / Obsidian Slide-Over (380-420px): floating below xl, docked with crisp hairline border >= xl
+          "fixed bottom-2.5 right-2.5 top-2.5 z-40 rounded-card border border-[var(--hairline-strong)] xl:static xl:z-auto xl:top-auto xl:bottom-auto xl:right-auto xl:h-full xl:rounded-none xl:border-y-0 xl:border-r-0 xl:border-l xl:border-[var(--hairline)]",
           drawerOpen
             ? "w-[min(420px,calc(100vw-20px))] xl:w-[clamp(380px,30vw,420px)] translate-x-0 opacity-100 shadow-[var(--shadow-modal)] xl:shadow-[var(--shadow-floating)]"
             : "w-0 translate-x-[calc(100%+16px)] xl:translate-x-0 opacity-0 pointer-events-none xl:border-l-0",
@@ -1160,15 +1160,15 @@ export function WorkbenchDrawerSlot() {
                         </div>
                         <SourceTag source={summaryData.source} />
                       </div>
-                      <div className="rounded-tile bg-[var(--bg-surface-tint)] p-4.5">
-                        <div className="text-[12px] text-[var(--ink-muted)]">
+                      <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4.5">
+                        <div className="aios-micro-label">
                           {tx({
                             "zh-CN": "在途未结运单",
                             "zh-HK": "在途未結運單",
                             en: "Open Shipments",
                           })}
                         </div>
-                        <div className="mt-1 tabular-nums text-[30px] font-semibold tracking-[-0.02em] text-[var(--accent)]">
+                        <div className="aios-kpi mt-1.5 text-[30px] font-semibold text-[var(--accent)]">
                           {summaryData.view.open_shipments}
                         </div>
                         <div className="mt-2 text-[11px] text-[var(--ink-muted)]">
@@ -1246,35 +1246,35 @@ export function WorkbenchDrawerSlot() {
                       />
 
                       <div className="grid grid-cols-2 gap-2.5">
-                        <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
-                          <div className="text-[12px] text-[var(--ink-muted)]">
+                        <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3.5">
+                          <div className="aios-micro-label">
                             {tx({
                               "zh-CN": "待我审批",
                               "zh-HK": "待我審批",
                               en: "Pending Approvals",
                             })}
                           </div>
-                          <div className="mt-1 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+                          <div className="aios-kpi mt-1.5 text-[24px] font-semibold text-[var(--ink-primary)]">
                             {brief.pending_approvals}
                             {brief.pending_approvals_capped ? "+" : ""}
                           </div>
                         </div>
-                        <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
-                          <div className="text-[12px] text-[var(--ink-muted)]">
+                        <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3.5">
+                          <div className="aios-micro-label">
                             {tx({
                               "zh-CN": "未来 7 天会议",
                               "zh-HK": "未來 7 天會議",
                               en: "Meetings (7d)",
                             })}
                           </div>
-                          <div className="mt-1 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+                          <div className="aios-kpi mt-1.5 text-[24px] font-semibold text-[var(--ink-primary)]">
                             {brief.meetings}
                           </div>
                         </div>
                       </div>
 
-                      <div className="rounded-tile bg-[var(--bg-surface-tint)] overflow-hidden">
-                        <div className="px-3.5 py-2.5 text-[12px] font-semibold text-[var(--ink-secondary)]">
+                      <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] overflow-hidden">
+                        <div className="aios-micro-label border-b border-[var(--hairline-subtle)] px-3.5 py-2.5">
                           {tx({
                             "zh-CN": "已提交单据状态分布",
                             "zh-HK": "已提交單據狀態分佈",
@@ -1299,7 +1299,7 @@ export function WorkbenchDrawerSlot() {
                                   className="flex items-center justify-between px-3.5 py-2.5 text-[12px]"
                                 >
                                   <StatusBadge status={stateKey} compact />
-                                  <span className="tabular-nums font-semibold text-[var(--ink-primary)]">
+                                  <span className="font-mono-code tabular-nums font-semibold text-[var(--ink-primary)]">
                                     {count}
                                   </span>
                                 </div>

@@ -5,18 +5,18 @@
 :root {
   color-scheme: light;
 
-  /* === 1. Unified Surface & Vibrancy Layers (Warm Museum Alabaster) === */
+  /* === 1. Unified Surface & Vibrancy Layers (Warm Museum Alabaster: #FAF8F5 -> #F3EFE9 -> #FFFFFF) === */
   --bg-app: #FAF8F5;                        /* Global canvas: /login, /work, /admin, /calendar */
-  --bg-sidebar: rgba(244, 240, 233, 0.86);  /* Warm museum limestone frosted sidebar */
-  --bg-sidebar-solid: #F4F0E9;              /* Fallback when backdrop-filter unavailable */
-  --bg-header: rgba(250, 248, 245, 0.84);   /* Translucent sticky header / top bar */
+  --bg-sidebar: rgba(243, 239, 233, 0.88);  /* Warm museum limestone frosted sidebar */
+  --bg-sidebar-solid: #F3EFE9;              /* Tier 2 stepped warm stone surface */
+  --bg-header: rgba(250, 248, 245, 0.86);   /* Translucent sticky header / top bar */
   --bg-header-solid: rgba(250, 248, 245, 0.96);
-  --bg-sheet: #FFFFFF;                      /* Elevated sheet / card canvas */
-  --bg-surface: #FFFFFF;                    /* Luminous white elevated sheet / chat canvas / cards */
-  --bg-surface-subtle: #F2EDE6;             /* Recessed tonal well: incoming bubble, search fill, muted pills */
-  --bg-surface-tint: #F7F4EE;               /* Ultra-soft table thead / inset well / collapsible surface */
+  --bg-sheet: #FFFFFF;                      /* Tier 3 elevated sheet / card canvas */
+  --bg-surface: #FFFFFF;                    /* Tier 3 elevated cards, popovers, panels, toasts */
+  --bg-surface-subtle: #F3EFE9;             /* Tier 2 recessed tonal well: incoming bubble, search fill, muted pills */
+  --bg-surface-tint: #F7F4EE;               /* Soft inset well / table thead / nested block */
   --bg-surface-hover: #ECE6DC;              /* Subtle elevated row/button hover surface */
-  --bg-inset: #EDE8DF;                      /* Deep inset well for segmented controls */
+  --bg-inset: #EAE4DA;                      /* Deep inset well for segmented controls */
   --bg-glass: var(--bg-header);             /* Backwards-compatible frosted header alias */
   --bg-hover: rgba(23, 23, 23, 0.042);      /* Whisper warm pointer hover */
   --bg-active: rgba(23, 23, 23, 0.075);     /* Active neutral press / selection */
@@ -28,9 +28,9 @@
   --bg-subtle: var(--bg-surface-tint);
 
   /* Login & 3D Architectural Stage Surfaces */
-  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(27, 79, 156, 0.055), transparent 72%);
-  --canvas-stage-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.96) 0%, rgba(244, 240, 233, 0.92) 100%);
-  --canvas-footer-bg: rgba(250, 248, 245, 0.86);
+  --bg-login-glow: radial-gradient(ellipse 72% 60% at 72% 38%, rgba(27, 79, 156, 0.045), transparent 72%);
+  --canvas-stage-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.96) 0%, rgba(243, 239, 233, 0.92) 100%);
+  --canvas-footer-bg: rgba(250, 248, 245, 0.88);
 
   /* === 2. Carbon Ink & Optical Contrast Hierarchy (WCAG AA+ on #FFFFFF & #FAF8F5) === */
   --ink-primary: #171717;                   /* Architectural carbon ink */
@@ -38,10 +38,10 @@
   --ink-muted: #6E6860;                     /* Timestamps, captions, hints (AA on #FFF & #FAF8F5) */
   --ink-faint: #9C958B;                     /* Placeholders, decorative separators & disabled labels ONLY */
 
-  /* === 3. Structural Hairlines (Major Seams Only — Shadows Carry Card Elevation) === */
-  --hairline: rgba(23, 23, 23, 0.08);       /* Pane dividers, subtle row separators */
-  --hairline-strong: rgba(23, 23, 23, 0.16);/* Input rest borders, secondary control edges */
-  --hairline-subtle: rgba(23, 23, 23, 0.055);/* Table row dividers inside elevated white sheets */
+  /* === 3. Structural Hairlines (Crisp 1px Architectural Frames) === */
+  --hairline: rgba(23, 23, 23, 0.09);       /* Card frames, pane dividers, subtle row separators */
+  --hairline-strong: rgba(23, 23, 23, 0.16);/* Input rest borders, floating frames, secondary edges */
+  --hairline-subtle: rgba(23, 23, 23, 0.06);/* Table row dividers inside elevated white sheets */
   --hairline-specular: rgba(255, 255, 255, 0.90); /* Top rim light on glass/3D cards */
   --crosshair-mark: rgba(23, 23, 23, 0.16); /* Architectural blueprint reference mark */
 
@@ -58,22 +58,23 @@
   --accent-wash-strong: rgba(27, 79, 156, 0.15);
   --accent-border: rgba(27, 79, 156, 0.28);
   --accent-ring: rgba(27, 79, 156, 0.24);
+  --focus-ring: 0 0 0 2px var(--accent-ring);
 
   /* Primary Architectural Carbon CTA Tokens */
   --cta-bg: #171717;
   --cta-hover: #2A2825;
   --cta-active: #0E0D0C;
   --cta-fg: #FAF8F5;
-  --cta-shadow: 0 1px 2px rgba(23, 23, 23, 0.18);
-  --cta-shadow-hover: 0 4px 12px -2px rgba(23, 23, 23, 0.26);
+  --cta-shadow: 0 1px 2px rgba(23, 23, 23, 0.16);
+  --cta-shadow-hover: 0 4px 12px -2px rgba(23, 23, 23, 0.24);
 
   /* Agent Signature Material & Native iMessage Bubble Tokens */
   --agent-surface: linear-gradient(145deg, #FAF8F5 0%, #EFEAE2 100%);
-  --agent-bubble-bg: #F2EDE6;
+  --agent-bubble-bg: #F3EFE9;
   --agent-ring: rgba(23, 23, 23, 0.14);
   --bubble-sent-bg: #1D1C1A;
   --bubble-sent-ink: #FAF8F5;
-  --bubble-received-bg: #F2EDE6;
+  --bubble-received-bg: #F3EFE9;
   --bubble-received-ink: #171717;
 
   /* Avatar Identity Washes (4 Restrained Editorial Hues) */
@@ -110,38 +111,38 @@
   --status-neutral-wash: rgba(91, 85, 77, 0.09);
   --status-neutral-border: rgba(91, 85, 77, 0.18);
 
-  /* === 6. Concentric Apple-Grade Radii === */
+  /* === 6. Architectural Radii Scale (6px controls -> 10px cards -> 12px modals) === */
   --radius-none: 0px;
-  --radius-xs: 6px;                         /* Inline code, kbd caps, compact pills */
-  --radius-sm: 10px;                        /* Buttons, inputs, sidebar rows, menu items */
-  --radius-md: 14px;                        /* Recessed inner wells, pinned Agent tile, KPI tiles */
-  --radius-lg: 18px;                        /* Elevated workbench cards, iMessage bubbles, modals */
-  --radius-xl: 24px;                        /* Floating Muse composer capsule, login hero card */
-  --radius-card: var(--radius-lg);          /* Semantic alias for top-level cards (18px) */
-  --radius-tile: var(--radius-md);          /* Semantic alias for KPI / inset tiles (14px) */
-  --radius-pill: 9999px;                    /* Pill controls, circular avatars, send button, search bar */
+  --radius-xs: 4px;                         /* Inline code, kbd caps, compact tags */
+  --radius-sm: 6px;                         /* Buttons, inputs, sidebar rows, menu items */
+  --radius-md: 8px;                         /* Recessed inner wells, pinned Agent tile, KPI tiles */
+  --radius-lg: 10px;                        /* Cards, panels, toasts, popovers, slash palette */
+  --radius-xl: 12px;                        /* Modals, dialogs, floating composer, login card */
+  --radius-card: var(--radius-lg);          /* Semantic alias for top-level cards (10px) */
+  --radius-tile: var(--radius-md);          /* Semantic alias for KPI / inset tiles (8px) */
+  --radius-modal: var(--radius-xl);         /* Semantic alias for modals & dialogs (12px) */
+  --radius-pill: 9999px;                    /* Pill badges, circular avatars, send button, search bar */
 
-  /* === 7. Layered Ambient Shadows (Warm Carbon Tint — Zero Cold Slate Cast) === */
+  /* === 7. Layered Ambient Shadows (Tight Architectural Framing; Ambient Depth for Overlays) === */
   --shadow-none: none;
   --shadow-subtle:
-    0 1px 2px rgba(23, 23, 23, 0.05),
-    0 0 0 1px rgba(23, 23, 23, 0.07);
-  --shadow-card:
     0 1px 2px rgba(23, 23, 23, 0.04),
-    0 6px 18px -6px rgba(23, 23, 23, 0.06),
     0 0 0 1px rgba(23, 23, 23, 0.06);
+  --shadow-card:
+    0 1px 2px rgba(23, 23, 23, 0.035),
+    0 0 0 1px rgba(23, 23, 23, 0.055);
   --shadow-card-hover:
-    0 4px 10px -2px rgba(23, 23, 23, 0.06),
-    0 14px 32px -10px rgba(23, 23, 23, 0.10),
-    0 0 0 1px rgba(23, 23, 23, 0.09);
-  --shadow-floating:
-    0 6px 16px -4px rgba(23, 23, 23, 0.07),
-    0 18px 40px -12px rgba(23, 23, 23, 0.12),
-    0 0 0 1px rgba(23, 23, 23, 0.075);
-  --shadow-composer:
-    0 2px 6px rgba(23, 23, 23, 0.04),
-    0 12px 32px -8px rgba(23, 23, 23, 0.09),
+    0 2px 6px -1px rgba(23, 23, 23, 0.06),
+    0 8px 20px -8px rgba(23, 23, 23, 0.08),
     0 0 0 1px rgba(23, 23, 23, 0.085);
+  --shadow-floating:
+    0 6px 16px -4px rgba(23, 23, 23, 0.08),
+    0 18px 40px -12px rgba(23, 23, 23, 0.14),
+    0 0 0 1px rgba(23, 23, 23, 0.08);
+  --shadow-composer:
+    0 2px 6px rgba(23, 23, 23, 0.045),
+    0 12px 30px -8px rgba(23, 23, 23, 0.09),
+    0 0 0 1px rgba(23, 23, 23, 0.09);
   --shadow-composer-focus:
     0 4px 14px -2px rgba(27, 79, 156, 0.10),
     0 14px 36px -10px rgba(23, 23, 23, 0.10),
@@ -149,11 +150,11 @@
   --shadow-popover:
     0 4px 12px rgba(23, 23, 23, 0.06),
     0 18px 42px -10px rgba(23, 23, 23, 0.14),
-    0 0 0 1px rgba(23, 23, 23, 0.07);
+    0 0 0 1px rgba(23, 23, 23, 0.08);
   --shadow-modal:
     0 12px 32px rgba(23, 23, 23, 0.10),
     0 28px 64px -16px rgba(23, 23, 23, 0.18),
-    0 0 0 1px rgba(23, 23, 23, 0.075);
+    0 0 0 1px rgba(23, 23, 23, 0.085);
   --scrim: rgba(23, 23, 23, 0.24);
 
   /* === 8. Typography Triad & Optical Scale (Locale-specialized in globals.css) === */
@@ -209,18 +210,18 @@
 html[data-theme="dark"] {
   color-scheme: dark;
 
-  /* 1. Layered Warm Carbon Obsidian Surface Hierarchy */
+  /* 1. Layered Warm Carbon Obsidian Surface Hierarchy (#111110 -> #181816 -> #20201D) */
   --bg-app: #111110;
-  --bg-sidebar: rgba(22, 22, 20, 0.88);
-  --bg-sidebar-solid: #161614;
-  --bg-header: rgba(22, 22, 20, 0.86);
-  --bg-header-solid: #161614;
-  --bg-sheet: #171614;
-  --bg-surface: #1D1C1A;
-  --bg-surface-subtle: #252420;
-  --bg-surface-tint: #21201D;
-  --bg-surface-hover: #2C2A26;
-  --bg-inset: #141312;
+  --bg-sidebar: rgba(24, 24, 22, 0.90);
+  --bg-sidebar-solid: #181816;
+  --bg-header: rgba(24, 24, 22, 0.88);
+  --bg-header-solid: #181816;
+  --bg-sheet: #181816;
+  --bg-surface: #20201D;
+  --bg-surface-subtle: #282723;
+  --bg-surface-tint: #181816;
+  --bg-surface-hover: #2E2D29;
+  --bg-inset: #141412;
   --bg-glass: var(--bg-header);
   --bg-hover: rgba(244, 241, 236, 0.055);
   --bg-active: rgba(244, 241, 236, 0.095);
@@ -230,20 +231,20 @@ html[data-theme="dark"] {
   --bg-plane-hover: var(--bg-surface-hover);
   --bg-subtle: var(--bg-surface-tint);
 
-  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(110, 163, 242, 0.08), transparent 72%);
-  --canvas-stage-bg: linear-gradient(155deg, #1B1A18 0%, #121110 100%);
-  --canvas-footer-bg: rgba(22, 22, 20, 0.86);
+  --bg-login-glow: radial-gradient(ellipse 72% 60% at 72% 38%, rgba(110, 163, 242, 0.065), transparent 72%);
+  --canvas-stage-bg: linear-gradient(155deg, #20201D 0%, #141412 100%);
+  --canvas-footer-bg: rgba(24, 24, 22, 0.88);
 
-  /* 2. High-Contrast Warm Bone Ink Hierarchy (WCAG AA+ on surface & tint) */
+  /* 2. High-Contrast Warm Bone Ink Hierarchy (WCAG AA+ on #111110, #181816 & #20201D) */
   --ink-primary: #F4F1EC;
   --ink-secondary: #C4BEB5;
-  --ink-muted: #969087;
-  --ink-faint: #6B665F;                     /* Placeholders, decorative separators & disabled labels ONLY */
+  --ink-muted: #9B958C;
+  --ink-faint: #6D6860;                     /* Placeholders, decorative separators & disabled labels ONLY */
 
   /* 3. Precision Warm Rim & Structural Hairlines */
-  --hairline: rgba(244, 241, 236, 0.085);
-  --hairline-strong: rgba(244, 241, 236, 0.16);
-  --hairline-subtle: rgba(244, 241, 236, 0.06);
+  --hairline: rgba(244, 241, 236, 0.10);
+  --hairline-strong: rgba(244, 241, 236, 0.18);
+  --hairline-subtle: rgba(244, 241, 236, 0.065);
   --hairline-specular: rgba(244, 241, 236, 0.09);
   --crosshair-mark: rgba(244, 241, 236, 0.16);
 
@@ -260,6 +261,7 @@ html[data-theme="dark"] {
   --accent-wash-strong: rgba(110, 163, 242, 0.22);
   --accent-border: rgba(110, 163, 242, 0.34);
   --accent-ring: rgba(110, 163, 242, 0.30);
+  --focus-ring: 0 0 0 2px var(--accent-ring);
 
   --cta-bg: #F2EDE6;
   --cta-hover: #FFFFFF;
@@ -269,12 +271,12 @@ html[data-theme="dark"] {
   --cta-shadow-hover: 0 4px 14px -2px rgba(0, 0, 0, 0.52);
 
   /* Agent & iMessage Bubble Dark Material */
-  --agent-surface: linear-gradient(145deg, #242320 0%, #1A1917 100%);
-  --agent-bubble-bg: #252420;
+  --agent-surface: linear-gradient(145deg, #242320 0%, #1B1A18 100%);
+  --agent-bubble-bg: #242320;
   --agent-ring: rgba(244, 241, 236, 0.16);
   --bubble-sent-bg: #2557A0;
   --bubble-sent-ink: #FAF8F5;
-  --bubble-received-bg: #252420;
+  --bubble-received-bg: #242320;
   --bubble-received-ink: #F4F1EC;
 
   /* Dark-Calibrated Avatar Identity Washes */
@@ -313,19 +315,18 @@ html[data-theme="dark"] {
 
   /* 7. Layered Obsidian Ambient Shadows + Warm Rim Elevation */
   --shadow-subtle:
-    0 1px 2px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(244, 241, 236, 0.05),
+    0 1px 2px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(244, 241, 236, 0.045),
     0 0 0 1px rgba(244, 241, 236, 0.08);
   --shadow-card:
-    0 1px 2px rgba(0, 0, 0, 0.48),
-    0 6px 20px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(244, 241, 236, 0.06),
-    0 0 0 1px rgba(244, 241, 236, 0.09);
+    0 1px 2px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(244, 241, 236, 0.05),
+    0 0 0 1px rgba(244, 241, 236, 0.075);
   --shadow-card-hover:
-    0 4px 12px rgba(0, 0, 0, 0.52),
-    0 14px 32px rgba(0, 0, 0, 0.40),
-    inset 0 1px 0 rgba(244, 241, 236, 0.09),
-    0 0 0 1px rgba(244, 241, 236, 0.13);
+    0 2px 8px rgba(0, 0, 0, 0.44),
+    0 10px 24px -8px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(244, 241, 236, 0.08),
+    0 0 0 1px rgba(244, 241, 236, 0.12);
   --shadow-floating:
     0 8px 20px rgba(0, 0, 0, 0.52),
     0 20px 44px rgba(0, 0, 0, 0.44),
@@ -375,6 +376,27 @@ html[data-theme-switching="true"] *::after {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+.aios-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+}
+
+.aios-kpi {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  letter-spacing: -0.025em;
+}
+
+.aios-micro-label {
+  font-size: var(--fs-micro);
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
 }
 
 :focus-visible {

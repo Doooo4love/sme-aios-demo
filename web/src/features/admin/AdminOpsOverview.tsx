@@ -1,8 +1,16 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
@@ -17,6 +25,7 @@ import {
   Server,
   ShieldAlert,
   ShieldCheck,
+  Sliders,
   UserCheck,
   UserX,
   Users,
@@ -46,17 +55,42 @@ import {
   fetchOperationsExceptions,
   fetchOperationsSummary,
   fetchReadyz,
+  fetchSecurityEventsSummary,
   runDemoWorkerTick,
   updateSubjectSuspension,
   updateWriteControl,
   type HealthProbeResult,
 } from "@/features/admin/api";
+import { PromptGovernancePanel } from "@/features/admin/PromptGovernancePanel";
+import { SecurityMonitorPanel } from "@/features/admin/SecurityMonitorPanel";
 import type {
   AssuranceCheckpoint,
   ExceptionItem,
   OperationsSummary,
   ProposalState,
 } from "@/lib/types";
+
+type AdminTabId = "operations" | "prompts" | "security";
+
+function AdminQuerySync({
+  onSync,
+}: {
+  onSync: (tab: AdminTabId | null, suspendSubject: string | null) => void;
+}) {
+  const searchParams = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const rawSuspend = searchParams.get("suspend");
+
+  useEffect(() => {
+    const parsedTab: AdminTabId | null =
+      rawTab === "operations" || rawTab === "prompts" || rawTab === "security"
+        ? rawTab
+        : null;
+    onSync(parsedTab, rawSuspend);
+  }, [rawTab, rawSuspend, onSync]);
+
+  return null;
+}
 
 const CANONICAL_PROPOSAL_STATES: readonly ProposalState[] = [
   "PROPOSED",
@@ -131,6 +165,7 @@ interface CheckpointUnavailableState {
 }
 
 export function AdminOpsOverview() {
+  const router = useRouter();
   const {
     actor,
     demoConfig,
@@ -147,6 +182,9 @@ export function AdminOpsOverview() {
     localizeRole,
     localizeError,
   } = useLocale();
+
+  const [activeTab, setActiveTab] = useState<AdminTabId>("operations");
+  const [openSecurityCount, setOpenSecurityCount] = useState<number>(0);
 
   const [healthz, setHealthz] = useState<HealthProbeResult | null>(null);
   const [readyz, setReadyz] = useState<HealthProbeResult | null>(null);
@@ -229,6 +267,14 @@ export function AdminOpsOverview() {
         setExceptionPreview(exceptionsRes.items);
         setHasMoreExceptions(exceptionsRes.next !== null);
 
+        fetchSecurityEventsSummary(signal)
+          .then((sec) => {
+            if (!signal?.aborted) setOpenSecurityCount(sec.total_open);
+          })
+          .catch(() => {
+            // Non-blocking if security summary endpoint unavailable
+          });
+
         if (hasAuditGrant) {
           try {
             const cp = await fetchAssuranceAuditCheckpoint(signal);
@@ -294,6 +340,7 @@ export function AdminOpsOverview() {
     setSuspendSubjectInput("");
     setSuspendConfirm(null);
     setSuspendFeedback(null);
+    setOpenSecurityCount(0);
 
     if (!canAccessAdminOps) return;
 
@@ -593,6 +640,46 @@ export function AdminOpsOverview() {
     }
   }, []);
 
+  const handleUrlSync = useCallback(
+    (tab: AdminTabId | null, suspendSubject: string | null) => {
+      if (tab) {
+        setActiveTab(tab);
+      }
+      if (suspendSubject && suspendSubject.trim()) {
+        setSuspendSubjectInput(suspendSubject.trim());
+        setSuspendFeedback(null);
+      }
+    },
+    [],
+  );
+
+  const handleSelectTab = useCallback(
+    (tab: AdminTabId) => {
+      setActiveTab(tab);
+      const nextUrl = tab === "operations" ? "/admin" : `/admin?tab=${tab}`;
+      router.replace(nextUrl, { scroll: false });
+    },
+    [router],
+  );
+
+  const handleJumpToSuspend = useCallback(
+    (subject: string) => {
+      setActiveTab("operations");
+      setSuspendSubjectInput(subject);
+      setSuspendFeedback(null);
+      router.replace(`/admin?tab=operations&suspend=${encodeURIComponent(subject)}`, {
+        scroll: false,
+      });
+      requestAnimationFrame(() => {
+        const panel = document.querySelector(
+          '[data-testid="subject-suspension-panel"]',
+        );
+        panel?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    },
+    [router],
+  );
+
   // Strict capability gate: never fetch ops endpoints for unauthorized roles
   if (!canAccessAdminOps) {
     return (
@@ -632,11 +719,15 @@ export function AdminOpsOverview() {
       className="mx-auto max-w-[1160px] space-y-5 px-4 py-6 sm:px-6 lg:py-7 pb-16"
       data-testid="admin-ops-page"
     >
+      <Suspense fallback={null}>
+        <AdminQuerySync onSync={handleUrlSync} />
+      </Suspense>
+
       {/* Unified Porcelain / Obsidian Page-Header Card (matches /work & /calendar) */}
-      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+      <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 space-y-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
+            <h1 className="aios-display text-[20px] font-semibold text-[var(--ink-primary)] leading-tight">
               {tx({
                 "zh-CN": "运维监控中心",
                 "zh-HK": "維運監控中心",
@@ -646,10 +737,10 @@ export function AdminOpsOverview() {
             <p className="mt-1 text-[13px] text-[var(--ink-secondary)]">
               {tx({
                 "zh-CN":
-                  "实时核验核心服务健康、提案流转分布与 ERP 出站写入控制。",
+                  "实时核验核心服务健康、提案流转分布、助手策略治理与安全告警审计。",
                 "zh-HK":
-                  "即時核驗核心服務健康、提案流轉分佈與 ERP 出站寫入控制。",
-                en: "Monitor core service health, proposal pipeline distribution, and ERP outbound write controls.",
+                  "即時核驗核心服務健康、提案流轉分佈、助手策略治理與安全告警稽核。",
+                en: "Monitor core service health, proposal pipeline, policy governance, and security anomaly audit.",
               })}
             </p>
             <p className="mt-1.5 text-[12px] text-[var(--ink-muted)] tabular-nums">
@@ -709,26 +800,122 @@ export function AdminOpsOverview() {
               </Link>
             )}
 
-            <Button
-              size="sm"
-              pill
-              variant="secondary"
-              loading={loading}
-              data-testid="ops-refresh-btn"
-              onClick={() => void loadAllOpsData()}
-            >
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>
-                {tx({
-                  "zh-CN": "刷新快照",
-                  "zh-HK": "重新整理快照",
-                  en: "Refresh Snapshot",
-                })}
-              </span>
-            </Button>
+            {activeTab === "operations" && (
+              <Button
+                size="sm"
+                pill
+                variant="secondary"
+                loading={loading}
+                data-testid="ops-refresh-btn"
+                onClick={() => void loadAllOpsData()}
+              >
+                <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.85} />
+                <span>
+                  {tx({
+                    "zh-CN": "刷新快照",
+                    "zh-HK": "重新整理快照",
+                    en: "Refresh Snapshot",
+                  })}
+                </span>
+              </Button>
+            )}
           </div>
         </div>
+
+        {/* Crisp Segmented Admin Console Navigation */}
+        <div
+          role="tablist"
+          aria-label={tx({
+            "zh-CN": "管理控制台模块切换",
+            "zh-HK": "管理主控台模組切換",
+            en: "Admin console sections",
+          })}
+          className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-inset)] p-1 ring-1 ring-[var(--hairline)]"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "operations"}
+            data-testid="admin-tab-operations"
+            onClick={() => handleSelectTab("operations")}
+            className={[
+              "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
+              activeTab === "operations"
+                ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
+                : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
+            ].join(" ")}
+          >
+            <Activity className="h-3.5 w-3.5" strokeWidth={1.85} />
+            <span>
+              {tx({
+                "zh-CN": "系统运维",
+                "zh-HK": "系統維運",
+                en: "Operations",
+              })}
+            </span>
+          </button>
+
+          {isAdmin && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "prompts"}
+              data-testid="admin-tab-prompts"
+              onClick={() => handleSelectTab("prompts")}
+              className={[
+                "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
+                activeTab === "prompts"
+                  ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
+                  : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
+              ].join(" ")}
+            >
+              <Sliders className="h-3.5 w-3.5" strokeWidth={1.85} />
+              <span>
+                {tx({
+                  "zh-CN": "提示词治理",
+                  "zh-HK": "提示詞治理",
+                  en: "Policy Directives",
+                })}
+              </span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "security"}
+            data-testid="admin-tab-security"
+            onClick={() => handleSelectTab("security")}
+            className={[
+              "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
+              activeTab === "security"
+                ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
+                : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
+            ].join(" ")}
+          >
+            <ShieldAlert className="h-3.5 w-3.5" strokeWidth={1.85} />
+            <span>
+              {tx({
+                "zh-CN": "安全审计监控",
+                "zh-HK": "安全稽核監控",
+                en: "Security Monitor",
+              })}
+            </span>
+            {openSecurityCount > 0 && (
+              <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--status-crimson-solid)] px-1.5 font-mono-code text-[10px] font-semibold text-[var(--accent-fg)] tabular-nums">
+                {openSecurityCount > 99 ? "99+" : openSecurityCount}
+              </span>
+            )}
+          </button>
+        </div>
       </section>
+
+      {activeTab === "prompts" ? (
+        <PromptGovernancePanel />
+      ) : activeTab === "security" ? (
+        <SecurityMonitorPanel onSuspendSubject={handleJumpToSuspend} />
+      ) : (
+        <>
 
       {opsError && (
         <AccessNoticeCard
@@ -746,7 +933,7 @@ export function AdminOpsOverview() {
             interactive={false}
             sheenIntensity="subtle"
             data-testid="probe-healthz"
-            className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5"
+            className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
@@ -829,7 +1016,7 @@ export function AdminOpsOverview() {
             interactive={false}
             sheenIntensity="subtle"
             data-testid="probe-readyz"
-            className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5"
+            className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
@@ -933,8 +1120,8 @@ export function AdminOpsOverview() {
             className={[
               "rounded-card p-5 sm:p-6 shadow-[var(--shadow-card)]",
               summary.writes_paused
-                ? "bg-[linear-gradient(135deg,var(--bg-surface)_0%,var(--status-crimson-wash)_100%)] ring-1 ring-[var(--status-crimson-border)]"
-                : "bg-[var(--bg-surface)]",
+                ? "border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)]"
+                : "border border-[var(--hairline)] bg-[var(--bg-surface)]",
             ].join(" ")}
           >
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1085,17 +1272,17 @@ export function AdminOpsOverview() {
           </Interactive3DCard>
 
           {/* Proposal State Overview: 3 Prominent Actionable Tiles + Calm 9-State Legend */}
-          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+          <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
-                <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                <h2 className="aios-display text-[15.5px] font-semibold text-[var(--ink-primary)]">
                   {tx({
                     "zh-CN": "提案状态分布",
                     "zh-HK": "提案狀態分佈",
                     en: "Proposal Pipeline States",
                   })}
                 </h2>
-                <span className="text-[12px] text-[var(--ink-muted)] tabular-nums">
+                <span className="font-mono-code text-[12px] text-[var(--ink-muted)] tabular-nums">
                   {tx(
                     {
                       "zh-CN": "共 {count} 条",
@@ -1122,22 +1309,22 @@ export function AdminOpsOverview() {
                 type="button"
                 onClick={() => setManualTopologyState("PROPOSED")}
                 className={[
-                  "group rounded-tile p-4 text-left transition-all duration-[160ms] cursor-pointer",
+                  "group rounded-tile border p-4 text-left transition-all duration-[160ms] cursor-pointer",
                   activeTopologyState === "PROPOSED"
-                    ? "bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--accent-border)]"
-                    : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)] hover:shadow-[var(--shadow-subtle)]",
+                    ? "border-[var(--accent-border)] bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)]"
+                    : "border-[var(--hairline)] bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)] hover:shadow-[var(--shadow-subtle)]",
                 ].join(" ")}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[13px] font-medium text-[var(--ink-secondary)]">
+                  <span className="aios-micro-label">
                     {localizeStatus("PROPOSED")}
                   </span>
                   <span
                     className={[
-                      "flex h-7 w-7 items-center justify-center rounded-full",
+                      "flex h-7 w-7 items-center justify-center rounded-sm border",
                       proposedCount > 0
-                        ? "bg-[var(--status-amber-wash)] text-[var(--status-amber)]"
-                        : "bg-[var(--bg-surface)] text-[var(--ink-muted)]",
+                        ? "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]"
+                        : "border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-muted)]",
                     ].join(" ")}
                   >
                     <Clock className="h-3.5 w-3.5" strokeWidth={1.85} />
@@ -1145,7 +1332,7 @@ export function AdminOpsOverview() {
                 </div>
                 <div
                   className={[
-                    "mt-2 text-[28px] font-semibold tracking-[-0.03em] leading-none tabular-nums",
+                    "mt-2 aios-kpi text-[28px] font-semibold leading-none",
                     proposedCount > 0
                       ? "text-[var(--status-amber-ink)]"
                       : "text-[var(--ink-muted)]",
@@ -1177,17 +1364,17 @@ export function AdminOpsOverview() {
                   )
                 }
                 className={[
-                  "group rounded-tile p-4 text-left transition-all duration-[160ms] cursor-pointer",
+                  "group rounded-tile border p-4 text-left transition-all duration-[160ms] cursor-pointer",
                   activeTopologyState === "QUEUED" ||
                   activeTopologyState === "SENDING" ||
                   activeTopologyState === "VERIFYING" ||
                   activeTopologyState === "CHECKING"
-                    ? "bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--accent-border)]"
-                    : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)] hover:shadow-[var(--shadow-subtle)]",
+                    ? "border-[var(--accent-border)] bg-[var(--bg-surface)] shadow-[var(--shadow-subtle)]"
+                    : "border-[var(--hairline)] bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)] hover:shadow-[var(--shadow-subtle)]",
                 ].join(" ")}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[13px] font-medium text-[var(--ink-secondary)]">
+                  <span className="aios-micro-label">
                     {tx({
                       "zh-CN": "待派发与执行中",
                       "zh-HK": "待派發與執行中",
@@ -1196,10 +1383,10 @@ export function AdminOpsOverview() {
                   </span>
                   <span
                     className={[
-                      "flex h-7 w-7 items-center justify-center rounded-full",
+                      "flex h-7 w-7 items-center justify-center rounded-sm border",
                       inFlightCount > 0
-                        ? "bg-[var(--accent-wash)] text-[var(--accent-ink)]"
-                        : "bg-[var(--bg-surface)] text-[var(--ink-muted)]",
+                        ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]"
+                        : "border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-muted)]",
                     ].join(" ")}
                   >
                     <Layers className="h-3.5 w-3.5" strokeWidth={1.85} />
@@ -1207,7 +1394,7 @@ export function AdminOpsOverview() {
                 </div>
                 <div
                   className={[
-                    "mt-2 text-[28px] font-semibold tracking-[-0.03em] leading-none tabular-nums",
+                    "mt-2 aios-kpi text-[28px] font-semibold leading-none",
                     inFlightCount > 0
                       ? "text-[var(--accent)]"
                       : "text-[var(--ink-muted)]",
@@ -1224,14 +1411,14 @@ export function AdminOpsOverview() {
               <Link
                 href="/admin/exceptions"
                 className={[
-                  "group block rounded-tile p-4 transition-all duration-[160ms]",
+                  "group block rounded-tile border p-4 transition-all duration-[160ms]",
                   exceptionCount > 0
-                    ? "bg-[var(--status-crimson-wash)] ring-1 ring-[var(--status-crimson-border)] hover:brightness-[1.03]"
-                    : "bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)] hover:shadow-[var(--shadow-subtle)]",
+                    ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] hover:brightness-[1.03]"
+                    : "border-[var(--hairline)] bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)] hover:shadow-[var(--shadow-subtle)]",
                 ].join(" ")}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[13px] font-medium text-[var(--ink-secondary)]">
+                  <span className="aios-micro-label">
                     {tx({
                       "zh-CN": "需关注异常",
                       "zh-HK": "須關注異常",
@@ -1240,10 +1427,10 @@ export function AdminOpsOverview() {
                   </span>
                   <span
                     className={[
-                      "flex h-7 w-7 items-center justify-center rounded-full",
+                      "flex h-7 w-7 items-center justify-center rounded-sm border",
                       exceptionCount > 0
-                        ? "bg-[var(--bg-surface)] text-[var(--status-crimson)]"
-                        : "bg-[var(--bg-surface)] text-[var(--ink-muted)]",
+                        ? "border-[var(--status-crimson-border)] bg-[var(--bg-surface)] text-[var(--status-crimson)]"
+                        : "border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-muted)]",
                     ].join(" ")}
                   >
                     <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.85} />
@@ -1251,7 +1438,7 @@ export function AdminOpsOverview() {
                 </div>
                 <div
                   className={[
-                    "mt-2 text-[28px] font-semibold tracking-[-0.03em] leading-none tabular-nums",
+                    "mt-2 aios-kpi text-[28px] font-semibold leading-none",
                     exceptionCount > 0
                       ? "text-[var(--status-crimson)]"
                       : "text-[var(--ink-muted)]",
@@ -1290,7 +1477,7 @@ export function AdminOpsOverview() {
             {/* Calm Compact 9-State Breakdown Legend (AA-legible zeros, crimson REJECTED, all state-count-* testids preserved) */}
             <div
               data-testid="proposals-state-grid"
-              className="mt-4 grid grid-cols-3 gap-1 rounded-tile bg-[var(--bg-surface-tint)] p-1.5 sm:grid-cols-5 lg:grid-cols-9"
+              className="mt-4 grid grid-cols-3 gap-1 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-1.5 sm:grid-cols-5 lg:grid-cols-9"
             >
               {CANONICAL_PROPOSAL_STATES.map((stateKey) => {
                 const count = summary.proposals_by_state[stateKey] ?? 0;
@@ -1333,7 +1520,7 @@ export function AdminOpsOverview() {
                     <span
                       data-testid={`state-count-${stateKey}`}
                       className={[
-                        "mt-1 text-[15px] font-semibold leading-none tabular-nums",
+                        "mt-1 font-mono-code text-[15px] font-semibold leading-none tabular-nums",
                         count === 0
                           ? "text-[var(--ink-muted)]"
                           : stateKey === "NEEDS_OPERATOR" ||
@@ -1424,7 +1611,7 @@ export function AdminOpsOverview() {
       {canRunDemoTick && (
         <section
           data-testid="demo-worker-panel"
-          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
+          className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
@@ -1529,9 +1716,9 @@ export function AdminOpsOverview() {
       {/* Section 4: Exceptions Quick Preview + Subject Suspension (2-Column Split) */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         {/* Recent Exceptions Preview */}
-        <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 lg:col-span-7 flex flex-col">
+        <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 lg:col-span-7 flex flex-col">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+            <h2 className="aios-display text-[15.5px] font-semibold text-[var(--ink-primary)]">
               {tx({
                 "zh-CN": "待关注异常单据预览",
                 "zh-HK": "待關注異常單據預覽",
@@ -1540,7 +1727,7 @@ export function AdminOpsOverview() {
             </h2>
             <Link
               href="/admin/exceptions"
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12.5px] font-medium text-[var(--accent-ink)] hover:bg-[var(--accent-wash)] transition-colors"
+              className="inline-flex items-center gap-1 rounded-sm border border-[var(--hairline)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent-ink)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] transition-colors"
             >
               <span>
                 {tx({
@@ -1578,7 +1765,7 @@ export function AdminOpsOverview() {
               {exceptionPreview.map((item) => (
                 <div
                   key={item.proposal_id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-3 hover:bg-[var(--bg-surface-hover)] transition-colors duration-[140ms]"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-3 hover:bg-[var(--bg-surface-hover)] transition-colors duration-[140ms]"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -1588,11 +1775,11 @@ export function AdminOpsOverview() {
                       >
                         {item.proposal_id}
                       </Link>
-                      <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
+                      <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)]">
                         {item.warehouse}
                       </span>
                     </div>
-                    <div className="mt-1 text-[11.5px] text-[var(--ink-muted)] tabular-nums">
+                    <div className="mt-1 font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
                       <span>
                         {tx(
                           {
@@ -1628,9 +1815,9 @@ export function AdminOpsOverview() {
         {/* Subject Suspension Card (admin only — no 3D tilt because it contains text input) */}
         <section
           data-testid="subject-suspension-panel"
-          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 lg:col-span-5"
+          className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 lg:col-span-5"
         >
-          <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+          <h2 className="aios-display text-[15.5px] font-semibold text-[var(--ink-primary)]">
             {tx({
               "zh-CN": "主体紧急停权控制",
               "zh-HK": "主體緊急停權控制",
@@ -1785,14 +1972,14 @@ export function AdminOpsOverview() {
       {hasAuditGrant && (
         <section
           data-testid="audit-checkpoint-panel"
-          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
+          className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
+              <div className="flex h-8 w-8 items-center justify-center rounded-sm border border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                 <ShieldCheck className="h-4 w-4" strokeWidth={1.85} />
               </div>
-              <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+              <h2 className="aios-display text-[15.5px] font-semibold text-[var(--ink-primary)]">
                 {tx({
                   "zh-CN": "受控预审审计签名检查点",
                   "zh-HK": "受控預審稽核簽章檢查點",
@@ -1800,7 +1987,7 @@ export function AdminOpsOverview() {
                 })}
               </h2>
             </div>
-            <span className="text-[12px] text-[var(--ink-muted)]">
+            <span className="aios-micro-label">
               {tx({
                 "zh-CN": "只读审计元数据",
                 "zh-HK": "唯讀稽核中繼資料",
@@ -1812,20 +1999,20 @@ export function AdminOpsOverview() {
           <div className="mt-4">
             {checkpoint ? (
               <dl className="grid grid-cols-1 gap-3 text-[12.5px] sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
-                  <dt className="text-[11.5px] text-[var(--ink-muted)]">
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "检查点序号",
                       "zh-HK": "檢查點序號",
                       en: "Checkpoint Seq",
                     })}
                   </dt>
-                  <dd className="mt-1.5 font-mono-code text-[16px] font-semibold text-[var(--ink-primary)] tabular-nums">
+                  <dd className="mt-1.5 aios-kpi text-[16px] font-semibold text-[var(--ink-primary)]">
                     #{checkpoint.seq}
                   </dd>
                 </div>
-                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
-                  <dt className="text-[11.5px] text-[var(--ink-muted)]">
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "检查点类型",
                       "zh-HK": "檢查點類型",
@@ -1836,8 +2023,8 @@ export function AdminOpsOverview() {
                     {checkpoint.type}
                   </dd>
                 </div>
-                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
-                  <dt className="flex items-center justify-between text-[11.5px] text-[var(--ink-muted)]">
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="flex items-center justify-between aios-micro-label">
                     <span>
                       {tx({
                         "zh-CN": "链表摘要",
@@ -1848,7 +2035,7 @@ export function AdminOpsOverview() {
                     <button
                       type="button"
                       onClick={() => void handleCopyHash(checkpoint.hash)}
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-[var(--accent-ink)] hover:bg-[var(--accent-wash)] transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-1 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface)] px-2 py-0.5 text-[11px] font-medium normal-case tracking-normal text-[var(--accent-ink)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] transition-colors cursor-pointer"
                     >
                       <Copy className="h-3 w-3" />
                       <span>
@@ -1863,8 +2050,8 @@ export function AdminOpsOverview() {
                     {formatShortDigest(checkpoint.hash, 12, 8)}
                   </dd>
                 </div>
-                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3.5">
-                  <dt className="text-[11.5px] text-[var(--ink-muted)]">
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3.5">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "密钥标识",
                       "zh-HK": "金鑰識別碼",
@@ -1896,6 +2083,8 @@ export function AdminOpsOverview() {
             )}
           </div>
         </section>
+      )}
+        </>
       )}
 
       {/* Write Control Confirmation Dialog */}

@@ -18,3 +18,5 @@ deploy/cloudflare-worker/.reviewer-pass.local.json
 .DS_Store
 deliverables/
 docs/pitch/assets/qr_mvp_reviewer_pass.png
+mcp/**/node_modules/
+mcp/**/dist/

@@ -763,8 +763,8 @@ export function OrderIntakeWorkspace() {
         />
 
         {readableWarehouses.length > 0 && (
-          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 space-y-3.5">
-            <h3 className="text-[14px] font-semibold text-[var(--ink-primary)]">
+          <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 space-y-3.5">
+            <h3 className="aios-display text-[14px] font-semibold text-[var(--ink-primary)]">
               {tx(
                 {
                   "zh-CN": "只读查询已有进件证据（已授权读仓：{sites}）",
@@ -823,7 +823,7 @@ export function OrderIntakeWorkspace() {
       data-testid="order-intake-workspace"
     >
       {/* Top Action Strip: Warehouse Selector, Mode Tabs & Saved Intake Lookup */}
-      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
@@ -1309,7 +1309,7 @@ export function OrderIntakeWorkspace() {
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-left text-[12.5px]">
                     <thead>
-                      <tr className="border-b border-[var(--hairline-subtle)] text-[11.5px] text-[var(--ink-muted)]">
+                      <tr className="aios-micro-label border-b border-[var(--hairline)] bg-[var(--bg-surface-tint)]">
                         <th className="px-3.5 py-2 font-medium">SKU</th>
                         <th className="px-3.5 py-2 font-medium">
                           {tx({

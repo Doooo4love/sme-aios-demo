@@ -3,7 +3,16 @@ import type {
   AssuranceCheckpoint,
   ExceptionPage,
   OperationsSummary,
+  PromptPoliciesResponse,
+  PromptPolicyEntry,
+  PromptScopeKey,
+  PromptSimulateResponse,
   Proposal,
+  SecurityEventItem,
+  SecurityEventPage,
+  SecurityEventSeverity,
+  SecurityEventStatus,
+  SecurityEventsSummary,
 } from "@/lib/types";
 
 export interface HealthProbeResult {
@@ -161,4 +170,153 @@ export function fetchAssuranceAuditCheckpoint(signal?: AbortSignal) {
   return apiFetch<AssuranceCheckpoint>("/v1/assurance/audit/checkpoint", {
     signal,
   });
+}
+
+export function fetchPromptPolicies(signal?: AbortSignal) {
+  return apiFetch<PromptPoliciesResponse>("/v1/operations/prompt-policies", {
+    signal,
+  });
+}
+
+export function updatePromptPolicy(
+  scopeKey: PromptScopeKey,
+  body: {
+    directive: string;
+    guardrail_rules: string[];
+    version: number;
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<PromptPolicyEntry>(
+    `/v1/operations/prompt-policies/${encodeURIComponent(scopeKey)}`,
+    {
+      method: "PUT",
+      body,
+      signal,
+    },
+  );
+}
+
+export function resetPromptPolicy(
+  scopeKey: PromptScopeKey,
+  signal?: AbortSignal,
+) {
+  return apiFetch<PromptPolicyEntry>(
+    `/v1/operations/prompt-policies/${encodeURIComponent(scopeKey)}/reset`,
+    {
+      method: "POST",
+      signal,
+    },
+  );
+}
+
+export async function simulatePromptPolicy(
+  body: {
+    role: string;
+    active_modules?: string[];
+    grants?: string[];
+    warehouses?: string[];
+  },
+  signal?: AbortSignal,
+): Promise<PromptSimulateResponse> {
+  const payload: Record<string, unknown> = {
+    role: body.role,
+    warehouses: body.warehouses ?? ["HK01"],
+    grants: body.grants ?? [],
+  };
+  if (body.active_modules !== undefined) {
+    payload.active_modules = body.active_modules;
+  }
+  const res = await apiFetch<Partial<PromptSimulateResponse>>(
+    "/v1/operations/prompt-policies/simulate",
+    {
+      method: "POST",
+      body: payload,
+      signal,
+    },
+  );
+  return {
+    role: res.role ?? body.role,
+    active_scopes: res.active_scopes ?? [],
+    denied_scopes: res.denied_scopes ?? [],
+    compiled_char_count: res.compiled_char_count ?? 0,
+    sections: res.sections ?? [],
+  };
+}
+
+export function fetchSecurityEvents(
+  params?: {
+    status?: SecurityEventStatus;
+    severity?: SecurityEventSeverity;
+    category?: string;
+    subject?: string;
+    limit?: number;
+    before_at?: number;
+    before_id?: string;
+  },
+  signal?: AbortSignal,
+) {
+  const sp = new URLSearchParams();
+  if (params?.status) sp.set("status", params.status);
+  if (params?.severity) sp.set("severity", params.severity);
+  if (params?.category) sp.set("category", params.category);
+  if (params?.subject) sp.set("subject", params.subject);
+  if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+  if (params?.before_at !== undefined && params?.before_id) {
+    sp.set("before_at", String(params.before_at));
+    sp.set("before_id", params.before_id);
+  }
+  const query = sp.toString();
+  return apiFetch<SecurityEventPage>(
+    `/v1/operations/security-events${query ? `?${query}` : ""}`,
+    { signal },
+  );
+}
+
+interface RawSecurityEventsSummary {
+  total_open?: number;
+  open_total?: number;
+  by_severity?: Partial<Record<SecurityEventSeverity, number>>;
+  open_by_severity?: Partial<Record<SecurityEventSeverity, number>>;
+  by_category?: Record<string, number>;
+  last_24h_total?: number;
+}
+
+export async function fetchSecurityEventsSummary(
+  signal?: AbortSignal,
+): Promise<SecurityEventsSummary> {
+  const raw = await apiFetch<RawSecurityEventsSummary>(
+    "/v1/operations/security-events/summary",
+    { signal },
+  );
+  const sev = raw.by_severity ?? raw.open_by_severity ?? {};
+  return {
+    total_open: raw.total_open ?? raw.open_total ?? 0,
+    by_severity: {
+      critical: sev.critical ?? 0,
+      high: sev.high ?? 0,
+      medium: sev.medium ?? 0,
+      info: sev.info ?? 0,
+    },
+    by_category: raw.by_category ?? {},
+    last_24h_total: raw.last_24h_total ?? 0,
+  };
+}
+
+export function updateSecurityEventStatus(
+  eventId: string,
+  body: {
+    status: SecurityEventStatus;
+    resolution_note?: string | null;
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<SecurityEventItem>(
+    `/v1/operations/security-events/${encodeURIComponent(eventId)}`,
+    {
+      method: "PUT",
+      body,
+      signal,
+    },
+  );
 }

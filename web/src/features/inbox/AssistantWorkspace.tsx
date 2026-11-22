@@ -2,10 +2,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Popover } from "radix-ui";
 import {
   ArrowUp,
   ArrowUpRight,
+  Bell,
   Calendar,
   CalendarDays,
   ChevronLeft,
@@ -18,6 +20,7 @@ import {
   Plus,
   Receipt,
   RefreshCw,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Video,
@@ -72,12 +75,19 @@ import {
   buildCapabilityPromptOptions,
   type CapabilityDomainId,
 } from "@/features/inbox/TurnResultCard";
+import {
+  SlashCommandPalette,
+  type SlashCommandPaletteHandle,
+} from "@/features/inbox/SlashCommandPalette";
 import { ZoomBookingCard } from "@/features/inbox/ZoomBookingCard";
 import type {
   DrawerObjectSelection,
   HistoryCursor,
   HistoryListItem,
   Proposal,
+  SlashSkillItem,
+  SuggestedAction,
+  TurnResult,
   WorkbenchToolCall,
 } from "@/lib/types";
 
@@ -127,6 +137,57 @@ function getBrowserTimezone(): { timezone: string; tzOffsetMinutes: number } {
   }
 }
 
+function summarizeTurnResultForContext(
+  result: TurnResult | undefined,
+): string | null {
+  if (!result) return null;
+  if (result.kind === "message") return result.reply.slice(0, 360);
+  if (result.kind === "refusal") {
+    return `[refusal:${result.category}] ${result.message.slice(0, 240)}`;
+  }
+  if (result.kind === "clarification") return result.question.slice(0, 240);
+  if (result.kind === "result") {
+    return `[tool:${result.tool}] ${JSON.stringify(result.data).slice(0, 240)}`;
+  }
+  if (result.kind === "proposal") {
+    return `[proposal:${result.proposal.id}] ${result.proposal.plan.action} (${result.proposal.state})`;
+  }
+  if (result.kind === "approval_preview") {
+    return `[approval_preview:${result.proposal.id}] ${result.proposal.plan.action}`;
+  }
+  return null;
+}
+
+function buildConversationContext(
+  turns: readonly AssistantTurnEntry[],
+  excludeEntryId?: string,
+): Array<{ role: "user" | "assistant"; text: string }> {
+  const ctx: Array<{ role: "user" | "assistant"; text: string }> = [];
+  for (const entry of turns) {
+    if (excludeEntryId && entry.id === excludeEntryId) continue;
+    if (entry.sourceKind === "proactive_alert") {
+      if (entry.proactiveAlert) {
+        ctx.push({
+          role: "assistant",
+          text: `${entry.proactiveAlert.title}: ${entry.proactiveAlert.subtitle}`.slice(
+            0,
+            240,
+          ),
+        });
+      }
+      continue;
+    }
+    if (entry.userText?.trim()) {
+      ctx.push({ role: "user", text: entry.userText.trim().slice(0, 360) });
+    }
+    const assistantSummary = summarizeTurnResultForContext(entry.result);
+    if (assistantSummary) {
+      ctx.push({ role: "assistant", text: assistantSummary });
+    }
+  }
+  return ctx.slice(-6);
+}
+
 function getSuggestionIcon(domainId: CapabilityDomainId) {
   switch (domainId) {
     case "finance":
@@ -143,6 +204,7 @@ function getSuggestionIcon(domainId: CapabilityDomainId) {
 }
 
 export function AssistantWorkspace() {
+  const router = useRouter();
   const {
     status,
     actor,
@@ -193,6 +255,10 @@ export function AssistantWorkspace() {
   }, [authGeneration, getDraft]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const paletteRef = useRef<SlashCommandPaletteHandle | null>(null);
+  const [dismissedSlashQuery, setDismissedSlashQuery] = useState<string | null>(
+    null,
+  );
   const autoResizeTextarea = useCallback((el: HTMLTextAreaElement | null) => {
     if (!el) return;
     el.style.height = "auto";
@@ -207,9 +273,16 @@ export function AssistantWorkspace() {
     (next: string) => {
       setComposerText(next);
       setDraft("assistant", next);
+      if (!next.startsWith("/") || next !== dismissedSlashQuery) {
+        setDismissedSlashQuery(null);
+      }
     },
-    [setDraft],
+    [setDraft, dismissedSlashQuery],
   );
+
+  const slashPaletteOpen =
+    /^\/([^\s\n]*)$/.test(composerText) &&
+    dismissedSlashQuery !== composerText;
 
   // + Add Context Popover & Modals
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -573,14 +646,25 @@ export function AssistantWorkspace() {
       const trimmed = text.trim();
       if (!trimmed) return;
 
-      if (!existingEntry && isZoomMeetingIntent(trimmed)) {
-        await executeZoomBookingParse(trimmed);
-        return;
+      if (!existingEntry) {
+        const meetingSlashMatch = /^\/meeting(?:\s+(.*))?$/i.exec(trimmed);
+        if (meetingSlashMatch && meetingSlashMatch[1]?.trim()) {
+          await executeZoomBookingParse(meetingSlashMatch[1].trim());
+          return;
+        }
+        if (isZoomMeetingIntent(trimmed)) {
+          await executeZoomBookingParse(trimmed);
+          return;
+        }
       }
 
       const startGen = getAuthGeneration();
       const clientId = existingEntry?.clientId ?? generateClientId("turn");
       const entryId = existingEntry?.id ?? clientId;
+      const conversationContext = buildConversationContext(
+        getAssistantMemory(startGen).turns,
+        entryId,
+      );
 
       if (existingEntry) {
         setAssistantTurns(startGen, (prev) =>
@@ -611,7 +695,10 @@ export function AssistantWorkspace() {
       }
 
       try {
-        const result = await submitWorkbenchTurn(trimmed, clientId);
+        const result = await submitWorkbenchTurn(trimmed, clientId, {
+          locale,
+          conversationContext,
+        });
         if (startGen !== getAuthGeneration()) return;
         setAssistantTurns(startGen, (prev) =>
           prev.map((item) =>
@@ -709,6 +796,7 @@ export function AssistantWorkspace() {
       executeZoomBookingParse,
       handleAccessChanged,
       loadHistory,
+      locale,
       scheduleInProgressPoll,
       tx,
     ],
@@ -766,17 +854,74 @@ export function AssistantWorkspace() {
     if (!trimmed) return;
     clearDraft("assistant");
     setComposerText("");
+    setDismissedSlashQuery(null);
     void executeTurn(trimmed);
   };
 
   const handleComposerKeyDown = (
     e: React.KeyboardEvent<HTMLTextAreaElement>,
   ) => {
+    if (paletteRef.current?.handleKeyDown(e)) {
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSendComposer();
     }
   };
+
+  const handleSelectSlashSkill = useCallback(
+    (skill: SlashSkillItem) => {
+      if (skill.requires_args) {
+        setDismissedSlashQuery(null);
+        updateComposer(`${skill.command} `);
+        requestAnimationFrame(() => {
+          const el = textareaRef.current;
+          if (el) {
+            el.focus();
+            const len = el.value.length;
+            el.setSelectionRange(len, len);
+          }
+        });
+        return;
+      }
+
+      clearDraft("assistant");
+      setComposerText("");
+      setDismissedSlashQuery(null);
+
+      if (skill.command === "/exceptions") {
+        router.push("/admin/exceptions");
+        return;
+      }
+      if (skill.command === "/assurance") {
+        router.push("/work");
+        return;
+      }
+      void executeTurn(skill.command);
+    },
+    [clearDraft, executeTurn, router, updateComposer],
+  );
+
+  const handleSelectSuggestedAction = useCallback(
+    (action: SuggestedAction) => {
+      if (action.kind === "navigate") {
+        router.push(action.href || "/work");
+        return;
+      }
+      const cmd = action.command?.trim();
+      if (!cmd) return;
+      if (action.kind === "email" && /^\/email$/i.test(cmd)) {
+        updateComposer("/email ");
+        requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+        });
+        return;
+      }
+      void executeTurn(cmd);
+    },
+    [executeTurn, router, updateComposer],
+  );
 
   const handleExpandHistory = async (historyId: string) => {
     const startGen = getAuthGeneration();
@@ -1201,18 +1346,20 @@ export function AssistantWorkspace() {
               data-testid={`assistant-turn-${turn.clientId}`}
               className="space-y-3"
             >
-              {/* Outgoing User Bubble — seamless native bubble-sent-bg + matching SVG tail */}
-              <div className="flex justify-end pr-1.5">
-                <div
-                  className={[
-                    "imessage-bubble-sent relative max-w-[82%] bg-[var(--bubble-sent-bg)] px-4 py-2.5 text-[14.5px] leading-[1.45] text-[var(--bubble-sent-ink)] whitespace-pre-wrap break-words",
-                    getBubbleRadiusClass("sent", "single"),
-                  ].join(" ")}
-                >
-                  {turn.userText}
-                  <IMessageBubbleTail side="sent" />
+              {/* Outgoing User Bubble — omitted for proactive Agent alerts */}
+              {turn.sourceKind !== "proactive_alert" && turn.userText && (
+                <div className="flex justify-end pr-1.5">
+                  <div
+                    className={[
+                      "imessage-bubble-sent relative max-w-[82%] bg-[var(--bubble-sent-bg)] px-4 py-2.5 text-[14.5px] leading-[1.45] text-[var(--bubble-sent-ink)] whitespace-pre-wrap break-words",
+                      getBubbleRadiusClass("sent", "single"),
+                    ].join(" ")}
+                  >
+                    {turn.userText}
+                    <IMessageBubbleTail side="sent" />
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Incoming Agent Turn Row — translate-only .aios-row-in */}
               <div className="aios-row-in flex items-start gap-2.5 max-w-[96%]">
@@ -1226,6 +1373,93 @@ export function AssistantWorkspace() {
                 />
 
                 <div className="min-w-0 flex-1 space-y-1.5">
+                  {turn.sourceKind === "proactive_alert" && turn.proactiveAlert && (
+                    <div
+                      data-testid={`proactive-alert-${turn.proactiveAlert.id}`}
+                      className={[
+                        "rounded-card border bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]",
+                        turn.proactiveAlert.severity === "critical" ||
+                        turn.proactiveAlert.severity === "high"
+                          ? "border-[var(--status-crimson-border)]"
+                          : "border-[var(--hairline)]",
+                      ].join(" ")}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--hairline-subtle)]">
+                        <div className="flex items-center gap-2">
+                          {turn.proactiveAlert.kind === "security_alert" ||
+                          turn.proactiveAlert.severity === "critical" ||
+                          turn.proactiveAlert.severity === "high" ? (
+                            <ShieldAlert
+                              className="h-3.5 w-3.5 text-[var(--status-crimson)]"
+                              strokeWidth={1.9}
+                            />
+                          ) : (
+                            <Bell
+                              className="h-3.5 w-3.5 text-[var(--accent)]"
+                              strokeWidth={1.9}
+                            />
+                          )}
+                          <span
+                            className={[
+                              "inline-flex items-center rounded-xs border px-2 py-0.5 text-[10.5px] font-semibold tracking-[0.02em]",
+                              turn.proactiveAlert.kind === "security_alert" ||
+                              turn.proactiveAlert.severity === "critical" ||
+                              turn.proactiveAlert.severity === "high"
+                                ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
+                                : "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]",
+                            ].join(" ")}
+                          >
+                            {turn.proactiveAlert.kind === "security_alert"
+                              ? tx({
+                                  "zh-CN": "安全实时告警",
+                                  "zh-HK": "安全即時告警",
+                                  en: "Security Alert",
+                                })
+                              : tx({
+                                  "zh-CN": "主动协同提醒",
+                                  "zh-HK": "主動協同提醒",
+                                  en: "Proactive Work Alert",
+                                })}
+                          </span>
+                        </div>
+                        <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+                          {formatDateTime(turn.proactiveAlert.created_at)}
+                        </span>
+                      </div>
+
+                      <div className="mt-2.5 text-[14px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                        {turn.proactiveAlert.title}
+                      </div>
+                      {turn.proactiveAlert.subtitle && (
+                        <p className="mt-1 text-[13px] leading-relaxed text-[var(--ink-secondary)]">
+                          {turn.proactiveAlert.subtitle}
+                        </p>
+                      )}
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
+                        {turn.proactiveAlert.reference ? (
+                          <span className="font-mono-code text-[11px] tabular-nums text-[var(--ink-muted)]">
+                            {turn.proactiveAlert.reference}
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+                        <Link
+                          href={turn.proactiveAlert.href || "/work"}
+                          className="inline-flex h-8 items-center gap-1 rounded-sm bg-[var(--accent-solid)] px-3 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)] transition-colors"
+                        >
+                          <span>
+                            {tx({
+                              "zh-CN": "查看处理",
+                              "zh-HK": "檢視處理",
+                              en: "View & Handle",
+                            })}
+                          </span>
+                          <ArrowUpRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </div>
+                    </div>
+                  )}
                   {turn.sourceKind === "zoom_booking" && turn.zoomBooking && (
                     <ZoomBookingCard
                       parsing={turn.zoomBooking.phase === "parsing"}
@@ -1307,9 +1541,9 @@ export function AssistantWorkspace() {
                             hoverLiftPx={-1}
                             sheenIntensity="subtle"
                             data-testid="assistant-inline-brief"
-                            className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
+                            className="overflow-hidden rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
                           >
-                            <div className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline-subtle)]">
+                            <div className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline)]">
                               <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ink-primary)]">
                                 <CalendarDays className="h-4 w-4 text-[var(--accent)]" />
                                 <span>
@@ -1326,24 +1560,24 @@ export function AssistantWorkspace() {
                             </div>
                             <div className="p-4 space-y-3">
                               <div className="grid grid-cols-2 gap-2.5">
-                                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3">
-                                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                                  <div className="aios-micro-label">
                                     {t("assistant.brief.pendingApprovals")}
                                   </div>
-                                  <div className="mt-0.5 text-[22px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] tabular-nums">
+                                  <div className="aios-kpi mt-1 text-[22px] font-semibold text-[var(--ink-primary)]">
                                     {turn.brief.pending_approvals}
                                     {turn.brief.pending_approvals_capped ? "+" : ""}
                                   </div>
                                 </div>
-                                <div className="rounded-tile bg-[var(--bg-surface-tint)] p-3">
-                                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                                  <div className="aios-micro-label">
                                     {tx({
                                       "zh-CN": "今日会议",
                                       "zh-HK": "今日會議",
                                       en: "Meetings Today",
                                     })}
                                   </div>
-                                  <div className="mt-0.5 text-[22px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] tabular-nums">
+                                  <div className="aios-kpi mt-1 text-[22px] font-semibold text-[var(--ink-primary)]">
                                     {turn.brief.meetings}
                                   </div>
                                 </div>
@@ -1412,18 +1646,33 @@ export function AssistantWorkspace() {
 
                       {turn.status === "done" && turn.result && (
                         <>
-                          <BriefProgressChain
-                            phase="done"
-                            actor={actor}
-                            result={turn.result}
-                          />
+                          {turn.result.kind !== "message" &&
+                            turn.result.kind !== "refusal" && (
+                              <BriefProgressChain
+                                phase="done"
+                                actor={actor}
+                                result={turn.result}
+                              />
+                            )}
                           <TurnResultCard
                             result={turn.result}
                             capabilities={capabilities}
                             timestamp={turn.createdAt}
+                            initialEmailSent={turn.emailSent}
+                            onEmailSent={(sentRes) => {
+                              const gen = getAuthGeneration();
+                              setAssistantTurns(gen, (prev) =>
+                                prev.map((item) =>
+                                  item.id === turn.id
+                                    ? { ...item, emailSent: sentRes }
+                                    : item,
+                                ),
+                              );
+                            }}
                             onSelectClarification={(prompt) =>
                               void executeTurn(prompt)
                             }
+                            onSelectSuggestedAction={handleSelectSuggestedAction}
                             onInspectObject={handleInspectObject}
                           />
                         </>
@@ -1556,23 +1805,32 @@ export function AssistantWorkspace() {
             </form>
           )}
 
+          {/* Floating Slash Command Palette directly above Composer */}
+          <SlashCommandPalette
+            ref={paletteRef}
+            composerText={composerText}
+            open={slashPaletteOpen}
+            onSelectSkill={handleSelectSlashSkill}
+            onDismiss={() => setDismissedSlashQuery(composerText)}
+          />
+
           {/* Muse Floating Capsule Composer (STRICTLY TWO CONTROLS: + 添加上下文 & ↑ Send) */}
-          <div className="rounded-xl bg-[var(--bg-surface)] shadow-[var(--shadow-composer)] focus-within:shadow-[var(--shadow-composer-focus)] transition-shadow duration-[200ms]">
+          <div className="rounded-xl border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
             <div className="px-4 pt-3.5 pb-1.5">
               <textarea
                 ref={textareaRef}
                 data-composer-input
                 data-testid="assistant-composer-input"
                 rows={1}
-                maxLength={500}
+                maxLength={2000}
                 value={composerText}
                 onChange={(e) => updateComposer(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
                 placeholder={tx(
                   {
-                    "zh-CN": "给{name}发消息…",
-                    "zh-HK": "傳訊息給{name}…",
-                    en: "Message {name}…",
+                    "zh-CN": "给{name}发消息，或输入 / 唤醒技能…",
+                    "zh-HK": "傳訊息給{name}，或輸入 / 喚醒技能…",
+                    en: "Message {name}, or type / for skills…",
                   },
                   { name: agentDisplayName },
                 )}
@@ -1613,7 +1871,7 @@ export function AssistantWorkspace() {
                     side="top"
                     align="start"
                     sideOffset={10}
-                    className="z-50 w-[296px] rounded-card bg-[var(--bg-surface)] p-2 shadow-[var(--shadow-popover)] focus:outline-none"
+                    className="z-50 w-[296px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-2 shadow-[var(--shadow-popover)] focus:outline-none"
                   >
                     <div className="space-y-0.5">
                       {canCreateOrder && (
@@ -1720,7 +1978,7 @@ export function AssistantWorkspace() {
 
                     {quickPromptOptions.length > 0 && (
                       <div className="mt-2 border-t border-[var(--hairline)] pt-2">
-                        <div className="px-3 pb-1.5 text-[11px] font-medium text-[var(--ink-muted)]">
+                        <div className="aios-micro-label px-3 pb-1.5">
                           {tx({
                             "zh-CN": "常用",
                             "zh-HK": "常用",
@@ -1762,9 +2020,9 @@ export function AssistantWorkspace() {
               </Popover.Root>
 
               <div className="flex items-center gap-2">
-                {composerText.length > 420 && (
+                {composerText.length > 1700 && (
                   <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                    {composerText.length}/500
+                    {composerText.length}/2000
                   </span>
                 )}
                 <button

@@ -272,10 +272,10 @@ export function ZoomBookingCard({
           hoverLiftPx={-1}
           sheenIntensity="subtle"
           data-testid="zoom-booking-confirmed-card"
-          className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
+          className="overflow-hidden rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
         >
           {/* M-6a: Consistent confirmed heading & badge (zero "confirmed + sandbox" vs "unconnected" contradiction) */}
-          <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--status-emerald-wash)] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-4 py-3">
             <div className="flex items-center gap-2">
               <CheckCircle2
                 className="h-4 w-4 text-[var(--status-emerald)]"
@@ -640,9 +640,9 @@ export function ZoomBookingCard({
       hoverLiftPx={-1}
       sheenIntensity="subtle"
       data-testid="zoom-booking-preview-card"
-      className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
+      className="overflow-hidden rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-3 border-b border-[var(--hairline-subtle)]">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-3 border-b border-[var(--hairline)]">
         <div className="flex items-center gap-2">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
             <Video className="h-3.5 w-3.5" strokeWidth={2} />

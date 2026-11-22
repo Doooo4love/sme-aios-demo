@@ -48,15 +48,15 @@ export function Modal({
         <Dialog.Content
           className={[
             "aios-modal-content fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 flex flex-col",
-            "bg-[var(--bg-surface)] shadow-[var(--shadow-modal)] focus:outline-none overflow-hidden",
+            "border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-modal)] focus:outline-none overflow-hidden",
             expanded
-              ? "h-[calc(100dvh-24px)] w-[calc(100vw-24px)] rounded-lg"
-              : `${SIZE_CLASSES[size]} max-h-[calc(100dvh-48px)] rounded-lg`,
+              ? "h-[calc(100dvh-24px)] w-[calc(100vw-24px)] rounded-modal"
+              : `${SIZE_CLASSES[size]} max-h-[calc(100dvh-48px)] rounded-modal`,
           ].join(" ")}
         >
           <div className="flex items-start justify-between gap-3 border-b border-[var(--hairline)] px-6 py-4 shrink-0">
             <div className="min-w-0">
-              <Dialog.Title className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)] truncate">
+              <Dialog.Title className="aios-display text-[15.5px] font-semibold text-[var(--ink-primary)] truncate">
                 {title}
               </Dialog.Title>
               {subtitle && (

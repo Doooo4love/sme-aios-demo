@@ -471,7 +471,7 @@ export function ProposalDiffView({
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-[13px]">
             <thead>
-              <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+              <tr className="aios-micro-label border-b border-[var(--hairline)] bg-[var(--bg-surface-tint)]">
                 <th className="px-4.5 py-2.5 font-medium w-[28%]">
                   {t("proposal.diff.colField")}
                 </th>

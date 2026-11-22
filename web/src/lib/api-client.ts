@@ -8,6 +8,10 @@ import type {
   CompanyContactsResponse,
   DemoPersonaId,
   DemoPersonasResponse,
+  EmailOutboxPage,
+  EmailOutboxReceipt,
+  EmailParseResponse,
+  EmailSendResponse,
   ExternalCalendarTarget,
   FieldValidationError,
   McpStatusResponse,
@@ -16,9 +20,12 @@ import type {
   NoticePage,
   Profile,
   Proposal,
+  SlashSkillItem,
+  SlashSkillsResponse,
   TaskLane,
   TaskPage,
   TurnResult,
+  WorkPulseResponse,
   WorkbenchToolCall,
   ZoomBookingConfirmResponse,
   ZoomBookingPreviewResponse,
@@ -957,17 +964,117 @@ export function fetchProposal(id: string, signal?: AbortSignal) {
   });
 }
 
+export interface WorkbenchTurnOptions {
+  signal?: AbortSignal;
+  locale?: string;
+  conversationContext?: Array<{ role: "user" | "assistant"; text: string }>;
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "aborted" in value &&
+    typeof (value as AbortSignal).addEventListener === "function"
+  );
+}
+
 export function submitWorkbenchTurn(
   text: string,
   clientId?: string | null,
-  signal?: AbortSignal,
+  signalOrOptions?: AbortSignal | WorkbenchTurnOptions,
 ) {
-  const body = clientId ? { text, client_id: clientId } : { text };
+  const options: WorkbenchTurnOptions = isAbortSignal(signalOrOptions)
+    ? { signal: signalOrOptions }
+    : (signalOrOptions ?? {});
+  const body: Record<string, unknown> = { text };
+  if (clientId) {
+    body.client_id = clientId;
+  }
+  if (options.locale) {
+    body.locale = options.locale;
+  }
+  if (options.conversationContext && options.conversationContext.length > 0) {
+    body.conversation_context = options.conversationContext.slice(-6);
+  }
   return apiFetch<TurnResult>("/v1/workbench/turns", {
     method: "POST",
     body,
+    signal: options.signal,
+  });
+}
+
+export async function fetchSlashSkills(
+  signal?: AbortSignal,
+): Promise<SlashSkillsResponse> {
+  const res = await apiFetch<SlashSkillsResponse | SlashSkillItem[]>(
+    "/v1/workbench/skills",
+    { signal },
+  );
+  const rawItems = Array.isArray(res)
+    ? res
+    : Array.isArray(res?.items)
+      ? res.items
+      : [];
+  return {
+    items: rawItems.map((item) => ({
+      ...item,
+      usage: typeof item.usage === "string" ? item.usage : item.command,
+      keywords: Array.isArray(item.keywords) ? item.keywords : [],
+    })),
+  };
+}
+
+export function fetchWorkPulse(signal?: AbortSignal) {
+  return apiFetch<WorkPulseResponse>("/v1/workbench/work-pulse", { signal });
+}
+
+export function parseNaturalLanguageEmailApi(
+  payload: { utterance: string; locale?: string },
+  signal?: AbortSignal,
+) {
+  return apiFetch<EmailParseResponse>("/api/integrations/email/send", {
+    method: "POST",
+    body: {
+      action: "parse",
+      ...payload,
+    },
+    skipCsrf: true,
     signal,
   });
+}
+
+export function sendGovernedEmailApi(
+  payload: {
+    client_id: string;
+    to: string[];
+    cc?: string[];
+    subject: string;
+    body: string;
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<EmailSendResponse>("/api/integrations/email/send", {
+    method: "POST",
+    body: {
+      action: "send",
+      ...payload,
+    },
+    signal,
+  });
+}
+
+export async function fetchEmailOutbox(
+  signal?: AbortSignal,
+): Promise<EmailOutboxPage> {
+  const res = await apiFetch<EmailOutboxPage | EmailOutboxReceipt[]>(
+    "/v1/workbench/email-outbox",
+    { signal },
+  );
+  if (Array.isArray(res)) {
+    return { items: res };
+  }
+  return { items: Array.isArray(res?.items) ? res.items : [] };
 }
 
 export function callWorkbenchTool(

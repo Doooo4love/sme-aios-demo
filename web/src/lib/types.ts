@@ -232,11 +232,64 @@ export interface Clarification {
   question: string;
 }
 
+export interface PendingWorkSnapshot {
+  pending_approvals: number;
+  pending_approval_ids: string[];
+  returned_proposals: number;
+  open_submitted: number;
+  meetings_today: number;
+  unread_notices: number;
+  open_exceptions?: number;
+}
+
+export interface SuggestedAction {
+  id: string;
+  label: string;
+  command: string;
+  kind: "turn" | "navigate" | "email";
+  href?: string;
+}
+
+export interface EmailDraftResolvedContact {
+  subject: string;
+  display_name: string;
+  email: string;
+}
+
+export interface EmailDraftPayload {
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+  resolved_contacts?: EmailDraftResolvedContact[];
+  warnings?: string[];
+}
+
+export interface AssistantMessageResult {
+  kind: "message";
+  reply: string;
+  mode: "chat" | "workflow_guidance" | "proactive_reminder" | "email_draft";
+  pending_work: PendingWorkSnapshot | null;
+  suggested_actions: SuggestedAction[];
+  email_draft: EmailDraftPayload | null;
+}
+
+export interface PolicyRefusalResult {
+  kind: "refusal";
+  category: string;
+  severity: "medium" | "high" | "critical";
+  message: string;
+  incident_id: string;
+  allowed_modules: string[];
+}
+
 export type TurnResult =
   | WorkResult
   | WorkProposal
   | ApprovalPreview
-  | Clarification;
+  | Clarification
+  | AssistantMessageResult
+  | PolicyRefusalResult;
 
 export type WorkbenchToolCall =
   | { tool: "shipment.read"; warehouse: string; shipment_id: string }
@@ -522,7 +575,9 @@ export type NoticeKind =
   | "proposal_rejected"
   | "proposal_approved"
   | "proposal_verified"
-  | "proposal_needs_operator";
+  | "proposal_needs_operator"
+  | "email_received"
+  | "security_alert";
 
 export interface NoticeSummary {
   id: string;
@@ -699,13 +754,20 @@ export interface CompanyContactsResponse {
 export type ExternalCalendarTarget = "google" | "icloud" | "outlook";
 
 export interface McpConnectorStatusItem {
-  connector: "internal" | "zoom" | ExternalCalendarTarget;
-  connector_id: "internal" | "zoom" | ExternalCalendarTarget;
+  connector: "internal" | "zoom" | "email" | ExternalCalendarTarget;
+  connector_id: "internal" | "zoom" | "email" | ExternalCalendarTarget;
   label: string;
-  category: "internal" | "meeting" | "calendar";
+  category: "internal" | "meeting" | "calendar" | "email";
   configured: boolean;
   status: "connected" | "sandbox_ready";
-  mode: "live_internal" | "live_mcp" | "live_api" | "sandbox_preview" | "ics_fallback";
+  mode:
+    | "live_internal"
+    | "live_mcp"
+    | "live_api"
+    | "live_smtp"
+    | "governed_outbox"
+    | "sandbox_preview"
+    | "ics_fallback";
   protocol: string;
   supports_sync: boolean;
   setup_env_keys: string[];
@@ -859,4 +921,167 @@ export interface DrawerObjectSelection {
   warehouse?: string;
   title?: string;
   meta?: Record<string, unknown>;
+}
+
+export type SlashSkillCategory =
+  | "workflow"
+  | "communication"
+  | "governance"
+  | "navigation";
+
+export interface SlashSkillItem {
+  command: string;
+  title: string;
+  title_en: string;
+  description: string;
+  description_en: string;
+  category: SlashSkillCategory;
+  usage: string;
+  requires_args: boolean;
+  allowed: boolean;
+  required_module: string | null;
+  keywords: string[];
+}
+
+export interface SlashSkillsResponse {
+  items: SlashSkillItem[];
+}
+
+export interface WorkAlertItem {
+  id: string;
+  kind: string;
+  title: string;
+  subtitle: string;
+  reference: string | null;
+  href: string;
+  severity: "info" | "medium" | "high" | "critical";
+  created_at: number;
+}
+
+export interface WorkPulseResponse {
+  pending_approvals: number;
+  returned_proposals: number;
+  open_submitted: number;
+  meetings_today: number;
+  unread_notices: number;
+  open_security_alerts?: number;
+  latest_alerts: WorkAlertItem[];
+  as_of: number;
+}
+
+export type PromptScopeKey =
+  | "general"
+  | "orders"
+  | "dispatch"
+  | "invoice-review"
+  | "warehouse-insights"
+  | "approvals"
+  | "mail-outbox"
+  | "calendar-meetings";
+
+export interface PromptPolicyEntry {
+  scope_key: PromptScopeKey;
+  title: string;
+  directive: string;
+  guardrail_rules: string[];
+  default_directive: string;
+  default_guardrail_rules: string[];
+  version: number;
+  updated_by: string | null;
+  updated_at: number | null;
+  is_custom: boolean;
+}
+
+export interface PromptPoliciesResponse {
+  items: PromptPolicyEntry[];
+}
+
+export interface PromptSimulateResponse {
+  role: string;
+  active_scopes: PromptScopeKey[];
+  denied_scopes: PromptScopeKey[];
+  compiled_char_count: number;
+  sections: Array<{
+    scope_key: PromptScopeKey;
+    title: string;
+    directive: string;
+    guardrail_rules: string[];
+  }>;
+}
+
+export type SecurityEventStatus = "open" | "acknowledged" | "resolved";
+
+export type SecurityEventSeverity = "info" | "medium" | "high" | "critical";
+
+export interface SecurityEventItem {
+  id: string;
+  subject: string;
+  role: string;
+  category: string;
+  severity: SecurityEventSeverity;
+  module: string | null;
+  action_attempted: string | null;
+  decision: "blocked" | "denied" | "flagged" | "escalated";
+  summary: string;
+  input_sha256: string;
+  metadata: Record<string, unknown>;
+  status: SecurityEventStatus;
+  resolved_by: string | null;
+  resolved_at: number | null;
+  resolution_note: string | null;
+  created_at: number;
+}
+
+export interface SecurityEventPage {
+  items: SecurityEventItem[];
+  next: HistoryCursor | null;
+}
+
+export interface SecurityEventsSummary {
+  total_open: number;
+  by_severity: Record<SecurityEventSeverity, number>;
+  by_category: Record<string, number>;
+  last_24h_total: number;
+}
+
+export type EmailTransportMode = "live_mcp" | "live_smtp" | "governed_outbox";
+
+export type EmailDeliveryStatus =
+  | "sent"
+  | "queued_governed"
+  | "delivered_internal";
+
+export interface EmailOutboxReceipt {
+  id: string;
+  client_id: string;
+  recipients: string[];
+  cc: string[];
+  subject_line: string;
+  body_preview: string;
+  transport_mode: EmailTransportMode;
+  message_id: string;
+  delivery_status: EmailDeliveryStatus;
+  created_at: number;
+}
+
+export interface EmailOutboxPage {
+  items: EmailOutboxReceipt[];
+}
+
+export interface EmailParseResponse {
+  phase: "preview";
+  draft: EmailDraftPayload;
+  transport_mode_preview: EmailTransportMode;
+  email_configured: boolean;
+}
+
+export interface EmailSendResponse {
+  phase: "sent";
+  receipt: EmailOutboxReceipt;
+  transport_mode: EmailTransportMode;
+  message_id: string;
+  delivery_status: EmailDeliveryStatus;
+  accepted: string[];
+  rejected: string[];
+  warnings: string[];
 }

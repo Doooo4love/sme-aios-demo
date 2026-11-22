@@ -409,11 +409,11 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
           )}
         </div>
 
-        {/* Main Frosted Porcelain / Obsidian Sheet */}
-        <section className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)]">
+        {/* Main Porcelain / Obsidian Sheet */}
+        <section className="overflow-hidden rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]">
           {/* Header Section */}
-          <div className="border-b border-[var(--hairline-subtle)] px-6 py-5">
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+          <div className="border-b border-[var(--hairline)] px-6 py-5">
+            <h2 className="aios-display text-[18px] font-semibold text-[var(--ink-primary)]">
               {isAgent
                 ? tx({
                     "zh-CN": "个人 Agent 助手设定",

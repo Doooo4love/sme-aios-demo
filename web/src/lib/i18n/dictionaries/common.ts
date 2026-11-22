@@ -895,6 +895,16 @@ export const NOTICE_KIND_LABELS_I18N: Readonly<
     "zh-HK": "提案須人工核查",
     en: "Proposal requires operator review",
   },
+  email_received: {
+    "zh-CN": "收到企业协作成员邮件",
+    "zh-HK": "收到企業協作成員電郵",
+    en: "Enterprise email received",
+  },
+  security_alert: {
+    "zh-CN": "安全护栏拦截告警",
+    "zh-HK": "安全護欄攔截告警",
+    en: "Security guardrail alert",
+  },
 };
 
 export const ERROR_CODE_MESSAGES_I18N: Readonly<Record<string, TrilingualText>> = {

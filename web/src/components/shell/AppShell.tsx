@@ -310,7 +310,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 side="bottom"
                 align="end"
                 sideOffset={8}
-                className="z-50 w-[256px] rounded-lg bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
+                className="z-50 w-[256px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
               >
                 <div className="border-b border-[var(--hairline)] px-3 py-2.5">
                   <div className="truncate text-[13.5px] font-semibold text-[var(--ink-primary)]">

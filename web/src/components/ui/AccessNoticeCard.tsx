@@ -99,54 +99,54 @@ export function AccessNoticeCard({
     switch (variant) {
       case "RECORD_UNAVAILABLE":
         return {
-          tone: "bg-[var(--bg-surface)] shadow-[var(--shadow-card)]",
+          tone: "border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]",
           iconBox:
-            "bg-[var(--bg-surface-subtle)] text-[var(--ink-secondary)]",
+            "border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] text-[var(--ink-secondary)]",
           Icon: Lock,
           defaultTitle: t("notice.recordUnavailable.title"),
           defaultMessage: t("notice.recordUnavailable.message"),
         };
       case "ACCESS_RESTRICTED":
         return {
-          tone: "bg-[var(--status-crimson-wash)]",
+          tone: "border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-crimson)] shadow-[var(--shadow-subtle)]",
+            "border border-[var(--status-crimson-border)] bg-[var(--bg-surface)] text-[var(--status-crimson)]",
           Icon: ShieldAlert,
           defaultTitle: t("notice.accessRestricted.title"),
           defaultMessage: t("notice.accessRestricted.message"),
         };
       case "ACTION_NOT_ALLOWED":
         return {
-          tone: "bg-[var(--status-amber-wash)]",
+          tone: "border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
+            "border border-[var(--status-amber-border)] bg-[var(--bg-surface)] text-[var(--status-amber-ink)]",
           Icon: ShieldAlert,
           defaultTitle: t("notice.actionNotAllowed.title"),
           defaultMessage: t("notice.actionNotAllowed.message"),
         };
       case "ACCESS_CHANGED":
         return {
-          tone: "bg-[var(--status-amber-wash)]",
+          tone: "border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
+            "border border-[var(--status-amber-border)] bg-[var(--bg-surface)] text-[var(--status-amber-ink)]",
           Icon: AlertTriangle,
           defaultTitle: t("notice.accessChanged.title"),
           defaultMessage: t("notice.accessChanged.message"),
         };
       case "CONFLICT":
         return {
-          tone: "bg-[var(--status-amber-wash)]",
+          tone: "border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
+            "border border-[var(--status-amber-border)] bg-[var(--bg-surface)] text-[var(--status-amber-ink)]",
           Icon: RefreshCw,
           defaultTitle: t("notice.conflict.title"),
           defaultMessage: t("notice.conflict.message"),
         };
       case "RETRY_LATER":
         return {
-          tone: "bg-[var(--status-amber-wash)]",
+          tone: "border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)]",
           iconBox:
-            "bg-[var(--bg-surface)] text-[var(--status-amber-ink)] shadow-[var(--shadow-subtle)]",
+            "border border-[var(--status-amber-border)] bg-[var(--bg-surface)] text-[var(--status-amber-ink)]",
           Icon: Clock,
           defaultTitle: t("notice.retryLater.title"),
           defaultMessage:
@@ -168,12 +168,12 @@ export function AccessNoticeCard({
   return (
     <div
       role="alert"
-      className={["rounded-md p-4", config.tone, className].join(" ")}
+      className={["rounded-card p-4", config.tone, className].join(" ")}
     >
       <div className="flex items-start gap-3">
         <div
           className={[
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-sm",
             config.iconBox,
           ].join(" ")}
         >

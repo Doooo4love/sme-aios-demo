@@ -3,8 +3,11 @@
 import React from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowRight,
   ArrowUpRight,
+  Bell,
+  Calendar,
   CheckSquare,
   FileText,
   HelpCircle,
@@ -12,6 +15,8 @@ import {
   Package,
   PanelRightOpen,
   Receipt,
+  ShieldAlert,
+  Sparkles,
   Warehouse,
 } from "lucide-react";
 import { formatShortDigest } from "@/lib/format";
@@ -25,13 +30,16 @@ import { Interactive3DCard } from "@/components/kinetic";
 import { Button } from "@/components/ui/Button";
 import { SourceTag } from "@/components/ui/SourceTag";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmailComposeCard } from "@/features/inbox/EmailComposeCard";
 import type {
   Capabilities,
   DrawerObjectSelection,
+  EmailSendResponse,
   InvoiceView,
   MailInboxView,
   Proposal,
   ShipmentView,
+  SuggestedAction,
   TurnResult,
   WarehouseDecisionSummary,
 } from "@/lib/types";
@@ -209,7 +217,10 @@ export interface TurnResultCardProps {
   result: TurnResult;
   capabilities: Capabilities | null;
   timestamp?: number;
+  initialEmailSent?: EmailSendResponse | null;
+  onEmailSent?: (res: EmailSendResponse) => void;
   onSelectClarification?: (prompt: string) => void;
+  onSelectSuggestedAction?: (action: SuggestedAction) => void;
   onInspectObject: (
     selection: DrawerObjectSelection,
     trigger: HTMLElement | null,
@@ -220,7 +231,10 @@ export function TurnResultCard({
   result,
   capabilities,
   timestamp,
+  initialEmailSent,
+  onEmailSent,
   onSelectClarification,
+  onSelectSuggestedAction,
   onInspectObject,
 }: TurnResultCardProps) {
   const {
@@ -242,19 +256,19 @@ export function TurnResultCard({
       const newDate =
         typeof after.delivery_date === "string" ? after.delivery_date : "—";
       return (
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12.5px]">
-          <span className="text-[var(--ink-muted)]">
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12.5px]">
+          <span className="aios-micro-label">
             {tx({
               "zh-CN": "交付日期",
               "zh-HK": "交付日期",
               en: "Delivery Date",
             })}
           </span>
-          <span className="font-mono-code text-[var(--ink-secondary)] line-through">
+          <span className="font-mono-code tabular-nums text-[var(--ink-secondary)] line-through">
             {oldDate}
           </span>
           <ArrowRight className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
-          <span className="rounded-xs bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code font-semibold text-[var(--accent-ink)]">
+          <span className="rounded-xs border border-[var(--accent-border)] bg-[var(--accent-wash)] px-2 py-0.5 font-mono-code tabular-nums font-semibold text-[var(--accent-ink)]">
             {newDate}
           </span>
         </div>
@@ -267,21 +281,21 @@ export function TurnResultCard({
       const total = typeof after.total === "string" ? after.total : "—";
       const items = Array.isArray(after.items) ? after.items.length : 0;
       return (
-        <div className="mt-3 grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
+        <div className="mt-3 grid grid-cols-3 gap-3 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">
+            <div className="aios-micro-label">
               {tx({
                 "zh-CN": "采购单号",
                 "zh-HK": "採購單號",
                 en: "PO Number",
               })}
             </div>
-            <div className="mt-0.5 truncate font-mono-code font-medium text-[var(--ink-primary)]">
+            <div className="mt-0.5 truncate font-mono-code tabular-nums font-medium text-[var(--ink-primary)]">
               {po}
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">
+            <div className="aios-micro-label">
               {tx({
                 "zh-CN": "订单总额",
                 "zh-HK": "訂單總額",
@@ -293,14 +307,14 @@ export function TurnResultCard({
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">
+            <div className="aios-micro-label">
               {tx({
                 "zh-CN": "明细行数",
                 "zh-HK": "明細行數",
                 en: "Line Items",
               })}
             </div>
-            <div className="mt-0.5 font-medium text-[var(--ink-primary)] tabular-nums">
+            <div className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)] tabular-nums">
               {tp(
                 {
                   "zh-CN": "{count} 行",
@@ -326,14 +340,14 @@ export function TurnResultCard({
         hoverLiftPx={-1}
         sheenIntensity="subtle"
         data-testid="turn-card-clarification"
-        className="rounded-card bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]"
+        className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]"
       >
-        <div className="flex items-center gap-2 text-[12.5px] font-medium text-[var(--ink-secondary)]">
+        <div className="flex items-center gap-2">
           <HelpCircle
             className="h-4 w-4 text-[var(--accent)]"
             strokeWidth={1.85}
           />
-          <span>
+          <span className="aios-micro-label">
             {tx({
               "zh-CN": "需要补充指令要素",
               "zh-HK": "須補充指令條件",
@@ -347,11 +361,11 @@ export function TurnResultCard({
 
         {options.length > 0 && onSelectClarification && (
           <div className="mt-3.5 border-t border-[var(--hairline-subtle)] pt-3">
-            <div className="mb-2 text-[11.5px] text-[var(--ink-muted)]">
+            <div className="aios-micro-label mb-2">
               {tx({
-                "zh-CN": "可直接点选常用查询：",
-                "zh-HK": "可直接點選常用查詢：",
-                en: "Try a quick query:",
+                "zh-CN": "可直接点选常用查询",
+                "zh-HK": "可直接點選常用查詢",
+                en: "Try a quick query",
               })}
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -361,7 +375,7 @@ export function TurnResultCard({
                   type="button"
                   data-testid={`clarification-option-${opt.domain}`}
                   onClick={() => onSelectClarification(opt.prompt)}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors duration-[140ms] cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors duration-[140ms] cursor-pointer"
                 >
                   <span className="text-[11px] text-[var(--ink-muted)]">
                     {opt.domainLabel}
@@ -431,16 +445,16 @@ export function TurnResultCard({
         sheenIntensity="subtle"
         data-testid="turn-card-result"
         data-tool={result.tool}
-        className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)]"
+        className="overflow-hidden rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)]"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline-subtle)]">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline)]">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-[var(--status-emerald)]" />
             <span className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
               {toolLabel}
             </span>
             {warehouse && (
-              <span className="rounded-full bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] leading-none">
+              <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)] leading-none">
                 {warehouse}
               </span>
             )}
@@ -460,7 +474,7 @@ export function TurnResultCard({
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                     <Receipt className="h-4 w-4" strokeWidth={1.85} />
                   </span>
                   <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
@@ -469,16 +483,16 @@ export function TurnResultCard({
                       "zh-HK": "發票",
                       en: "Invoice",
                     })}{" "}
-                    <span className="font-mono-code font-medium">
+                    <span className="font-mono-code font-medium tabular-nums">
                       {rawData.invoice_id}
                     </span>
                   </span>
                 </div>
                 <StatusBadge status={rawData.state} compact />
               </div>
-              <dl className="grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
+              <dl className="grid grid-cols-3 gap-3 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "仓库",
                       "zh-HK": "倉庫",
@@ -490,7 +504,7 @@ export function TurnResultCard({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "币种",
                       "zh-HK": "幣別",
@@ -502,7 +516,7 @@ export function TurnResultCard({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "发票金额",
                       "zh-HK": "發票金額",
@@ -519,7 +533,7 @@ export function TurnResultCard({
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                     <Package className="h-4 w-4" strokeWidth={1.85} />
                   </span>
                   <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
@@ -528,16 +542,16 @@ export function TurnResultCard({
                       "zh-HK": "運單",
                       en: "Shipment",
                     })}{" "}
-                    <span className="font-mono-code font-medium">
+                    <span className="font-mono-code font-medium tabular-nums">
                       {rawData.shipment_id}
                     </span>
                   </span>
                 </div>
                 <StatusBadge status={rawData.status} compact />
               </div>
-              <dl className="grid grid-cols-3 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
+              <dl className="grid grid-cols-3 gap-3 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px]">
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "仓库",
                       "zh-HK": "倉庫",
@@ -549,7 +563,7 @@ export function TurnResultCard({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "计划交付日",
                       "zh-HK": "預計交付日",
@@ -561,7 +575,7 @@ export function TurnResultCard({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-[var(--ink-muted)]">
+                  <dt className="aios-micro-label">
                     {tx({
                       "zh-CN": "记录版本",
                       "zh-HK": "紀錄版本",
@@ -576,13 +590,13 @@ export function TurnResultCard({
             </div>
           ) : result.tool === "decision.warehouse.summary" &&
             isWarehouseSummary(rawData) ? (
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-tile bg-[var(--bg-surface-tint)] px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-4 py-3">
               <div className="flex items-center gap-3">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent-wash)] text-[var(--accent-ink)]">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-sm border border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]">
                   <Warehouse className="h-4 w-4" strokeWidth={1.85} />
                 </span>
                 <div>
-                  <div className="text-[11.5px] text-[var(--ink-muted)]">
+                  <div className="aios-micro-label">
                     {tx(
                       {
                         "zh-CN": "仓库 {wh} · 在途未关闭运单",
@@ -592,13 +606,13 @@ export function TurnResultCard({
                       { wh: rawData.warehouse },
                     )}
                   </div>
-                  <div className="mt-0.5 text-[22px] font-semibold text-[var(--ink-primary)] tabular-nums">
+                  <div className="aios-kpi mt-0.5 text-[22px] font-semibold text-[var(--ink-primary)]">
                     {rawData.open_shipments}
                   </div>
                 </div>
               </div>
               <div>
-                <div className="text-[11px] text-[var(--ink-muted)]">
+                <div className="aios-micro-label">
                   {tx({
                     "zh-CN": "统计基准日",
                     "zh-HK": "統計基準日",
@@ -735,9 +749,9 @@ export function TurnResultCard({
         sheenIntensity="subtle"
         data-testid="turn-card-proposal"
         data-proposal-id={proposal.id}
-        className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)]"
+        className="overflow-hidden rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)]"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline-subtle)]">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline)]">
           <div className="flex items-center gap-2">
             <FileText
               className="h-3.5 w-3.5 text-[var(--accent)]"
@@ -756,19 +770,19 @@ export function TurnResultCard({
               <span className="font-semibold text-[var(--ink-primary)]">
                 {localizeAction(proposal.plan.action)}
               </span>
-              <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
+              <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
                 {proposal.warehouse}
               </span>
               <span
                 title={proposal.id}
-                className="font-mono-code text-[11.5px] text-[var(--ink-muted)]"
+                className="font-mono-code text-[11.5px] tabular-nums text-[var(--ink-muted)]"
               >
                 {formatShortDigest(proposal.id, 6, 4)}
               </span>
             </div>
             <span className="text-[11px] text-[var(--ink-muted)]">
               {tx({ "zh-CN": "摘要 ", "zh-HK": "摘要 ", en: "Digest " })}
-              <span className="font-mono-code">
+              <span className="font-mono-code tabular-nums">
                 {formatShortDigest(proposal.digest)}
               </span>
             </span>
@@ -823,6 +837,381 @@ export function TurnResultCard({
     );
   }
 
+  if (result.kind === "message") {
+    const pw = result.pending_work;
+    const hasPendingWork = Boolean(
+      pw &&
+        (pw.pending_approvals > 0 ||
+          pw.returned_proposals > 0 ||
+          pw.unread_notices > 0 ||
+          pw.open_submitted > 0 ||
+          pw.meetings_today > 0 ||
+          (pw.open_exceptions ?? 0) > 0),
+    );
+
+    return (
+      <div data-testid="turn-card-message" className="space-y-3">
+        <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--hairline-subtle)]">
+            <div className="flex items-center gap-1.5">
+              <Sparkles
+                className="h-3.5 w-3.5 text-[var(--accent)]"
+                strokeWidth={1.9}
+              />
+              <span className="aios-micro-label">
+                {result.mode === "proactive_reminder"
+                  ? tx({
+                      "zh-CN": "工作提醒与业务协同",
+                      "zh-HK": "工作提醒與業務協同",
+                      en: "Proactive Work Reminder",
+                    })
+                  : result.mode === "workflow_guidance"
+                    ? tx({
+                        "zh-CN": "业务指引",
+                        "zh-HK": "業務指引",
+                        en: "Workflow Guidance",
+                      })
+                    : result.mode === "email_draft"
+                      ? tx({
+                          "zh-CN": "邮件草稿助手",
+                          "zh-HK": "電郵草稿助手",
+                          en: "Email Draft Assistant",
+                        })
+                      : tx({
+                          "zh-CN": "助手回复",
+                          "zh-HK": "助手回覆",
+                          en: "Agent Reply",
+                        })}
+              </span>
+            </div>
+            {timestamp && (
+              <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+                {formatDateTime(timestamp)}
+              </span>
+            )}
+          </div>
+
+          <p className="mt-2.5 text-[14.5px] leading-[1.6] text-[var(--ink-primary)] whitespace-pre-wrap break-words">
+            {result.reply}
+          </p>
+
+          {/* Unfinished Work Reminder Strip */}
+          {hasPendingWork && pw && (
+            <div
+              data-testid="assistant-pending-work-strip"
+              className="mt-3.5 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-2.5 space-y-2"
+            >
+              <div className="flex items-center gap-1.5">
+                <Bell className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.9} />
+                <span className="aios-micro-label">
+                  {tx({
+                    "zh-CN": "当前待办与未完成事项",
+                    "zh-HK": "目前待辦與未完成事項",
+                    en: "Unfinished Work Summary",
+                  })}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
+                {pw.pending_approvals > 0 && (
+                  <Link
+                    href="/work"
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-2.5 py-1 font-medium text-[var(--status-amber-ink)] hover:opacity-90 transition-opacity font-mono-code tabular-nums"
+                  >
+                    <span>
+                      {tx(
+                        {
+                          "zh-CN": "待我审批 {count} 项",
+                          "zh-HK": "待我審批 {count} 項",
+                          en: "{count} pending approval(s)",
+                        },
+                        { count: pw.pending_approvals },
+                      )}
+                    </span>
+                    <ArrowUpRight className="h-3 w-3" />
+                  </Link>
+                )}
+
+                {pw.returned_proposals > 0 && (
+                  <Link
+                    href="/work"
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-1 font-medium text-[var(--status-crimson)] hover:opacity-90 transition-opacity font-mono-code tabular-nums"
+                  >
+                    <span>
+                      {tx(
+                        {
+                          "zh-CN": "被退回修改 {count} 项",
+                          "zh-HK": "被退回修改 {count} 項",
+                          en: "{count} returned proposal(s)",
+                        },
+                        { count: pw.returned_proposals },
+                      )}
+                    </span>
+                    <ArrowUpRight className="h-3 w-3" />
+                  </Link>
+                )}
+
+                {pw.open_submitted > 0 && (
+                  <Link
+                    href="/work"
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] px-2.5 py-1 font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--accent-ink)] font-mono-code tabular-nums"
+                  >
+                    <span>
+                      {tx(
+                        {
+                          "zh-CN": "我提交的进行中 {count} 项",
+                          "zh-HK": "我提交的進行中 {count} 項",
+                          en: "{count} open submitted",
+                        },
+                        { count: pw.open_submitted },
+                      )}
+                    </span>
+                  </Link>
+                )}
+
+                {pw.unread_notices > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-sm border border-[var(--accent-border)] bg-[var(--accent-wash)] px-2.5 py-1 font-medium text-[var(--accent-ink)] font-mono-code tabular-nums">
+                    {tx(
+                      {
+                        "zh-CN": "未读通知 {count} 条",
+                        "zh-HK": "未讀通知 {count} 則",
+                        en: "{count} unread notice(s)",
+                      },
+                      { count: pw.unread_notices },
+                    )}
+                  </span>
+                )}
+
+                {pw.meetings_today > 0 && (
+                  <Link
+                    href="/calendar"
+                    className="inline-flex items-center gap-1 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] px-2.5 py-1 font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--accent-ink)] font-mono-code tabular-nums"
+                  >
+                    <Calendar className="h-3 w-3 text-[var(--accent)]" />
+                    <span>
+                      {tx(
+                        {
+                          "zh-CN": "今日会议 {count} 场",
+                          "zh-HK": "今日會議 {count} 場",
+                          en: "{count} meeting(s) today",
+                        },
+                        { count: pw.meetings_today },
+                      )}
+                    </span>
+                  </Link>
+                )}
+
+                {(pw.open_exceptions ?? 0) > 0 && (
+                  <Link
+                    href="/admin/exceptions"
+                    className="inline-flex items-center gap-1 rounded-sm border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-1 font-medium text-[var(--status-crimson)] hover:opacity-90 font-mono-code tabular-nums"
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                    <span>
+                      {tx(
+                        {
+                          "zh-CN": "异常单据 {count} 项",
+                          "zh-HK": "異常單據 {count} 項",
+                          en: "{count} exception(s)",
+                        },
+                        { count: pw.open_exceptions ?? 0 },
+                      )}
+                    </span>
+                  </Link>
+                )}
+              </div>
+
+              {pw.pending_approval_ids.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px]">
+                  <span className="text-[var(--ink-muted)]">
+                    {tx({
+                      "zh-CN": "待审单号：",
+                      "zh-HK": "待審單號：",
+                      en: "Proposals:",
+                    })}
+                  </span>
+                  {pw.pending_approval_ids.slice(0, 4).map((pid) => (
+                    <Link
+                      key={pid}
+                      href={`/proposals/${encodeURIComponent(pid)}`}
+                      className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code tabular-nums font-medium text-[var(--accent-ink)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] transition-colors"
+                    >
+                      {formatShortDigest(pid, 6, 4)}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Suggested Action Pills */}
+          {result.suggested_actions.length > 0 && (
+            <div className="mt-3.5 flex flex-wrap gap-1.5 border-t border-[var(--hairline-subtle)] pt-3">
+              {result.suggested_actions.map((action) =>
+                action.kind === "navigate" ? (
+                  <Link
+                    key={action.id}
+                    href={action.href || "/work"}
+                    data-testid={`suggested-action-${action.id}`}
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors"
+                  >
+                    <span>{action.label}</span>
+                    <ArrowUpRight className="h-3 w-3" />
+                  </Link>
+                ) : (
+                  <button
+                    key={action.id}
+                    type="button"
+                    data-testid={`suggested-action-${action.id}`}
+                    onClick={() => {
+                      if (onSelectSuggestedAction) {
+                        onSelectSuggestedAction(action);
+                      } else if (onSelectClarification && action.command) {
+                        onSelectClarification(action.command);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
+                  >
+                    {action.kind === "email" && (
+                      <Mail className="h-3 w-3 text-[var(--accent)]" />
+                    )}
+                    <span>{action.label}</span>
+                  </button>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+
+        {result.email_draft && (
+          <EmailComposeCard
+            draft={result.email_draft}
+            initialSent={initialEmailSent}
+            onSent={onEmailSent}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (result.kind === "refusal") {
+    const isSevere =
+      result.severity === "critical" || result.severity === "high";
+    const severityLabel =
+      result.severity === "critical"
+        ? tx({ "zh-CN": "严重", "zh-HK": "嚴重", en: "Critical" })
+        : result.severity === "high"
+          ? tx({ "zh-CN": "高风险", "zh-HK": "高風險", en: "High" })
+          : tx({ "zh-CN": "受限", "zh-HK": "受限", en: "Medium" });
+
+    return (
+      <div
+        role="alert"
+        data-testid="turn-card-refusal"
+        className={[
+          "overflow-hidden rounded-card border bg-[var(--bg-surface)] shadow-[var(--shadow-card)]",
+          isSevere
+            ? "border-[var(--status-crimson-border)]"
+            : "border-[var(--status-amber-border)]",
+        ].join(" ")}
+      >
+        <div
+          className={[
+            "flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b",
+            isSevere
+              ? "bg-[var(--status-crimson-wash)] border-[var(--status-crimson-border)]"
+              : "bg-[var(--status-amber-wash)] border-[var(--status-amber-border)]",
+          ].join(" ")}
+        >
+          <div className="flex items-center gap-2">
+            <ShieldAlert
+              className={[
+                "h-4 w-4 shrink-0",
+                isSevere
+                  ? "text-[var(--status-crimson)]"
+                  : "text-[var(--status-amber-ink)]",
+              ].join(" ")}
+              strokeWidth={1.9}
+            />
+            <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
+              {tx({
+                "zh-CN": "策略边界保护通知",
+                "zh-HK": "策略邊界保護通知",
+                en: "Policy Boundary Notice",
+              })}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[10.5px] font-medium text-[var(--ink-secondary)]">
+              {result.category}
+            </span>
+            <span
+              className={[
+                "inline-flex items-center gap-1.5 rounded-xs border px-2 py-0.5 font-mono-code text-[10.5px] font-semibold",
+                isSevere
+                  ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
+                  : "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]",
+              ].join(" ")}
+            >
+              <span
+                aria-hidden="true"
+                className={[
+                  "h-1.5 w-1.5 rounded-full",
+                  isSevere
+                    ? "bg-[var(--status-crimson)]"
+                    : "bg-[var(--status-amber)]",
+                ].join(" ")}
+              />
+              <span>{severityLabel}</span>
+            </span>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <p className="text-[13.5px] leading-relaxed text-[var(--ink-primary)] break-words">
+            {result.message}
+          </p>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-3 text-[11.5px]">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "当前已授权模块：",
+                  "zh-HK": "目前已授權模組：",
+                  en: "Authorized modules:",
+                })}
+              </span>
+              {result.allowed_modules.length > 0 ? (
+                result.allowed_modules.map((mod) => (
+                  <span
+                    key={mod}
+                    className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]"
+                  >
+                    {mod}
+                  </span>
+                ))
+              ) : (
+                <span className="text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN": "仅基础协作对话",
+                    "zh-HK": "僅基礎協作對話",
+                    en: "Basic assistant only",
+                  })}
+                </span>
+              )}
+            </div>
+
+            <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+              {tx({ "zh-CN": "事件编号 ", "zh-HK": "事件編號 ", en: "Incident " })}
+              {result.incident_id}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const { proposal } = result;
   return (
     <Interactive3DCard
@@ -831,9 +1220,9 @@ export function TurnResultCard({
       sheenIntensity="subtle"
       data-testid="turn-card-approval-preview"
       data-proposal-id={proposal.id}
-      className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--accent-border)]"
+      className="overflow-hidden rounded-card border border-[var(--accent-border)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--accent-wash)] px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--accent-border)] bg-[var(--accent-wash)] px-4 py-2.5">
         <div className="flex items-center gap-2">
           <CheckSquare
             className="h-3.5 w-3.5 text-[var(--accent-ink)]"
@@ -851,9 +1240,9 @@ export function TurnResultCard({
       </div>
 
       <div className="p-4">
-        <div className="grid grid-cols-2 gap-3 rounded-tile bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px] sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-2.5 text-[12px] sm:grid-cols-3">
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">
+            <div className="aios-micro-label">
               {tx({
                 "zh-CN": "单据编号",
                 "zh-HK": "單據編號",
@@ -862,13 +1251,13 @@ export function TurnResultCard({
             </div>
             <div
               title={proposal.id}
-              className="mt-0.5 font-mono-code font-medium text-[var(--ink-primary)]"
+              className="mt-0.5 font-mono-code tabular-nums font-medium text-[var(--ink-primary)]"
             >
               {formatShortDigest(proposal.id, 6, 4)}
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">
+            <div className="aios-micro-label">
               {tx({
                 "zh-CN": "发起人 / 仓库",
                 "zh-HK": "發起人 / 倉庫",
@@ -887,14 +1276,14 @@ export function TurnResultCard({
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-[var(--ink-muted)]">
+            <div className="aios-micro-label">
               {tx({
                 "zh-CN": "摘要锁",
                 "zh-HK": "摘要鎖",
                 en: "Digest lock",
               })}
             </div>
-            <div className="mt-0.5 font-mono-code text-[var(--ink-primary)]">
+            <div className="mt-0.5 font-mono-code tabular-nums text-[var(--ink-primary)]">
               {formatShortDigest(proposal.digest)}
             </div>
           </div>

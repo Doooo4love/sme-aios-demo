@@ -150,12 +150,12 @@ export function NoticesPopover({
           align={align}
           sideOffset={8}
           className={[
-            "z-50 w-[332px] overflow-hidden rounded-lg",
+            "z-50 w-[332px] overflow-hidden rounded-card border border-[var(--hairline-strong)]",
             "bg-[var(--bg-surface)] shadow-[var(--shadow-popover)] focus:outline-none",
           ].join(" ")}
         >
           <div className="flex items-center justify-between border-b border-[var(--hairline)] px-4 py-3">
-            <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+            <span className="aios-micro-label">
               {t("notices.title")}
             </span>
             <button

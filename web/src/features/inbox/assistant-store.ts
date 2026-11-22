@@ -5,7 +5,9 @@ import {
 } from "@/lib/api-client";
 import type {
   BriefResponse,
+  EmailSendResponse,
   TurnResult,
+  WorkAlertItem,
   ZoomBookingConfirmResponse,
   ZoomBookingPreviewResponse,
 } from "@/lib/types";
@@ -27,8 +29,15 @@ export interface AssistantTurnEntry {
   result?: TurnResult;
   brief?: BriefResponse;
   zoomBooking?: AssistantZoomBookingState;
+  proactiveAlert?: WorkAlertItem;
+  emailSent?: EmailSendResponse;
   error?: ApiError;
-  sourceKind: "turn" | "tool_call" | "zoom_booking" | "brief_card";
+  sourceKind:
+    | "turn"
+    | "tool_call"
+    | "zoom_booking"
+    | "brief_card"
+    | "proactive_alert";
 }
 
 export interface ExpandedHistoryRecord {
@@ -128,6 +137,45 @@ export function setAssistantExpandedHistory(
     expandedHistory: updater(memoryState.expandedHistory),
   };
   notify();
+}
+
+export function pushProactiveAlert(
+  expectedGeneration: number,
+  alert: WorkAlertItem,
+): boolean {
+  if (expectedGeneration !== getAuthGeneration()) return false;
+  if (memoryState.generation !== expectedGeneration) {
+    memoryState = {
+      generation: expectedGeneration,
+      turns: [],
+      expandedHistory: {},
+    };
+  }
+  const alreadyExists = memoryState.turns.some(
+    (entry) =>
+      entry.sourceKind === "proactive_alert" &&
+      entry.proactiveAlert?.id === alert.id,
+  );
+  if (alreadyExists) return false;
+
+  const newEntry: AssistantTurnEntry = {
+    id: `alert_${alert.id}`,
+    clientId: alert.id,
+    userText: "",
+    createdAt:
+      typeof alert.created_at === "number" && alert.created_at > 0
+        ? alert.created_at
+        : Math.floor(Date.now() / 1000),
+    status: "done",
+    sourceKind: "proactive_alert",
+    proactiveAlert: alert,
+  };
+  memoryState = {
+    ...memoryState,
+    turns: [...memoryState.turns, newEntry],
+  };
+  notify();
+  return true;
 }
 
 export function clearAssistantMemory(expectedGeneration: number): void {

@@ -253,10 +253,10 @@ export function ApprovalsModule({ onCountLoaded }: ApprovalsModuleProps = {}) {
 
   return (
     <div className="space-y-4" data-testid="workbench-approvals-module">
-      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-5 py-4">
           <div>
-            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+            <h2 className="aios-display text-[15px] font-semibold text-[var(--ink-primary)]">
               {tx({
                 "zh-CN": "主管审批队列",
                 "zh-HK": "主管審批佇列",
@@ -354,7 +354,7 @@ export function ApprovalsModule({ onCountLoaded }: ApprovalsModuleProps = {}) {
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-[13px]">
               <thead>
-                <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+                <tr className="aios-micro-label border-b border-[var(--hairline)] bg-[var(--bg-surface-tint)]">
                   <th className="w-11 px-4 py-2.5">
                     <input
                       type="checkbox"
@@ -583,18 +583,18 @@ export function ApprovalsModule({ onCountLoaded }: ApprovalsModuleProps = {}) {
       {/* Per-item Batch Approval Results */}
       {batchResults && (
         <div
-          className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
+          className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
           data-testid="batch-approve-results"
         >
           <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-3.5">
-            <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+            <span className="aios-display text-[13.5px] font-semibold text-[var(--ink-primary)]">
               {tx({
                 "zh-CN": "批量审批逐项结果",
                 "zh-HK": "批次審批逐項結果",
                 en: "Batch Approval Results",
               })}
             </span>
-            <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
+            <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2.5 py-0.5 font-mono-code tabular-nums text-[11.5px] text-[var(--ink-secondary)]">
               {tx(
                 {
                   "zh-CN": "成功 {ok} / 共 {total}",

@@ -250,7 +250,7 @@ export function UnifiedQueuesPanel({
 
   return (
     <div
-      className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
+      className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
       data-testid="workbench-unified-queues"
     >
       {/* Toolbar: Segmented Lane Switcher + Warehouse Filter Pills + Refresh */}
@@ -262,7 +262,7 @@ export function UnifiedQueuesPanel({
             "zh-HK": "任務佇列檢視",
             en: "Task queue lanes",
           })}
-          className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
+          className="inline-flex flex-wrap items-center gap-1 rounded-sm border border-[var(--hairline)] bg-[var(--bg-inset)] p-1"
         >
           {(
             [
@@ -435,7 +435,7 @@ export function UnifiedQueuesPanel({
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-[13px]">
             <thead>
-              <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[11.5px] text-[var(--ink-muted)]">
+              <tr className="aios-micro-label border-b border-[var(--hairline)] bg-[var(--bg-surface-tint)]">
                 <th
                   className="w-10 px-3 py-2.5"
                   aria-label={tx({

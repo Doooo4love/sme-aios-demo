@@ -51,6 +51,7 @@
   --radius-xl: var(--radius-xl);
   --radius-card: var(--radius-card);
   --radius-tile: var(--radius-tile);
+  --radius-modal: var(--radius-modal);
   --radius-pill: var(--radius-pill);
 }
 

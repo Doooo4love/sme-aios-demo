@@ -307,7 +307,7 @@ export function AssuranceCaseInspector({
 
   if (loading && !detail) {
     return (
-      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] py-10 text-center text-[13px] text-[var(--ink-muted)]">
+      <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] py-10 text-center text-[13px] text-[var(--ink-muted)]">
         {tx(
           {
             "zh-CN": "正在按当前岗位权限加载受控预审案件 {ref}…",
@@ -343,7 +343,7 @@ export function AssuranceCaseInspector({
   return (
     <div className="space-y-4" data-testid={`assurance-detail-${detail.id}`}>
       {/* Case Header & Role-Scoped Fields Projection */}
-      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] px-4.5 py-3.5">
           <div
             className="flex flex-wrap items-center gap-2 min-w-0"
@@ -359,7 +359,7 @@ export function AssuranceCaseInspector({
             <span className="font-mono-code text-[14.5px] font-semibold text-[var(--ink-primary)]">
               {detail.id}
             </span>
-            <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)]">
+            <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)]">
               {detail.site}
             </span>
             <span className="text-[12px] text-[var(--ink-muted)]">
@@ -1138,7 +1138,7 @@ export function AssurancePanel({ fixedKinds }: AssurancePanelProps) {
 
   if (grantedKinds.length === 0) {
     return (
-      <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5">
+      <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5">
         <AccessNoticeCard
           variant="ACCESS_RESTRICTED"
           title={tx({
@@ -1159,7 +1159,7 @@ export function AssurancePanel({ fixedKinds }: AssurancePanelProps) {
   return (
     <div className="space-y-4" data-testid="workbench-assurance-module">
       {/* Kind Selector Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] px-5 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] px-5 py-3.5">
         <div
           role="tablist"
           aria-label={tx({
@@ -1167,7 +1167,7 @@ export function AssurancePanel({ fixedKinds }: AssurancePanelProps) {
             "zh-HK": "預審案件類別",
             en: "Assurance case categories",
           })}
-          className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] p-1"
+          className="inline-flex flex-wrap items-center gap-1 rounded-sm border border-[var(--hairline)] bg-[var(--bg-inset)] p-1"
         >
           {grantedKinds.map((kind) => {
             const active = activeKind === kind;
@@ -1180,7 +1180,7 @@ export function AssurancePanel({ fixedKinds }: AssurancePanelProps) {
                 data-testid={`assurance-kind-${kind}`}
                 onClick={() => setActiveKind(kind)}
                 className={[
-                  "h-8 rounded-full px-3.5 text-[12.5px] transition-all duration-[165ms] cursor-pointer",
+                  "h-8 rounded-xs px-3.5 text-[12.5px] transition-all duration-[165ms] cursor-pointer",
                   active
                     ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] font-semibold shadow-[var(--shadow-subtle)]"
                     : "text-[var(--ink-secondary)] font-medium hover:text-[var(--ink-primary)]",
@@ -1244,7 +1244,7 @@ export function AssurancePanel({ fixedKinds }: AssurancePanelProps) {
           </div>
 
           {/* Clearly Tagged Synthetic Preview Card */}
-          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+          <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] px-5 py-3.5">
               <div className="flex items-center gap-2.5">
                 <h3 className="text-[14px] font-semibold text-[var(--ink-primary)]">
@@ -1345,19 +1345,19 @@ export function AssurancePanel({ fixedKinds }: AssurancePanelProps) {
       {!unavailable && !error && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.4fr)]">
           {/* Case List */}
-          <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden self-start">
+          <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden self-start">
             <div className="flex items-center justify-between border-b border-[var(--hairline)] px-4.5 py-3.5">
-              <span className="text-[13.5px] font-semibold text-[var(--ink-primary)]">
+              <span className="aios-display text-[13.5px] font-semibold text-[var(--ink-primary)]">
                 {tx({
                   "zh-CN": "预审案件列表",
                   "zh-HK": "預審案件清單",
                   en: "Assurance Cases",
                 })}
-                <span className="ml-1.5 tabular-nums text-[12px] font-normal text-[var(--ink-muted)]">
+                <span className="ml-1.5 font-mono-code tabular-nums text-[12px] font-normal text-[var(--ink-muted)]">
                   ({cases.length})
                 </span>
               </span>
-              <span className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--ink-secondary)]">
+              <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)]">
                 {kindMeta[activeKind].shortLabel}
               </span>
             </div>
@@ -1450,7 +1450,7 @@ export function AssurancePanel({ fixedKinds }: AssurancePanelProps) {
                 refreshSignal={refreshTick}
               />
             ) : (
-              <div className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-10 text-center text-[13px] text-[var(--ink-muted)]">
+              <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-10 text-center text-[13px] text-[var(--ink-muted)]">
                 {tx({
                   "zh-CN": "请从左侧选择一条案件以按需加载字段投影与预审决策。",
                   "zh-HK": "請從左側選擇一筆案件以按需載入欄位投影與預審決策。",

@@ -50,6 +50,7 @@ class Tasks:
             raise InvalidCollaborationRequest("A reason is required for this decision")
         if body.action in {"assign", "release"} and body.reason is not None:
             raise InvalidCollaborationRequest("A reason is only used for returning or rejecting")
+        alert_payload = None
         with subject_tx(self.workflow, actor, write=True) as run:
             row_lock = " FOR UPDATE" if self.workflow.db.dsn else ""
             row = run("SELECT * FROM aios_proposal WHERE tenant = ? AND id = ?" + row_lock,
@@ -85,18 +86,44 @@ class Tasks:
                            DO UPDATE SET assigned_to = excluded.assigned_to""", (*key, target))
                     if target and target != actor.subject:
                         notify(run, actor.tenant, [target], "proposal_assigned", row["id"])
+                        alert_payload = (
+                            [target],
+                            "proposal_assigned",
+                            f"指派审批任务 · {row['warehouse']}",
+                            f"{actor.subject} 指派审批提案 {row['id'][:8]}",
+                            "info",
+                        )
                     self.workflow._audit(run, actor.tenant, actor.subject, row["id"],
                                          "REVIEW_ASSIGNED" if target else "REVIEW_RELEASED")
-                return
-            decision = "returned" if body.action == "return" else "rejected"
-            run("""INSERT INTO aios_proposal_review (tenant, proposal_id, decided_by, decision, reason)
-                   VALUES (?, ?, ?, ?, ?) ON CONFLICT (tenant, proposal_id)
-                   DO UPDATE SET decided_by = excluded.decided_by, decision = excluded.decision,
-                                 reason = excluded.reason""", (*key, actor.subject, decision, body.reason))
-            run("UPDATE aios_proposal SET state = 'REJECTED' WHERE tenant = ? AND id = ?", key)
-            notify(run, actor.tenant, [row["requester"]], "proposal_" + decision, row["id"])
-            self.workflow._audit(run, actor.tenant, actor.subject, row["id"],
-                                 "REVIEW_RETURNED" if decision == "returned" else "REVIEW_REJECTED")
+            else:
+                decision = "returned" if body.action == "return" else "rejected"
+                run("""INSERT INTO aios_proposal_review (tenant, proposal_id, decided_by, decision, reason)
+                       VALUES (?, ?, ?, ?, ?) ON CONFLICT (tenant, proposal_id)
+                       DO UPDATE SET decided_by = excluded.decided_by, decision = excluded.decision,
+                                     reason = excluded.reason""", (*key, actor.subject, decision, body.reason))
+                run("UPDATE aios_proposal SET state = 'REJECTED' WHERE tenant = ? AND id = ?", key)
+                notify(run, actor.tenant, [row["requester"]], "proposal_" + decision, row["id"])
+                self.workflow._audit(run, actor.tenant, actor.subject, row["id"],
+                                     "REVIEW_RETURNED" if decision == "returned" else "REVIEW_REJECTED")
+                alert_payload = (
+                    [row["requester"]],
+                    "proposal_" + decision,
+                    f"提案已被{'退回修改' if decision == 'returned' else '拒绝'} · {row['warehouse']}",
+                    f"{actor.subject}：{body.reason[:120]}",
+                    "medium" if decision == "returned" else "high",
+                )
+        if alert_payload is not None:
+            targets, kind, title, subtitle, severity = alert_payload
+            self.workflow.publish_work_alert(
+                actor.tenant,
+                targets,
+                kind=kind,
+                title=title,
+                subtitle=subtitle,
+                reference=proposal["id"],
+                href=f"/proposals/{proposal['id']}",
+                severity=severity,
+            )
 
     def submitted(self, actor, limit, after=None, *, window=None, count=False):
         action_field = self.workflow.proposal_action_field("p.plan")

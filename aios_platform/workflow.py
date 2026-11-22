@@ -22,15 +22,60 @@ class Conflict(ValueError):
 class Workflow:
     def __init__(self, database: Database):
         self.db = database
+        self.event_hub = None
+        self.approver_resolver = None
 
     def initialize(self):
         with self.db.transaction() as run:
             sources = ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql",
-                       "assurance_runtime.sql", "module_access.sql", "collaboration.sql")
+                       "assurance_runtime.sql", "module_access.sql", "collaboration.sql", "governance.sql")
             for name in sources:
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():
                         run(statement)
+
+    def publish_work_alert(
+        self,
+        tenant: str,
+        subjects: list[str] | set[str] | tuple[str, ...],
+        *,
+        kind: str,
+        title: str,
+        subtitle: str = "",
+        reference: str | None = None,
+        href: str = "/inbox/assistant",
+        severity: str = "info",
+        include_admins: bool = False,
+    ) -> None:
+        hub = getattr(self, "event_hub", None)
+        if hub is None:
+            return
+        targets = [s for s in dict.fromkeys(subjects) if s]
+        if not targets and not include_admins:
+            return
+        event = {
+            "id": uuid4().hex,
+            "kind": kind,
+            "title": title[:240],
+            "subtitle": subtitle[:500],
+            "reference": (reference or "")[:128],
+            "href": href[:256],
+            "severity": severity,
+            "created_at": time.time(),
+        }
+        try:
+            hub.publish(tenant, targets, event, include_admins=include_admins)
+        except Exception:
+            pass
+
+    def _resolve_approvers(self, tenant: str, plan: Plan, requester: str) -> list[str]:
+        resolver = getattr(self, "approver_resolver", None)
+        if resolver is None:
+            return []
+        try:
+            return list(resolver(tenant, plan, requester))
+        except Exception:
+            return []
 
     @contextmanager
     def tx(self, tenant: str, *, write: bool = True, bounded: bool = False):
@@ -155,6 +200,7 @@ class Workflow:
         self, actor: Actor, warehouse: str, entries: list[tuple[dict, Plan | None]],
     ) -> dict[str, dict]:
         prepared = {}
+        created_proposals: list[tuple[str, Plan]] = []
         # Consistent lock acquisition for concurrent submissions containing the same items.
         ordered = sorted(entries, key=lambda entry: self.structured_intake_id(warehouse, entry[0]))
         with self.tx(actor.tenant, bounded=True) as run:
@@ -166,10 +212,24 @@ class Workflow:
                 if plan is not None:
                     # Slash is reserved for internal keys and excluded by the public key schema.
                     key = ("batch/" + intake_id, document["artifact_sha256"])
-                    proposal_id = self._store_proposal(run, actor, plan, key)
+                    proposal_id, created = self._insert_proposal(run, actor, plan, key)
+                    if created:
+                        created_proposals.append((proposal_id, plan))
                     row = run("""SELECT id AS proposal_id, digest, state FROM aios_proposal
                                  WHERE tenant = ? AND id = ?""", (actor.tenant, proposal_id)).fetchone()
                     prepared[intake_id] = dict(row)
+        for proposal_id, plan in created_proposals:
+            targets = self._resolve_approvers(actor.tenant, plan, actor.subject)
+            self.publish_work_alert(
+                actor.tenant,
+                targets,
+                kind="proposal_submitted",
+                title=f"新销售草稿待审批 · {plan.warehouse}",
+                subtitle=f"{actor.subject} 提交了 {plan.target}",
+                reference=proposal_id,
+                href=f"/proposals/{proposal_id}",
+                severity="info",
+            )
         return prepared
 
     def intake(self, tenant: str, intake_id: str) -> dict:
@@ -184,9 +244,23 @@ class Workflow:
         with self.tx(actor.tenant, bounded=True) as run:
             if actor.tenant != plan.tenant or not allowed(self._lock_scope(run, actor), plan.action, plan.warehouse):
                 raise ModuleScopeChanged
-            return self._store_proposal(run, actor, plan, idempotency)
+            proposal_id, created = self._insert_proposal(run, actor, plan, idempotency)
+        if created:
+            targets = self._resolve_approvers(actor.tenant, plan, actor.subject)
+            action_label = "运单改期" if plan.action == "shipment.reschedule" else "销售草稿"
+            self.publish_work_alert(
+                actor.tenant,
+                targets,
+                kind="proposal_submitted",
+                title=f"新{action_label}待审批 · {plan.warehouse}",
+                subtitle=f"{actor.subject} 提交了 {plan.target}",
+                reference=proposal_id,
+                href=f"/proposals/{proposal_id}",
+                severity="info",
+            )
+        return proposal_id
 
-    def _store_proposal(self, run, actor: Actor, plan: Plan, idempotency: tuple[str, str] | None) -> str:
+    def _insert_proposal(self, run, actor: Actor, plan: Plan, idempotency: tuple[str, str] | None) -> tuple[str, bool]:
         proposal_id = uuid4().hex
         now = time.time()
         if idempotency is not None:
@@ -199,13 +273,17 @@ class Workflow:
                 prior = self._find_request(run, actor, key, fingerprint)
                 if prior is None:
                     raise Conflict("The original request is unavailable")
-                return prior
+                return prior, False
         run("""INSERT INTO aios_proposal
                (tenant, id, warehouse, requester, digest, plan, state, due, expires)
                VALUES (?, ?, ?, ?, ?, ?, 'PROPOSED', ?, ?)""",
             (actor.tenant, proposal_id, plan.warehouse, actor.subject, plan_digest(plan),
              plan.model_dump_json(), now, now + 900))
         self._audit(run, actor.tenant, actor.subject, proposal_id, "PROPOSED")
+        return proposal_id, True
+
+    def _store_proposal(self, run, actor: Actor, plan: Plan, idempotency: tuple[str, str] | None) -> str:
+        proposal_id, _ = self._insert_proposal(run, actor, plan, idempotency)
         return proposal_id
 
     def get(self, tenant: str, proposal_id: str, *, include_events: bool = True) -> dict:
@@ -292,6 +370,7 @@ class Workflow:
         return [dict(row) for row in rows]
 
     def approve(self, actor: Actor, proposal_id: str, digest: str):
+        approved_meta = None
         with self.tx(actor.tenant, bounded=True) as run:
             lock = " FOR UPDATE" if self.db.dsn else ""
             row = run("SELECT * FROM aios_proposal WHERE tenant = ? AND id = ?" + lock,
@@ -320,6 +399,19 @@ class Workflow:
                 raise Conflict("Proposal expired or was already acted on")
             self._audit(run, actor.tenant, actor.subject, proposal_id, "APPROVED_AND_QUEUED")
             notify(run, actor.tenant, [row["requester"]], "proposal_approved", proposal_id)
+            approved_meta = (row["requester"], row["warehouse"], plan.target)
+        if approved_meta is not None:
+            requester, warehouse, target = approved_meta
+            self.publish_work_alert(
+                actor.tenant,
+                [requester],
+                kind="proposal_approved",
+                title=f"提案已批准排队 · {warehouse}",
+                subtitle=f"{actor.subject} 已批准 {target}，正在等待 ERP 回执",
+                reference=proposal_id,
+                href=f"/proposals/{proposal_id}",
+                severity="info",
+            )
 
     def reopen_verification(self, actor: Actor, proposal_id: str):
         if actor.role not in {"manager", "admin"}:
@@ -338,6 +430,8 @@ class Workflow:
 
     def claim(self, tenant: str) -> dict | None:
         now = time.time()
+        held_operator = None
+        claimed_job = None
         with self.tx(tenant) as run:
             lock = " FOR UPDATE SKIP LOCKED" if self.db.dsn else ""
             # Recover leases in small batches. Use verification only after an abandoned send.
@@ -366,14 +460,31 @@ class Workflow:
                 run("UPDATE aios_proposal SET state = 'NEEDS_OPERATOR' WHERE tenant = ? AND id = ?",
                     (tenant, row["id"]))
                 self._audit(run, tenant, "worker", row["id"], "READBACK_LIMIT_REACHED")
-                return None
-            state = "SENDING" if sending else "CHECKING"
-            epoch = row["epoch"] + 1
-            checks = row["checks"] + (not sending)
-            run("UPDATE aios_proposal SET state = ?, due = ?, epoch = ?, checks = ? WHERE tenant = ? AND id = ?",
-                (state, now + 45, epoch, checks, tenant, row["id"]))
-            self._audit(run, tenant, "worker", row["id"], state)
-            return {**dict(row), "state": state, "epoch": epoch, "checks": checks, "due": now + 45}
+                held_operator = (row["id"], row["warehouse"], row["requester"], row["approver"])
+            else:
+                state = "SENDING" if sending else "CHECKING"
+                epoch = row["epoch"] + 1
+                checks = row["checks"] + (not sending)
+                run("UPDATE aios_proposal SET state = ?, due = ?, epoch = ?, checks = ? WHERE tenant = ? AND id = ?",
+                    (state, now + 45, epoch, checks, tenant, row["id"]))
+                self._audit(run, tenant, "worker", row["id"], state)
+                claimed_job = {**dict(row), "state": state, "epoch": epoch, "checks": checks, "due": now + 45}
+        if held_operator is not None:
+            pid, warehouse, requester, approver = held_operator
+            targets = [s for s in (requester, approver) if s]
+            self.publish_work_alert(
+                tenant,
+                targets,
+                kind="proposal_needs_operator",
+                title=f"需要人工核查 · {warehouse}",
+                subtitle=f"提案 {pid[:8]} 回读超限，需人工确认",
+                reference=pid,
+                href=f"/proposals/{pid}",
+                severity="high",
+                include_admins=True,
+            )
+            return None
+        return claimed_job
 
     def dispatch_gate(self, job: dict) -> tuple[str, str] | None:
         """Recheck just before ERP I/O. None means a still-valid lease may send."""
@@ -400,6 +511,7 @@ class Workflow:
 
     def finish(self, job: dict, state: str, *, receipt: Receipt | None = None, delay: int = 0,
                event: str | None = None):
+        changed = False
         with self.tx(job["tenant"]) as run:
             now = time.time()
             result = run(
@@ -409,9 +521,39 @@ class Workflow:
                  job["tenant"], job["id"], job["state"], job["epoch"], now),
             )
             if result.rowcount == 1:
+                changed = True
                 self._audit(run, job["tenant"], "worker", job["id"], event or state)
                 if state in {"VERIFIED", "REJECTED", "NEEDS_OPERATOR"}:
                     notify(run, job["tenant"], [job["requester"]], "proposal_" + state.lower(), job["id"])
+        if changed and state in {"VERIFIED", "REJECTED", "NEEDS_OPERATOR"}:
+            targets = [job["requester"]]
+            include_admins = False
+            severity = "info"
+            if state == "VERIFIED":
+                title = f"提案已核验落账 · {job['warehouse']}"
+                subtitle = f"提案 {job['id'][:8]} 已取得 ERP 回执"
+            elif state == "REJECTED":
+                title = f"提案执行未通过 · {job['warehouse']}"
+                subtitle = f"提案 {job['id'][:8]} 状态：{event or state}"
+                severity = "medium"
+            else:
+                title = f"需要人工核查 · {job['warehouse']}"
+                subtitle = f"提案 {job['id'][:8]} 状态：{event or state}"
+                severity = "high"
+                include_admins = True
+                if job.get("approver"):
+                    targets.append(job["approver"])
+            self.publish_work_alert(
+                job["tenant"],
+                targets,
+                kind="proposal_" + state.lower(),
+                title=title,
+                subtitle=subtitle,
+                reference=job["id"],
+                href=f"/proposals/{job['id']}",
+                severity=severity,
+                include_admins=include_admins,
+            )
 
 
 def tick(workflow: Workflow, erp: ERP, tenant: str) -> bool:

@@ -401,7 +401,7 @@ export function localizeNlMeetingWarning(
 }
 
 export const CALENDAR_CONNECTOR_LABELS_I18N: Readonly<
-  Record<ExternalCalendarTarget | "internal" | "zoom", TrilingualText>
+  Record<ExternalCalendarTarget | "internal" | "zoom" | "email", TrilingualText>
 > = {
   internal: {
     "zh-CN": "AIOS 站内日历",
@@ -412,6 +412,11 @@ export const CALENDAR_CONNECTOR_LABELS_I18N: Readonly<
     "zh-CN": "Zoom 视频会议",
     "zh-HK": "Zoom 視像會議",
     en: "Zoom Meetings",
+  },
+  email: {
+    "zh-CN": "企业邮件 MCP / SMTP",
+    "zh-HK": "企業電郵 MCP / SMTP",
+    en: "Enterprise Email MCP / SMTP",
   },
   google: {
     "zh-CN": "Google 日历",

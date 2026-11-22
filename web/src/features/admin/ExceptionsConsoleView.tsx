@@ -4,12 +4,15 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  ArrowRight,
   ArrowUpRight,
   CheckCircle2,
   Eye,
   Play,
   RefreshCw,
   RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 import { isApiError, isStaleAuthError, type ApiError } from "@/lib/api-client";
 import { sortWarehouses } from "@/lib/format";
@@ -29,10 +32,15 @@ import {
 import { ActionConfirmDialog } from "@/features/admin/ActionConfirmDialog";
 import {
   fetchOperationsExceptions,
+  fetchSecurityEventsSummary,
   reconcileProposal,
   runDemoWorkerTick,
 } from "@/features/admin/api";
-import type { DueCursor, ExceptionItem } from "@/lib/types";
+import type {
+  DueCursor,
+  ExceptionItem,
+  SecurityEventsSummary,
+} from "@/lib/types";
 
 const PAGE_LIMIT = 50;
 
@@ -118,6 +126,8 @@ export function ExceptionsConsoleView() {
   // Optional demo worker tick shortcut
   const [tickBusy, setTickBusy] = useState(false);
   const [tickNotice, setTickNotice] = useState<TrilingualText | null>(null);
+  const [securitySummary, setSecuritySummary] =
+    useState<SecurityEventsSummary | null>(null);
 
   const canRunDemoTick = Boolean(
     demoConfig?.enabled &&
@@ -137,6 +147,14 @@ export function ExceptionsConsoleView() {
         );
         setItems(page.items);
         setNextCursor(page.next);
+
+        fetchSecurityEventsSummary(signal)
+          .then((sec) => {
+            if (!signal?.aborted) setSecuritySummary(sec);
+          })
+          .catch(() => {
+            // Non-blocking if security summary endpoint unavailable
+          });
       } catch (err) {
         if (isStaleAuthError(err)) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -163,6 +181,7 @@ export function ExceptionsConsoleView() {
     setActionNotice(null);
     setActionError(null);
     setTickNotice(null);
+    setSecuritySummary(null);
 
     if (!canAccessAdminOps) return;
 
@@ -333,11 +352,11 @@ export function ExceptionsConsoleView() {
       className="mx-auto max-w-[1160px] space-y-5 px-4 py-6 sm:px-6 lg:py-7 pb-16"
       data-testid="admin-exceptions-page"
     >
-      {/* Back Pill */}
+      {/* Back Link */}
       <div>
         <Link
           href="/admin"
-          className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] hover:text-[var(--accent)] hover:shadow-[var(--shadow-card)] transition-all duration-[150ms]"
+          className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)] hover:border-[var(--hairline-strong)] hover:text-[var(--accent)] transition-all duration-[150ms]"
         >
           <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.85} />
           <span>
@@ -351,11 +370,11 @@ export function ExceptionsConsoleView() {
       </div>
 
       {/* Unified Porcelain / Obsidian Page-Header Card */}
-      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+      <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
+              <h1 className="aios-display text-[20px] font-semibold text-[var(--ink-primary)] leading-tight">
                 {tx({
                   "zh-CN": "异常单据队列",
                   "zh-HK": "異常單據佇列",
@@ -438,6 +457,80 @@ export function ExceptionsConsoleView() {
         </div>
       </section>
 
+      {/* Compact Live Open Security Alerts Summary Banner */}
+      {securitySummary && (
+        <div
+          data-testid="exceptions-security-banner"
+          className={[
+            "flex flex-wrap items-center justify-between gap-3 rounded-tile border px-4 py-3 text-[12.5px]",
+            securitySummary.total_open > 0
+              ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--ink-primary)]"
+              : "border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]",
+          ].join(" ")}
+        >
+          <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+            {securitySummary.total_open > 0 ? (
+              <ShieldAlert
+                className="h-4 w-4 shrink-0 text-[var(--status-crimson)]"
+                strokeWidth={1.9}
+              />
+            ) : (
+              <ShieldCheck
+                className="h-4 w-4 shrink-0 text-[var(--status-emerald)]"
+                strokeWidth={1.9}
+              />
+            )}
+            <span className="font-semibold text-[var(--ink-primary)] tabular-nums">
+              {securitySummary.total_open > 0
+                ? tx(
+                    {
+                      "zh-CN": "当前共有 {count} 条待处置安全异常告警",
+                      "zh-HK": "目前共有 {count} 則待處置安全異常告警",
+                      en: "{count} Open Security Alert(s) Requiring Review",
+                    },
+                    { count: securitySummary.total_open },
+                  )
+                : tx({
+                    "zh-CN": "当前无未处置安全异常告警",
+                    "zh-HK": "目前無未處置安全異常告警",
+                    en: "No open security alerts",
+                  })}
+            </span>
+            {securitySummary.total_open > 0 && (
+              <span className="font-mono-code text-[11.5px] text-[var(--ink-secondary)] tabular-nums">
+                {tx(
+                  {
+                    "zh-CN": "严重 {crit} · 高风险 {high} · 中风险 {med}",
+                    "zh-HK": "嚴重 {crit} · 高風險 {high} · 中風險 {med}",
+                    en: "Critical {crit} · High {high} · Medium {med}",
+                  },
+                  {
+                    crit: securitySummary.by_severity.critical,
+                    high: securitySummary.by_severity.high,
+                    med: securitySummary.by_severity.medium,
+                  },
+                )}
+              </span>
+            )}
+          </div>
+
+          <Link
+            href="/admin?tab=security"
+            data-testid="exceptions-security-link"
+            className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface)] px-3.5 text-[12px] font-medium text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-wash)] transition-colors shrink-0"
+          >
+            <span>
+              {tx({
+                "zh-CN": "前往安全审计监控",
+                "zh-HK": "前往安全稽核監控",
+                en: "Open Security Monitor",
+              })}
+            </span>
+            <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.9} />
+          </Link>
+        </div>
+      )}
+
       {/* Action Feedback Banners */}
       {tickNotice && (
         <div
@@ -491,7 +584,7 @@ export function ExceptionsConsoleView() {
 
       {/* Exceptions Sheet */}
       {!loadError && (
-        <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           {loading && items.length === 0 ? (
             <div className="px-6 py-14 text-center text-[13px] text-[var(--ink-muted)]">
               {tx({
@@ -531,7 +624,7 @@ export function ExceptionsConsoleView() {
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full border-collapse text-left">
                   <thead>
-                    <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[12px] font-medium text-[var(--ink-muted)]">
+                    <tr className="aios-micro-label border-b border-[var(--hairline)] bg-[var(--bg-surface-tint)]">
                       <th className="px-5 py-3">
                         {tx({
                           "zh-CN": "提案编号",
@@ -607,14 +700,14 @@ export function ExceptionsConsoleView() {
                             </Link>
                           </td>
                           <td className="px-3.5 py-3.5">
-                            <span className="inline-flex rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 font-mono-code text-[11.5px] font-medium text-[var(--ink-secondary)]">
+                            <span className="inline-flex rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11.5px] font-medium text-[var(--ink-secondary)]">
                               {item.warehouse}
                             </span>
                           </td>
                           <td className="px-3.5 py-3.5">
                             <StatusBadge status={item.state} compact />
                           </td>
-                          <td className="px-3.5 py-3.5 text-right text-[13px] font-medium text-[var(--ink-primary)] tabular-nums">
+                          <td className="px-3.5 py-3.5 text-right font-mono-code text-[13px] font-medium text-[var(--ink-primary)] tabular-nums">
                             {item.checks}/3
                           </td>
                           <td className="px-3.5 py-3.5">

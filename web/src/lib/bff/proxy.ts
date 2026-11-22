@@ -64,6 +64,17 @@ const ALLOWED_V1_PATTERNS: readonly RegExp[] = [
   /^\/v1\/operations\/exceptions$/,
   /^\/v1\/operations\/write-control$/,
   /^\/v1\/operations\/subjects\/[^/]+\/suspension$/,
+  /^\/v1\/operations\/prompt-policies$/,
+  /^\/v1\/operations\/prompt-policies\/simulate$/,
+  /^\/v1\/operations\/prompt-policies\/[^/]+$/,
+  /^\/v1\/operations\/prompt-policies\/[^/]+\/reset$/,
+  /^\/v1\/operations\/security-events$/,
+  /^\/v1\/operations\/security-events\/summary$/,
+  /^\/v1\/operations\/security-events\/[^/]+$/,
+  /^\/v1\/workbench\/events\/stream$/,
+  /^\/v1\/workbench\/work-pulse$/,
+  /^\/v1\/workbench\/skills$/,
+  /^\/v1\/workbench\/email-outbox$/,
   /^\/v1\/demo\/worker-tick$/,
 ];
 
@@ -183,6 +194,9 @@ export async function proxyToAios(
 
     const accept = req.headers.get("accept");
     if (accept) upstreamHeaders.set("Accept", accept);
+
+    const lastEventId = req.headers.get("last-event-id");
+    if (lastEventId) upstreamHeaders.set("Last-Event-ID", lastEventId);
     // CRITICAL: NEVER forward browser Authorization header to FastAPI /v1/* (breaks GET/DELETE /v1/session and cookie-only boundary)
   }
 
@@ -240,6 +254,7 @@ export async function proxyToAios(
       body: bodyBuffer,
       redirect: "manual",
       cache: "no-store",
+      signal: req.signal,
     });
   } catch {
     return new Response(
@@ -287,6 +302,17 @@ export async function proxyToAios(
     upstreamRes.headers.get("content-type") || ""
   ).toLowerCase();
 
+  // True zero-buffer SSE streaming passthrough BEFORE JSON buffering
+  if (upstreamRes.ok && upstreamContentType.includes("text/event-stream")) {
+    outgoingHeaders.set("Content-Type", "text/event-stream; charset=utf-8");
+    outgoingHeaders.set("Cache-Control", "no-cache, no-transform");
+    outgoingHeaders.set("X-Accel-Buffering", "no");
+    return new Response(upstreamRes.body, {
+      status: upstreamRes.status,
+      headers: outgoingHeaders,
+    });
+  }
+
   // Binary image / octet-stream passthrough (avatars, etc.)
   if (
     upstreamRes.ok &&
@@ -323,9 +349,55 @@ export async function proxyToAios(
     });
   }
 
-  const sanitizedOk = sanitizeSuccessPayload(normalizedPath, parsed);
+  const sanitizedOk =
+    normalizedPath === "/v1/workbench/skills"
+      ? sanitizeSlashSkillsResponse(parsed)
+      : sanitizeSuccessPayload(normalizedPath, parsed);
   return new Response(JSON.stringify(sanitizedOk), {
     status: upstreamRes.status,
     headers: outgoingHeaders,
   });
+}
+
+function sanitizeSlashSkillsResponse(payload: unknown): { items: unknown[] } {
+  const rawItems = Array.isArray(payload)
+    ? payload
+    : typeof payload === "object" &&
+        payload !== null &&
+        Array.isArray((payload as { items?: unknown }).items)
+      ? ((payload as { items: unknown[] }).items)
+      : [];
+
+  const items = rawItems
+    .filter(
+      (entry): entry is Record<string, unknown> =>
+        typeof entry === "object" && entry !== null && !Array.isArray(entry),
+    )
+    .map((entry) => {
+      const command = typeof entry.command === "string" ? entry.command : "";
+      return {
+        command,
+        title: typeof entry.title === "string" ? entry.title : command,
+        title_en: typeof entry.title_en === "string" ? entry.title_en : command,
+        description:
+          typeof entry.description === "string" ? entry.description : "",
+        description_en:
+          typeof entry.description_en === "string" ? entry.description_en : "",
+        category:
+          typeof entry.category === "string" ? entry.category : "workflow",
+        usage: typeof entry.usage === "string" ? entry.usage : command,
+        requires_args: Boolean(entry.requires_args),
+        allowed: Boolean(entry.allowed),
+        required_module:
+          typeof entry.required_module === "string"
+            ? entry.required_module
+            : null,
+        keywords: Array.isArray(entry.keywords)
+          ? entry.keywords.filter((k): k is string => typeof k === "string")
+          : [],
+      };
+    })
+    .filter((entry) => entry.command.length > 0);
+
+  return { items };
 }

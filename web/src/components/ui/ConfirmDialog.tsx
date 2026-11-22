@@ -52,16 +52,16 @@ export function ConfirmDialog({
         <AlertDialog.Content
           className={[
             "aios-modal-content fixed left-1/2 top-1/2 z-50 w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2",
-            "bg-[var(--bg-surface)] rounded-lg shadow-[var(--shadow-modal)] p-6 focus:outline-none",
+            "border border-[var(--hairline-strong)] bg-[var(--bg-surface)] rounded-modal shadow-[var(--shadow-modal)] p-6 focus:outline-none",
           ].join(" ")}
         >
           <div className="flex items-start gap-3.5">
             <div
               className={[
-                "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border",
                 destructive
-                  ? "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
-                  : "bg-[var(--accent-wash)] text-[var(--accent-ink)]",
+                  ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
+                  : "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]",
               ].join(" ")}
             >
               {destructive ? (
@@ -71,7 +71,7 @@ export function ConfirmDialog({
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <AlertDialog.Title className="text-[15.5px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)] leading-snug">
+              <AlertDialog.Title className="aios-display text-[15.5px] font-semibold text-[var(--ink-primary)] leading-snug">
                 {title}
               </AlertDialog.Title>
               <AlertDialog.Description className="mt-1.5 text-[13.5px] text-[var(--ink-secondary)] leading-relaxed">

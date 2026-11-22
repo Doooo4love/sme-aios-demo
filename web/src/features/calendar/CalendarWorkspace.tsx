@@ -337,10 +337,10 @@ export function CalendarWorkspace() {
     >
       <div className="mx-auto max-w-[1080px] space-y-6">
         {/* Page Header Card & Natural-Language Zoom Meeting Bar */}
-        <section className="rounded-card bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-card)] space-y-4">
+        <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-card)] space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+              <h1 className="aios-display text-[20px] font-semibold text-[var(--ink-primary)]">
                 {tx({
                   "zh-CN": "日历与会议协作中心",
                   "zh-HK": "日曆與會議協作中心",
@@ -469,7 +469,7 @@ export function CalendarWorkspace() {
 
         {/* Calendar Controls & Chronological Schedule */}
         <section className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-[var(--bg-surface)] px-4 py-3 shadow-[var(--shadow-card)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] px-4 py-3 shadow-[var(--shadow-card)]">
             <div className="flex flex-wrap items-center gap-2.5">
               <div
                 role="tablist"
@@ -478,7 +478,7 @@ export function CalendarWorkspace() {
                   "zh-HK": "日曆檢視切換",
                   en: "Calendar view switcher",
                 })}
-                className="inline-flex rounded-full bg-[var(--bg-surface-subtle)] p-0.5"
+                className="inline-flex rounded-sm border border-[var(--hairline)] bg-[var(--bg-inset)] p-0.5"
               >
                 {(
                   [
@@ -508,7 +508,7 @@ export function CalendarWorkspace() {
                     data-testid={`calendar-view-${tab.id}`}
                     onClick={() => setViewMode(tab.id)}
                     className={[
-                      "rounded-full px-3.5 py-1 text-[12.5px] font-medium transition-all duration-[140ms] cursor-pointer",
+                      "rounded-xs px-3.5 py-1 text-[12.5px] font-medium transition-all duration-[140ms] cursor-pointer",
                       viewMode === tab.id
                         ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
                         : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",
@@ -560,7 +560,7 @@ export function CalendarWorkspace() {
 
               <span
                 data-testid="calendar-range-label"
-                className="text-[13.5px] font-semibold text-[var(--ink-primary)] tabular-nums ml-1"
+                className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums ml-1"
               >
                 {range.label}
               </span>
@@ -573,7 +573,7 @@ export function CalendarWorkspace() {
                   href={getCalendarIcsUrl()}
                   download
                   data-testid="calendar-ics-download-btn"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3 text-[12px] font-medium text-[var(--ink-secondary)] hover:border-[var(--hairline-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors"
                 >
                   <Download
                     className="h-3.5 w-3.5 text-[var(--accent)]"
@@ -615,7 +615,7 @@ export function CalendarWorkspace() {
           )}
 
           {loading && events.length === 0 ? (
-            <div className="rounded-card bg-[var(--bg-surface)] py-16 text-center text-[13px] text-[var(--ink-muted)] shadow-[var(--shadow-card)]">
+            <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] py-16 text-center text-[13px] text-[var(--ink-muted)] shadow-[var(--shadow-card)]">
               {tx({
                 "zh-CN": "正在加载站内日程…",
                 "zh-HK": "正在載入站內行程…",
@@ -625,7 +625,7 @@ export function CalendarWorkspace() {
           ) : !error && groupedByDay.length === 0 ? (
             <div
               data-testid="calendar-empty-state"
-              className="rounded-card bg-[var(--bg-surface)] px-6 py-14 text-center shadow-[var(--shadow-card)]"
+              className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] px-6 py-14 text-center shadow-[var(--shadow-card)]"
             >
               <span className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-full bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)]">
                 <CalendarIcon className="h-5 w-5" strokeWidth={1.7} />
@@ -666,13 +666,13 @@ export function CalendarWorkspace() {
               {groupedByDay.map(([dayKey, group]) => (
                 <section
                   key={dayKey}
-                  className="overflow-hidden rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
+                  className="overflow-hidden rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
                 >
-                  <header className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-5 py-2.5 border-b border-[var(--hairline-subtle)]">
-                    <h3 className="text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums">
+                  <header className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-5 py-2.5 border-b border-[var(--hairline)]">
+                    <h3 className="font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums">
                       {group.label}
                     </h3>
-                    <span className="rounded-full bg-[var(--bg-surface)] px-2.5 py-0.5 text-[11px] text-[var(--ink-muted)] shadow-[var(--shadow-subtle)] tabular-nums">
+                    <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
                       {tp(
                         {
                           "zh-CN": "{count} 项日程",

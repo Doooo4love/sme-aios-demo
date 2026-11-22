@@ -122,7 +122,21 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
     void assistantMemoryTick;
     const { turns } = getAssistantMemory(authGeneration);
     const latest = turns[turns.length - 1];
-    return latest?.userText?.trim() || null;
+    if (!latest) return null;
+    if (latest.sourceKind === "proactive_alert" && latest.proactiveAlert) {
+      return (
+        latest.proactiveAlert.title?.trim() ||
+        latest.proactiveAlert.subtitle?.trim() ||
+        null
+      );
+    }
+    if (latest.userText?.trim()) {
+      return latest.userText.trim();
+    }
+    if (latest.result?.kind === "message" && latest.result.reply?.trim()) {
+      return latest.result.reply.trim();
+    }
+    return null;
   }, [authGeneration, assistantMemoryTick]);
 
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
@@ -683,10 +697,10 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
             hoverLiftPx={-1}
             sheenIntensity="subtle"
             className={[
-              "rounded-tile transition-all duration-[160ms]",
+              "rounded-tile border transition-all duration-[160ms]",
               isAgentActive
-                ? "bg-[var(--bg-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--accent-border)]"
-                : "bg-[var(--bg-surface)]/70 shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)]",
+                ? "border-[var(--accent-border)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
+                : "border-[var(--hairline)] bg-[var(--bg-surface)]/80 shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)]",
             ].join(" ")}
           >
             <Link
@@ -780,8 +794,8 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
             <div className="space-y-3" data-testid="inbox-search-results">
               {/* Live Company Colleagues Search Results */}
               <div>
-                <div className="flex items-center justify-between px-2 pb-1 text-[11px] font-medium text-[var(--ink-muted)]">
-                  <span>
+                <div className="flex items-center justify-between px-2 pb-1">
+                  <span className="aios-micro-label">
                     {tx({
                       "zh-CN": "同公司同事",
                       "zh-HK": "公司同事",
@@ -857,7 +871,7 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
 
               {/* Matching Existing Rooms */}
               <div>
-                <div className="px-2 pb-1 text-[11px] font-medium text-[var(--ink-muted)]">
+                <div className="aios-micro-label px-2 pb-1 tabular-nums">
                   {tx(
                     {
                       "zh-CN": "会话与群聊 ({count})",
@@ -921,7 +935,7 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
           ) : (
             <div>
               <div className="flex items-center justify-between px-2 pb-1.5">
-                <span className="text-[11.5px] font-medium text-[var(--ink-muted)]">
+                <span className="aios-micro-label">
                   {tx({
                     "zh-CN": "同事与群聊",
                     "zh-HK": "同事與群組",
@@ -1042,7 +1056,7 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                               {label}
                             </span>
                             {timeLabel && (
-                              <span className="shrink-0 text-[11px] text-[var(--ink-muted)] tabular-nums">
+                              <span className="shrink-0 font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
                                 {timeLabel}
                               </span>
                             )}
@@ -1184,7 +1198,7 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                 side="top"
                 align="start"
                 sideOffset={10}
-                className="z-50 w-[268px] rounded-card bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
+                className="z-50 w-[268px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
               >
                 <div className="border-b border-[var(--hairline)] px-3 py-2.5">
                   <div className="truncate text-[13.5px] font-semibold text-[var(--ink-primary)]">

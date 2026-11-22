@@ -1,13 +1,27 @@
 """Employee workbench. Parsed language and typed calls share one enforcement path."""
+import asyncio
+import json
 import re
+import time
 from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import Field
+from starlette.concurrency import run_in_threadpool
 
 from aios_demo.storage import digest_of
 
 from .agent_history import AgentHistory, TurnInProgress
+from .assistant_agent import (
+    AssistantAgent,
+    AssistantMessage,
+    ConversationTurn,
+    PolicyRefusal,
+    WorkAlertItem,
+    WorkPulseResponse,
+    skills_for_actor,
+)
 from .contracts import Actor, Clarify, Identifier, Plan, Strict
 from .erp import ERPRejected, ERP_TRANSPORT_ERRORS
 from .providers import approval_sites, can_approve, order_read_sites
@@ -23,8 +37,10 @@ class WorkbenchPlanner(Protocol):
 
 
 class Turn(Strict):
-    text: Annotated[str, Field(min_length=1, max_length=500)]
+    text: Annotated[str, Field(min_length=1, max_length=2000)]
     client_id: Identifier | None = None
+    locale: Literal["zh-CN", "zh-HK", "en"] = "zh-CN"
+    conversation_context: Annotated[list[ConversationTurn], Field(max_length=6)] = Field(default_factory=list)
 
 
 class WorkResult(Strict):
@@ -59,13 +75,17 @@ class PlannedTurn(Strict):
     intent: ToolCall | ApprovalIntent | Clarification
 
 
-TurnResult = Annotated[WorkResult | WorkProposal | ApprovalPreview | Clarification, Field(discriminator="kind")]
+TurnResult = Annotated[
+    WorkResult | WorkProposal | ApprovalPreview | Clarification | AssistantMessage | PolicyRefusal,
+    Field(discriminator="kind"),
+]
 APPROVAL_TEXT = re.compile(r"(?:approve proposal |(?:批准|审批)提案\s*)([A-Za-z0-9_-]{1,64})", re.IGNORECASE)
 
 
 def workbench_routes(runtime: Services, authenticate, refresh_actor, require_policy, visible_proposal, prepare_order,
                      *, data: WorkData | None, chat_available: bool, planner: WorkbenchPlanner | None,
-                     planner_limit: int) -> APIRouter:
+                     planner_limit: int, assistant: AssistantAgent | None = None,
+                     event_hub=None) -> APIRouter:
     router = APIRouter(prefix="/v1/workbench", tags=["Employee workbench"])
     workflow = runtime.workflow
     history = AgentHistory(workflow)
@@ -154,8 +174,91 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
             action: sorted(approval_sites(actor, action)) for action in ("sales_order.create_draft", "shipment.reschedule")
         }, "chat_available": chat_available and "chat.use" in actor.grants}
         if not getattr(request.state, "browser_session", False):
-            result["planner"] = "local_rules" if planner is None else "configured"
+            has_llm = planner is not None or (assistant is not None and assistant.llm_enabled)
+            result["planner"] = "configured" if has_llm else "local_rules"
         return result
+
+    @router.get("/skills")
+    def skills(actor: Actor = Depends(authenticate)):
+        current = refresh_actor(actor)
+        return {"items": [item.model_dump(mode="json") for item in skills_for_actor(current)]}
+
+    @router.get("/work-pulse", response_model=WorkPulseResponse)
+    def work_pulse(actor: Actor = Depends(authenticate)):
+        current = refresh_actor(actor)
+        if assistant is not None:
+            return assistant.work_pulse(current)
+        pending = workflow.pending_approvals(current, 50, None)
+        alerts: list[WorkAlertItem] = []
+        if event_hub is not None:
+            for item in event_hub.recent(current.tenant, current.subject, is_admin=(current.role == "admin"), limit=20):
+                alerts.append(
+                    WorkAlertItem(
+                        id=str(item.get("id", "")),
+                        kind=str(item.get("kind", "work_alert")),
+                        title=str(item.get("title", "")),
+                        subtitle=str(item.get("subtitle", "")),
+                        reference=item.get("reference") or None,
+                        href=str(item.get("href", "/inbox/assistant")),
+                        severity=item.get("severity", "info"),
+                        created_at=float(item.get("created_at", time.time())),
+                    )
+                )
+        return WorkPulseResponse(
+            pending_approvals=len(pending),
+            returned_proposals=0,
+            open_submitted=0,
+            meetings_today=0,
+            unread_notices=0,
+            open_security_alerts=None,
+            latest_alerts=alerts,
+            as_of=time.time(),
+        )
+
+    @router.get("/events/stream")
+    async def events_stream(request: Request, actor: Actor = Depends(authenticate)):
+        current = await run_in_threadpool(refresh_actor, actor)
+        if event_hub is None:
+            async def empty_stream():
+                yield ": unavailable\n\n"
+            return StreamingResponse(empty_stream(), media_type="text/event-stream")
+        event_hub.bind_loop(asyncio.get_running_loop())
+        sub = event_hub.subscribe(current.tenant, current.subject, is_admin=(current.role == "admin"))
+
+        async def generator():
+            try:
+                yield ": connected\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        payload = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                        event_name = (
+                            "security_alert"
+                            if str(payload.get("kind", "")).startswith("security_")
+                            else "work_alert"
+                        )
+                        event_id = str(payload.get("id", ""))
+                        if event_id:
+                            yield f"id: {event_id}\n"
+                        yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        if await request.is_disconnected():
+                            break
+                        yield f"event: heartbeat\ndata: {json.dumps({'ts': time.time()})}\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                sub.close()
+
+        return StreamingResponse(
+            generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @router.get("/approvals")
     def approvals(actor: Actor = Depends(authenticate), limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -180,34 +283,56 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
         return (proposal["state"] == "PROPOSED" and review.get("assigned_to") in {None, actor.subject}
                 and can_approve(actor, proposal["requester"], Plan.model_validate(proposal["plan"])))
 
+    def preview_approval_for_actor(current_actor: Actor, proposal_id: str) -> ApprovalPreview:
+        proposal = visible_proposal(current_actor, proposal_id, include_events=False)
+        if not may_preview_approval(current_actor, proposal):
+            workflow.audit(current_actor, "approval.preview", "WORKBENCH_DENIED")
+            raise HTTPException(403, {"code": "ACTION_NOT_ALLOWED", "next_step": "view_proposal"})
+        return ApprovalPreview(proposal=proposal)
+
     def perform_turn(body: Turn, actor: Actor, key: str | None):
         match = APPROVAL_TEXT.fullmatch(body.text.strip())
         request = ApprovalIntent(kind="approval_intent", proposal_id=match[1]) if match else local_turn(body.text)
         if isinstance(request, Clarify):
-            if planner is None:
+            if planner is not None:
+                offered = tuple(name for name in offered_tools(actor) if source(name) != "unconfigured")
+                if any(approval_sites(actor, action) for action in ("shipment.reschedule", "sales_order.create_draft")):
+                    offered += ("approval.preview",)
+                if not offered:
+                    return Clarification(question="No workbench tools are available for this account.")
+                if not workflow.take_planner_budget(actor.tenant, planner_limit):
+                    raise HTTPException(429, "Tenant planner budget exhausted", headers={"Retry-After": "60"})
+                try:
+                    proposed = planner.plan(body.text, offered)
+                    request = PlannedTurn.model_validate({"intent": proposed}).intent
+                except (*ERP_TRANSPORT_ERRORS, TypeError, AttributeError) as error:
+                    raise HTTPException(503, "Workbench planner could not return a valid intent") from error
+                actor = refresh_actor(actor)
+                if isinstance(request, Clarification):
+                    return Clarification(question="Choose an available operation and include the reference or warehouse.")
+            elif assistant is not None:
+                offered = tuple(name for name in offered_tools(actor) if source(name) != "unconfigured")
+                try:
+                    return assistant.handle_turn(
+                        actor,
+                        text=body.text,
+                        locale=body.locale,
+                        conversation_context=body.conversation_context,
+                        offered_tools=offered,
+                        key=key,
+                        execute_call=execute,
+                        preview_approval=preview_approval_for_actor,
+                        planner_limit=planner_limit,
+                    )
+                except HTTPException as error:
+                    if error.status_code == 404:
+                        raise HTTPException(404, {"code": "RECORD_UNAVAILABLE"}) from error
+                    raise
+            else:
                 return Clarification(question=request.question)
-            offered = tuple(name for name in offered_tools(actor) if source(name) != "unconfigured")
-            if any(approval_sites(actor, action) for action in ("shipment.reschedule", "sales_order.create_draft")):
-                offered += ("approval.preview",)
-            if not offered:
-                return Clarification(question="No workbench tools are available for this account.")
-            if not workflow.take_planner_budget(actor.tenant, planner_limit):
-                raise HTTPException(429, "Tenant planner budget exhausted", headers={"Retry-After": "60"})
-            try:
-                proposed = planner.plan(body.text, offered)
-                request = PlannedTurn.model_validate({"intent": proposed}).intent
-            except (*ERP_TRANSPORT_ERRORS, TypeError, AttributeError) as error:
-                raise HTTPException(503, "Workbench planner could not return a valid intent") from error
-            actor = refresh_actor(actor)
-            if isinstance(request, Clarification):
-                return Clarification(question="Choose an available operation and include the reference or warehouse.")
         try:
             if isinstance(request, ApprovalIntent):
-                proposal = visible_proposal(actor, request.proposal_id, include_events=False)
-                if not may_preview_approval(actor, proposal):
-                    workflow.audit(actor, "approval.preview", "WORKBENCH_DENIED")
-                    raise HTTPException(403, {"code": "ACTION_NOT_ALLOWED", "next_step": "view_proposal"})
-                return ApprovalPreview(proposal=proposal)
+                return preview_approval_for_actor(actor, request.proposal_id)
             return execute(actor, request, key)
         except HTTPException as error:
             if error.status_code == 404:

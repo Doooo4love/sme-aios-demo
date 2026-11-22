@@ -172,7 +172,7 @@ export function ExecutionTopologyRibbon({
   return (
     <div
       className={[
-        "rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5",
+        "rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5",
         className,
       ].join(" ")}
     >

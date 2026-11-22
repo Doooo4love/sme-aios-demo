@@ -125,7 +125,20 @@ class Calendar:
             for subject in participants:
                 run("INSERT INTO aios_calendar_member VALUES (?, ?, ?)", (actor.tenant, identifier, subject))
             notify(run, actor.tenant, body.attendees - {actor.subject}, "meeting_created", identifier)
-            return self._view(self._member(run, actor, identifier))
+            created_view = self._view(self._member(run, actor, identifier))
+        invited = sorted(body.attendees - {actor.subject})
+        if invited:
+            self.workflow.publish_work_alert(
+                actor.tenant,
+                invited,
+                kind="meeting_created",
+                title=f"新会议邀请：{created_view['title']}",
+                subtitle=f"发起人：{actor.subject}",
+                reference=identifier,
+                href="/calendar",
+                severity="info",
+            )
+        return created_view
 
     def _prior(self, run, actor, identifier, fingerprint):
         stored = run("SELECT fingerprint FROM aios_calendar_event WHERE tenant = ? AND id = ? AND organizer = ?",
@@ -168,7 +181,21 @@ class Calendar:
                 raise Conflict("Meeting has changed")
             notify(run, actor.tenant, set(attendees) - {actor.subject},
                    "meeting_cancelled" if cancel else "meeting_changed", identifier)
-            return self._view(self._member(run, actor, identifier))
+            updated_view = self._view(self._member(run, actor, identifier))
+        other_attendees = sorted(set(attendees) - {actor.subject})
+        if other_attendees:
+            kind = "meeting_cancelled" if cancel else "meeting_changed"
+            self.workflow.publish_work_alert(
+                actor.tenant,
+                other_attendees,
+                kind=kind,
+                title=f"{'会议已取消' if cancel else '会议已更新'}：{updated_view['title']}",
+                subtitle=f"组织者：{actor.subject}",
+                reference=identifier,
+                href="/calendar",
+                severity="medium" if cancel else "info",
+            )
+        return updated_view
 
     def agenda(self, actor, start, end, limit, after):
         cursor = " AND (e.starts_at, e.id) > (?, ?)" if after else ""

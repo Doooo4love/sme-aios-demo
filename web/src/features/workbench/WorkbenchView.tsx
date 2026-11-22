@@ -366,8 +366,8 @@ export function WorkbenchView() {
       className="mx-auto max-w-[1280px] space-y-5 px-4 py-5 sm:px-6 lg:py-6 pb-20"
       data-testid="workbench-page"
     >
-      {/* 1. Frosted Identity & Role-Scope Hero Strip */}
-      <section className="rounded-card bg-[var(--bg-surface)]/92 backdrop-blur-xl shadow-[var(--shadow-card)] p-5 sm:p-6">
+      {/* 1. Identity & Role-Scope Header Strip */}
+      <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3.5">
             <Avatar
@@ -380,7 +380,7 @@ export function WorkbenchView() {
             />
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-[19px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] truncate">
+                <h1 className="aios-display text-[19px] font-semibold text-[var(--ink-primary)] truncate">
                   {tx(
                     {
                       "zh-CN": "{name} · 工作台",
@@ -653,10 +653,10 @@ export function WorkbenchView() {
                 openQueuesLane("assigned");
               }
             }}
-            className="group cursor-pointer rounded-tile bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)] transition-all duration-[200ms]"
+            className="group cursor-pointer rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] hover:border-[var(--hairline-strong)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)] transition-all duration-[200ms]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
+              <span className="aios-micro-label">
                 {tx({
                   "zh-CN": "待我处理",
                   "zh-HK": "待我處理",
@@ -665,16 +665,16 @@ export function WorkbenchView() {
               </span>
               <span
                 className={[
-                  "flex h-7 w-7 items-center justify-center rounded-full",
+                  "flex h-7 w-7 items-center justify-center rounded-sm border",
                   hasActionableAssigned
-                    ? "bg-[var(--accent-wash)] text-[var(--accent-ink)]"
-                    : "bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]",
+                    ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]"
+                    : "border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-secondary)]",
                 ].join(" ")}
               >
                 <Inbox className="h-3.5 w-3.5" strokeWidth={1.9} />
               </span>
             </div>
-            <div className="mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <div className="mt-2 aios-kpi text-[24px] font-semibold text-[var(--ink-primary)]">
               {kpiCounts.assigned !== null ? kpiCounts.assigned : "—"}
             </div>
             <div className="mt-1 text-[11.5px] text-[var(--ink-muted)]">
@@ -699,17 +699,17 @@ export function WorkbenchView() {
                 openQueuesLane("submitted");
               }
             }}
-            className="group cursor-pointer rounded-tile bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)] transition-all duration-[200ms]"
+            className="group cursor-pointer rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] hover:border-[var(--hairline-strong)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)] transition-all duration-[200ms]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
+              <span className="aios-micro-label">
                 {tx({ "zh-CN": "已提交", "zh-HK": "已提交", en: "Submitted" })}
               </span>
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
+              <span className="flex h-7 w-7 items-center justify-center rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-secondary)]">
                 <Send className="h-3.5 w-3.5" strokeWidth={1.9} />
               </span>
             </div>
-            <div className="mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <div className="mt-2 aios-kpi text-[24px] font-semibold text-[var(--ink-primary)]">
               {liveSubmittedCount !== null ? liveSubmittedCount : "—"}
             </div>
             <div className="mt-1 text-[11.5px] text-[var(--ink-muted)]">
@@ -749,14 +749,14 @@ export function WorkbenchView() {
                 : undefined
             }
             className={[
-              "rounded-tile bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] transition-all duration-[200ms]",
+              "rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)] transition-all duration-[200ms]",
               hasApprovalCapability
-                ? "cursor-pointer hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)]"
+                ? "group cursor-pointer hover:border-[var(--hairline-strong)] hover:bg-[var(--bg-surface)] hover:shadow-[var(--shadow-card)]"
                 : "",
             ].join(" ")}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
+              <span className="aios-micro-label">
                 {tx({
                   "zh-CN": "待我审批",
                   "zh-HK": "待我審批",
@@ -765,10 +765,10 @@ export function WorkbenchView() {
               </span>
               <span
                 className={[
-                  "flex h-7 w-7 items-center justify-center rounded-full",
+                  "flex h-7 w-7 items-center justify-center rounded-sm border",
                   hasActionableApproval
-                    ? "bg-[var(--accent-wash)] text-[var(--accent-ink)]"
-                    : "bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]",
+                    ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]"
+                    : "border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-secondary)]",
                 ].join(" ")}
               >
                 <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.9} />
@@ -776,7 +776,7 @@ export function WorkbenchView() {
             </div>
             <div
               className={[
-                "mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em]",
+                "mt-2 aios-kpi text-[24px] font-semibold",
                 hasActionableApproval
                   ? "text-[var(--accent)]"
                   : "text-[var(--ink-primary)]",
@@ -806,21 +806,21 @@ export function WorkbenchView() {
           <Interactive3DCard
             interactive={false}
             sheenIntensity="subtle"
-            className="rounded-tile bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)]"
+            className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4 shadow-[var(--shadow-subtle)]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12.5px] font-medium text-[var(--ink-muted)]">
+              <span className="aios-micro-label">
                 {tx({
                   "zh-CN": "授权仓库",
                   "zh-HK": "授權倉庫",
                   en: "Authorized Warehouses",
                 })}
               </span>
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[var(--ink-secondary)] shadow-[var(--shadow-subtle)]">
+              <span className="flex h-7 w-7 items-center justify-center rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] text-[var(--ink-secondary)]">
                 <Building2 className="h-3.5 w-3.5" strokeWidth={1.9} />
               </span>
             </div>
-            <div className="mt-2 tabular-nums text-[24px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
+            <div className="mt-2 aios-kpi text-[24px] font-semibold text-[var(--ink-primary)]">
               {warehouses.length}
             </div>
             <div
@@ -848,17 +848,17 @@ export function WorkbenchView() {
           "zh-HK": "權限層級功能導覽",
           en: "Permission-tiered workbench navigation",
         })}
-        className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-4"
+        className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-4"
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:flex xl:flex-wrap xl:items-stretch">
           {visibleTiers.map((tier) => (
             <div
               key={tier.id}
               data-testid={`work-tier-${tier.id}`}
-              className="flex flex-col justify-start rounded-tile bg-[var(--bg-surface-tint)] p-3 xl:flex-1 xl:min-w-[220px]"
+              className="flex flex-col justify-start rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3 xl:flex-1 xl:min-w-[220px]"
             >
               <div className="mb-2 px-1">
-                <span className="text-[12px] font-semibold text-[var(--ink-secondary)]">
+                <span className="aios-micro-label font-semibold">
                   {tier.label}
                 </span>
               </div>
@@ -902,7 +902,7 @@ export function WorkbenchView() {
                         />
                         <span>{spec.label}</span>
                         {showBadge && (
-                          <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 tabular-nums text-[10.5px] font-semibold text-[var(--accent-fg)]">
+                          <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 font-mono-code tabular-nums text-[10.5px] font-semibold text-[var(--accent-fg)]">
                             {badgeCount > 99 ? "99+" : badgeCount}
                           </span>
                         )}

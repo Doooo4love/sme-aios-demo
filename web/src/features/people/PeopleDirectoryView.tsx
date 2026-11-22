@@ -188,10 +188,10 @@ export function PeopleDirectoryView() {
       data-testid="people-directory-page"
     >
       {/* Unified Porcelain / Obsidian Page-Header Card (matches /work & /admin) */}
-      <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
+      <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)] leading-tight">
+            <h1 className="aios-display text-[20px] font-semibold text-[var(--ink-primary)] leading-tight">
               {tx({
                 "zh-CN": "员工权限与模块授权",
                 "zh-HK": "員工權限與模組授權",
@@ -269,7 +269,7 @@ export function PeopleDirectoryView() {
 
       {/* Directory Sheet (macOS Messages Contacts Aesthetic) */}
       {!error && (
-        <section className="rounded-card bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           {/* Client-Side Search & Filter Bar */}
           <div className="flex flex-col gap-3 border-b border-[var(--hairline-subtle)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
@@ -299,7 +299,7 @@ export function PeopleDirectoryView() {
                     en: "Filter by name or account (loaded items only)…",
                   })}
                   data-testid="people-search-input"
-                  className="h-9 w-full rounded-full bg-[var(--bg-surface-subtle)] pl-9 pr-9 text-[13px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-all"
+                  className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] pl-9 pr-9 text-[13px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent-border)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-all"
                 />
                 {searchQuery && (
                   <button
@@ -318,7 +318,7 @@ export function PeopleDirectoryView() {
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-1.5 text-[12px] text-[var(--ink-muted)] tabular-nums self-start sm:self-auto">
+            <div className="inline-flex items-center gap-1.5 font-mono-code text-[12px] text-[var(--ink-muted)] tabular-nums self-start sm:self-auto">
               <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>
                 {tx(
@@ -390,7 +390,7 @@ export function PeopleDirectoryView() {
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
                 <thead>
-                  <tr className="border-b border-[var(--hairline-subtle)] bg-[var(--bg-surface-tint)] text-[12px] font-medium text-[var(--ink-muted)]">
+                  <tr className="aios-micro-label border-b border-[var(--hairline)] bg-[var(--bg-surface-tint)]">
                     <th className="px-5 py-3">
                       {tx({
                         "zh-CN": "员工账号",
@@ -444,7 +444,7 @@ export function PeopleDirectoryView() {
                                 {persona.displayName}
                               </Link>
                               {hasDistinctName && (
-                                <span className="inline-flex items-center rounded-full bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-muted)]">
+                                <span className="inline-flex items-center rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-muted)]">
                                   {subject}
                                 </span>
                               )}

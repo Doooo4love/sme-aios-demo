@@ -107,7 +107,7 @@ export function DemoPersonaSwitcher({
             align={align}
             sideOffset={8}
             className={[
-              "z-50 w-[336px] max-h-[min(520px,80dvh)] overflow-auto rounded-lg",
+              "z-50 w-[336px] max-h-[min(520px,80dvh)] overflow-auto rounded-card border border-[var(--hairline-strong)]",
               "bg-[var(--bg-surface)] p-2 shadow-[var(--shadow-popover)] focus:outline-none",
             ].join(" ")}
           >
@@ -132,7 +132,7 @@ export function DemoPersonaSwitcher({
               if (items.length === 0) return null;
               return (
                 <DropdownMenu.Group key={group} className="mt-2">
-                  <DropdownMenu.Label className="px-2.5 py-1 text-[11px] font-medium text-[var(--ink-muted)]">
+                  <DropdownMenu.Label className="aios-micro-label px-2.5 py-1">
                     {t(GROUP_LABEL_KEYS[group])}
                   </DropdownMenu.Label>
                   {items.map((item) => {
