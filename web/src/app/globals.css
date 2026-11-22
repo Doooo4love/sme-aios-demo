@@ -32,6 +32,8 @@
   --color-accent-solid-active: var(--accent-solid-active);
   --color-accent-ink: var(--accent-ink);
   --color-accent-fg: var(--accent-fg);
+  --color-cta: var(--cta-bg);
+  --color-cta-fg: var(--cta-fg);
 
   --color-amber: var(--status-amber);
   --color-amber-ink: var(--status-amber-ink);
@@ -54,18 +56,35 @@
 
 /* Locale-specialized CJK glyph & punctuation ordering (authentic HK/TC vs SC) */
 :lang(zh-CN) {
-  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+  --font-sans: var(--font-geist), "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
                "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
-  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont,
+  --font-display: var(--font-jakarta), var(--font-geist), "SF Pro Display", -apple-system, BlinkMacSystemFont,
                   "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
 }
 
 :lang(zh-HK),
 :lang(zh-Hant) {
-  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+  --font-sans: var(--font-geist), "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
                "PingFang HK", "PingFang TC", "Noto Sans HK", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
-  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont,
+  --font-display: var(--font-jakarta), var(--font-geist), "SF Pro Display", -apple-system, BlinkMacSystemFont,
                   "PingFang HK", "PingFang TC", "Noto Sans HK", "Noto Sans TC", sans-serif;
+}
+
+/* Dual-ink Theodic brand lockup & mark switching (zero SSR hydration mismatch, zero FOUC) */
+.theodic-on-light {
+  display: block;
+}
+
+.theodic-on-dark {
+  display: none;
+}
+
+html[data-theme="dark"] .theodic-on-light {
+  display: none;
+}
+
+html[data-theme="dark"] .theodic-on-dark {
+  display: block;
 }
 
 html,

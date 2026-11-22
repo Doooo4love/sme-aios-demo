@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { TheodicMark } from "@/components/ui/TheodicBrand";
 import { useLocale } from "@/lib/i18n";
 import { useTheme, type Theme } from "@/lib/theme-context";
 
@@ -83,98 +84,99 @@ interface CanvasPalette {
   lockDot: string;
 }
 
+// Warm Museum Alabaster (#FAF8F5 / #F6F2EB) + Carbon Ink (#171717) + Deep Navy-Cobalt #1B4F9C & Emerald #127A46
 const LIGHT_PALETTE: CanvasPalette = {
-  cobaltRgb: "22,104,227",
+  cobaltRgb: "27,79,156",
   emeraldRgb: "18,122,70",
-  slateRgb: "82,91,108",
-  cobaltHex: "#1668E3",
+  slateRgb: "110,104,96",
+  cobaltHex: "#1B4F9C",
   emeraldHex: "#127A46",
-  auraCore: "rgba(22, 104, 227, 0.07)",
+  auraCore: "rgba(27, 79, 156, 0.065)",
   auraMid: "rgba(18, 122, 70, 0.025)",
-  auraOuter: "rgba(245, 246, 248, 0)",
-  siteMarkHot: "rgba(17,19,24,0.94)",
-  siteMarkRest: "rgba(60,66,80,0.82)",
-  dropShadowHot: "rgba(17, 19, 24, 0.08)",
-  dropShadowRest: "rgba(17, 19, 24, 0.045)",
-  sideCore: "rgba(219, 232, 252, 0.90)",
-  sideStd: "rgba(226, 232, 240, 0.85)",
-  frontCoreTop: "rgba(232, 241, 255, 0.96)",
-  frontCoreBot: "rgba(205, 223, 250, 0.96)",
-  frontCanopyTop: "rgba(235, 249, 242, 0.96)",
-  frontCanopyBot: "rgba(211, 238, 224, 0.96)",
-  frontStdTop: "rgba(244, 246, 250, 0.96)",
-  frontStdBot: "rgba(226, 231, 239, 0.96)",
-  topCore0: "rgba(255, 255, 255, 0.98)",
-  topCore1: "rgba(244, 248, 255, 0.95)",
-  topCore2: "rgba(234, 242, 254, 0.94)",
-  topCanopy0: "rgba(255, 255, 255, 0.98)",
-  topCanopy1: "rgba(244, 251, 247, 0.95)",
-  topCanopy2: "rgba(232, 247, 239, 0.94)",
-  topStd0: "rgba(255, 255, 255, 0.96)",
-  topStd1: "rgba(245, 247, 251, 0.94)",
-  rimRest: "rgba(17, 19, 24, 0.12)",
-  bottomHairline: "rgba(17, 19, 24, 0.10)",
-  textPrimary: "#111318",
-  textSecondary: "#3C4250",
-  textMuted: "rgba(60, 66, 80, 0.85)",
-  textSubtleAccent: "rgba(22, 104, 227, 0.88)",
-  conduitLabel: "rgba(60, 66, 80, 0.92)",
-  ledgerRowRest: "rgba(82, 91, 108, 0.34)",
-  ledgerColRest: "rgba(82, 91, 108, 0.24)",
-  ledgerDotRest: "rgba(82, 91, 108, 0.45)",
-  lockDot: "rgba(60, 66, 80, 0.74)",
+  auraOuter: "rgba(250, 248, 245, 0)",
+  siteMarkHot: "rgba(23, 23, 23, 0.94)",
+  siteMarkRest: "rgba(74, 70, 64, 0.82)",
+  dropShadowHot: "rgba(23, 23, 23, 0.085)",
+  dropShadowRest: "rgba(23, 23, 23, 0.045)",
+  sideCore: "rgba(224, 233, 247, 0.92)",
+  sideStd: "rgba(234, 228, 219, 0.90)",
+  frontCoreTop: "rgba(236, 242, 252, 0.97)",
+  frontCoreBot: "rgba(216, 228, 247, 0.97)",
+  frontCanopyTop: "rgba(237, 248, 242, 0.97)",
+  frontCanopyBot: "rgba(215, 236, 225, 0.97)",
+  frontStdTop: "rgba(246, 242, 235, 0.97)",
+  frontStdBot: "rgba(234, 228, 219, 0.97)",
+  topCore0: "rgba(255, 255, 255, 0.99)",
+  topCore1: "rgba(246, 248, 252, 0.96)",
+  topCore2: "rgba(236, 242, 251, 0.95)",
+  topCanopy0: "rgba(255, 255, 255, 0.99)",
+  topCanopy1: "rgba(245, 250, 247, 0.96)",
+  topCanopy2: "rgba(234, 245, 239, 0.95)",
+  topStd0: "rgba(255, 254, 252, 0.98)",
+  topStd1: "rgba(246, 242, 235, 0.96)",
+  rimRest: "rgba(23, 23, 23, 0.12)",
+  bottomHairline: "rgba(23, 23, 23, 0.10)",
+  textPrimary: "#171717",
+  textSecondary: "#4A4640",
+  textMuted: "rgba(74, 70, 64, 0.85)",
+  textSubtleAccent: "rgba(27, 79, 156, 0.90)",
+  conduitLabel: "rgba(74, 70, 64, 0.92)",
+  ledgerRowRest: "rgba(110, 104, 96, 0.34)",
+  ledgerColRest: "rgba(110, 104, 96, 0.24)",
+  ledgerDotRest: "rgba(110, 104, 96, 0.45)",
+  lockDot: "rgba(74, 70, 64, 0.74)",
 };
 
-// Matte Obsidian Glass Slabs (#121620 / #192030) + Refined Cobalt #409CFF & Emerald #34D399 (zero neon)
+// Warm Carbon Obsidian Slabs (#1E1D1A / #282623) + Steel-Cobalt #6EA3F2 & Emerald #34D399
 const DARK_PALETTE: CanvasPalette = {
-  cobaltRgb: "64,156,255",
+  cobaltRgb: "110,163,242",
   emeraldRgb: "52,211,153",
-  slateRgb: "148,163,184",
-  cobaltHex: "#409CFF",
+  slateRgb: "150,144,135",
+  cobaltHex: "#6EA3F2",
   emeraldHex: "#34D399",
-  auraCore: "rgba(64, 156, 255, 0.11)",
+  auraCore: "rgba(110, 163, 242, 0.10)",
   auraMid: "rgba(52, 211, 153, 0.04)",
-  auraOuter: "rgba(12, 14, 19, 0)",
-  siteMarkHot: "rgba(242, 244, 248, 0.95)",
-  siteMarkRest: "rgba(180, 188, 203, 0.82)",
-  dropShadowHot: "rgba(0, 0, 0, 0.56)",
+  auraOuter: "rgba(17, 17, 16, 0)",
+  siteMarkHot: "rgba(244, 241, 236, 0.95)",
+  siteMarkRest: "rgba(196, 190, 181, 0.82)",
+  dropShadowHot: "rgba(0, 0, 0, 0.58)",
   dropShadowRest: "rgba(0, 0, 0, 0.38)",
-  sideCore: "rgba(24, 34, 54, 0.96)",
-  sideStd: "rgba(20, 25, 36, 0.95)",
-  frontCoreTop: "rgba(26, 38, 60, 0.98)",
-  frontCoreBot: "rgba(18, 26, 42, 0.98)",
-  frontCanopyTop: "rgba(20, 42, 36, 0.98)",
-  frontCanopyBot: "rgba(14, 30, 26, 0.98)",
-  frontStdTop: "rgba(25, 31, 44, 0.98)",
-  frontStdBot: "rgba(17, 21, 31, 0.98)",
-  topCore0: "rgba(33, 45, 70, 0.98)",
-  topCore1: "rgba(25, 34, 54, 0.97)",
-  topCore2: "rgba(20, 28, 45, 0.96)",
-  topCanopy0: "rgba(24, 48, 41, 0.98)",
-  topCanopy1: "rgba(19, 39, 34, 0.97)",
-  topCanopy2: "rgba(16, 32, 28, 0.96)",
-  topStd0: "rgba(30, 36, 51, 0.97)",
-  topStd1: "rgba(21, 26, 38, 0.96)",
-  rimRest: "rgba(255, 255, 255, 0.14)",
-  bottomHairline: "rgba(255, 255, 255, 0.08)",
-  textPrimary: "#F2F4F8",
-  textSecondary: "#CFD6E3",
-  textMuted: "rgba(180, 188, 203, 0.88)",
-  textSubtleAccent: "rgba(118, 184, 255, 0.92)",
-  conduitLabel: "rgba(214, 222, 235, 0.92)",
-  ledgerRowRest: "rgba(148, 163, 184, 0.34)",
-  ledgerColRest: "rgba(148, 163, 184, 0.24)",
-  ledgerDotRest: "rgba(148, 163, 184, 0.55)",
-  lockDot: "rgba(180, 188, 203, 0.82)",
+  sideCore: "rgba(31, 38, 52, 0.96)",
+  sideStd: "rgba(30, 29, 26, 0.96)",
+  frontCoreTop: "rgba(34, 42, 58, 0.98)",
+  frontCoreBot: "rgba(24, 29, 40, 0.98)",
+  frontCanopyTop: "rgba(24, 42, 35, 0.98)",
+  frontCanopyBot: "rgba(18, 30, 26, 0.98)",
+  frontStdTop: "rgba(36, 34, 31, 0.98)",
+  frontStdBot: "rgba(25, 24, 21, 0.98)",
+  topCore0: "rgba(43, 52, 70, 0.98)",
+  topCore1: "rgba(34, 41, 56, 0.97)",
+  topCore2: "rgba(27, 33, 46, 0.96)",
+  topCanopy0: "rgba(28, 48, 40, 0.98)",
+  topCanopy1: "rgba(22, 39, 33, 0.97)",
+  topCanopy2: "rgba(18, 32, 27, 0.96)",
+  topStd0: "rgba(40, 38, 35, 0.98)",
+  topStd1: "rgba(30, 29, 26, 0.97)",
+  rimRest: "rgba(244, 241, 236, 0.14)",
+  bottomHairline: "rgba(244, 241, 236, 0.08)",
+  textPrimary: "#F4F1EC",
+  textSecondary: "#C4BEB5",
+  textMuted: "rgba(196, 190, 181, 0.88)",
+  textSubtleAccent: "rgba(139, 183, 247, 0.92)",
+  conduitLabel: "rgba(224, 219, 211, 0.92)",
+  ledgerRowRest: "rgba(150, 144, 135, 0.34)",
+  ledgerColRest: "rgba(150, 144, 135, 0.24)",
+  ledgerDotRest: "rgba(150, 144, 135, 0.55)",
+  lockDot: "rgba(196, 190, 181, 0.82)",
 };
 
 const FONT_SANS_ZH_CN =
-  '"SF Pro Text","SF Pro Display",-apple-system,"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif';
+  '"Plus Jakarta Sans","Geist",-apple-system,"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif';
 const FONT_SANS_ZH_HK =
-  '"SF Pro Text","SF Pro Display",-apple-system,"PingFang HK","PingFang TC","Noto Sans HK","Noto Sans TC","Microsoft JhengHei",sans-serif';
+  '"Plus Jakarta Sans","Geist",-apple-system,"PingFang HK","PingFang TC","Noto Sans HK","Noto Sans TC","Microsoft JhengHei",sans-serif';
 const FONT_SANS_EN =
-  '"SF Pro Text","SF Pro Display",-apple-system,BlinkMacSystemFont,"Inter","PingFang HK","PingFang SC",sans-serif';
-const FONT_MONO = '"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace';
+  '"Plus Jakarta Sans","Geist",-apple-system,BlinkMacSystemFont,"Inter","PingFang HK","PingFang SC",sans-serif';
+const FONT_MONO = '"Geist Mono","SF Mono",ui-monospace,Menlo,monospace';
 
 function getCanvasSansFont(locale: string): string {
   if (locale === "zh-HK") return FONT_SANS_ZH_HK;
@@ -1129,8 +1131,8 @@ export function ArchitecturalRelayCanvas({
       {!compact && (
         <div className="flex items-center justify-between border-b border-[var(--hairline)] px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <span className="h-2 w-2 rounded-full bg-[var(--accent)]" />
-            <span className="text-[13px] font-semibold text-[var(--ink-primary)]">
+            <TheodicMark height={14} />
+            <span className="font-[family-name:var(--font-display)] text-[13px] font-semibold text-[var(--ink-primary)]">
               {t("login.canvas.headerTitle")}
             </span>
           </div>

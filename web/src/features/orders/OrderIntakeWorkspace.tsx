@@ -14,8 +14,8 @@ import {
   PanelRight,
   Plus,
   RefreshCw,
+  ScanSearch,
   Search,
-  Sparkles,
   Trash2,
 } from "lucide-react";
 import {
@@ -1109,7 +1109,7 @@ export function OrderIntakeWorkspace() {
                   onClick={handlePrefillDemo}
                   data-testid="orders-prefill-demo-btn"
                 >
-                  <Sparkles className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  <ScanSearch className="h-3.5 w-3.5 text-[var(--accent)]" />
                   <span>
                     {tx({
                       "zh-CN": "载入演示样例 (FE-DEMO-001)",

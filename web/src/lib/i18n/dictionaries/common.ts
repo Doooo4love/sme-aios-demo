@@ -11,14 +11,14 @@ import type { Locale, LocalizedPersonaInfo, TrilingualText } from "@/lib/i18n/ty
 export const COMMON_DICTIONARY = {
   // Brand & Document Metadata
   "brand.name": {
-    "zh-CN": "SME AIOS",
-    "zh-HK": "SME AIOS",
-    en: "SME AIOS",
+    "zh-CN": "Theodic",
+    "zh-HK": "Theodic",
+    en: "Theodic",
   },
   "brand.title": {
-    "zh-CN": "SME AIOS · 企业运营工作台",
-    "zh-HK": "SME AIOS · 企業營運工作台",
-    en: "SME AIOS · Enterprise Operations Workbench",
+    "zh-CN": "Theodic · 企业运营工作台",
+    "zh-HK": "Theodic · 企業營運工作台",
+    en: "Theodic · Enterprise Operations Workbench",
   },
   "brand.description": {
     "zh-CN": "基于同源企业身份、最小权限边界与可核验回执的企业 AI 运营工作台",

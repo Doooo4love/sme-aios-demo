@@ -132,7 +132,7 @@ export function buildCalendarIcs(
   const rawLines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    `PRODID:-//SME AIOS//Enterprise Workbench Calendar//${strings.prodLang}`,
+    `PRODID:-//Theodic//Enterprise Workbench Calendar//${strings.prodLang}`,
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     `X-WR-CALNAME:${escapeIcsText(calName)}`,

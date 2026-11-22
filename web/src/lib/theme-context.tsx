@@ -17,8 +17,8 @@ export const DEFAULT_THEME: Theme = "light";
 export const THEME_COOKIE_NAME = "aios_theme";
 
 const THEME_META_COLOR: Record<Theme, string> = {
-  light: "#F5F6F8",
-  dark: "#0C0E13",
+  light: "#FAF8F5",
+  dark: "#111110",
 };
 
 export function normalizeTheme(raw: string | null | undefined): Theme {

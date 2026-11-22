@@ -20,6 +20,7 @@ import { Interactive3DCard } from "@/components/kinetic/Interactive3DCard";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { PreferencesBar } from "@/components/ui/PreferencesControls";
+import { TheodicLogo } from "@/components/ui/TheodicBrand";
 import type { DemoPersonaId, DemoPersonaMeta } from "@/lib/types";
 
 const GROUP_TITLE_KEYS: Record<DemoPersonaMeta["group"], TranslationKey> = {
@@ -167,45 +168,16 @@ export function LoginView() {
       <div className="mx-auto grid w-full max-w-[1340px] grid-cols-1 items-center gap-8 px-5 py-6 sm:px-8 lg:grid-cols-[minmax(420px,468px)_minmax(0,1fr)] lg:gap-10 lg:px-12 lg:py-10">
         {/* Left Floating Porcelain / Obsidian Authentication Card */}
         <section className="mx-auto flex w-full max-w-[468px] flex-col rounded-xl bg-[var(--bg-surface)] p-7 shadow-[var(--shadow-card)] sm:p-9 lg:mx-0">
-          {/* Clean Brand Mark */}
-          <div className="flex items-center gap-2.5">
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-sm bg-[image:var(--agent-surface)] text-[var(--accent-ink)] ring-1 ring-[var(--agent-ring)]">
-              <svg
-                viewBox="0 0 20 20"
-                className="h-4.5 w-4.5"
-                fill="none"
-                aria-hidden="true"
-              >
-                <circle
-                  cx="10"
-                  cy="10"
-                  r="7.2"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeOpacity="0.35"
-                />
-                <circle
-                  cx="10"
-                  cy="10"
-                  r="4.2"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                />
-                <circle cx="10" cy="10" r="1.6" fill="currentColor" />
-              </svg>
-            </span>
-            <div>
-              <div className="text-[14px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                {t("brand.name")}
-              </div>
-              <div className="text-[11.5px] text-[var(--ink-muted)]">
-                {t("brand.tagline")}
-              </div>
+          {/* Theodic Brand Wordmark & Architectural Tagline */}
+          <div className="flex flex-col items-start gap-1.5">
+            <TheodicLogo height={26} priority />
+            <div className="text-[11.5px] font-medium tracking-[0.01em] text-[var(--ink-muted)]">
+              {t("brand.tagline")}
             </div>
           </div>
 
           <div className="mt-7">
-            <h1 className="text-[24px] font-semibold tracking-[-0.025em] text-[var(--ink-primary)]">
+            <h1 className="font-[family-name:var(--font-display)] text-[24px] font-semibold tracking-[-0.025em] text-[var(--ink-primary)]">
               {t("login.heading")}
             </h1>
             <p className="mt-1.5 text-[13.5px] text-[var(--ink-muted)]">

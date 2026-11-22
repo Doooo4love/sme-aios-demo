@@ -3,12 +3,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Calendar as CalendarIcon,
+  CalendarPlus,
   ChevronLeft,
   ChevronRight,
   Download,
   Plus,
   RefreshCw,
-  Sparkles,
   Video,
 } from "lucide-react";
 import {
@@ -400,7 +400,7 @@ export function CalendarWorkspace() {
               loading={nlParsing}
               disabled={!nlUtterance.trim() || nlParsing}
             >
-              <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} />
+              <CalendarPlus className="h-3.5 w-3.5" strokeWidth={1.9} />
               <span>
                 {nlParsing
                   ? tx({

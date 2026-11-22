@@ -27,6 +27,7 @@ import {
   PreferencesBar,
   ThemeToggle,
 } from "@/components/ui/PreferencesControls";
+import { TheodicLogo, TheodicMark } from "@/components/ui/TheodicBrand";
 import { DemoPersonaSwitcher } from "@/components/shell/DemoPersonaSwitcher";
 import { NoticesPopover } from "@/components/shell/NoticesPopover";
 import { WorkbenchDrawerSlot } from "@/components/shell/WorkbenchDrawerSlot";
@@ -203,8 +204,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--ink-primary)]">
       <header className="aios-topbar-glass sticky top-0 z-30 flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-2 border-b border-[var(--hairline)] px-4 lg:grid lg:grid-cols-[auto_1fr_auto] xl:grid-cols-[1fr_auto_1fr] lg:items-center lg:px-5 xl:px-6">
-        {/* Control 1 (Left): Back to Messenger Pill */}
-        <div className="flex min-w-0 items-center lg:justify-self-start">
+        {/* Control 1 (Left): Theodic Brand Anchor + Back to Messenger Pill */}
+        <div className="flex min-w-0 items-center gap-2.5 lg:justify-self-start">
+          <Link
+            href="/inbox/assistant"
+            aria-label={t("brand.name")}
+            data-testid="shell-brand-link"
+            className="hidden sm:inline-flex shrink-0 items-center rounded-sm py-1 opacity-95 hover:opacity-100 transition-opacity duration-[150ms]"
+          >
+            <TheodicLogo height={18} className="hidden xl:inline-flex" />
+            <TheodicMark height={16} className="inline-flex xl:hidden" />
+          </Link>
+          <span
+            aria-hidden="true"
+            className="hidden sm:block h-4 w-px shrink-0 bg-[var(--hairline-strong)]"
+          />
           <Link
             href="/inbox/assistant"
             data-testid="shell-back-to-inbox"

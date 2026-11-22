@@ -1,9 +1,20 @@
+import {
+  enforceReviewerGateBeforeOrigin,
+  isReviewerGateEnabled,
+  stripGateCookieHeader,
+  X_ROBOTS_TAG_VALUE,
+} from "./reviewer-gate.ts";
+
 export interface VpcServiceFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
 export interface Env {
   AIOS_ORIGIN?: VpcServiceFetcher;
+  AIOS_GATE_SECRET?: string;
+  AIOS_REVIEWER_PASSCODE?: string;
+  AIOS_TEAM_PASSCODE?: string;
+  AIOS_REVIEWER_EXPIRES_AT?: string;
 }
 
 type WorkersRequestInit = RequestInit & {
@@ -173,17 +184,38 @@ function buildResponseHeaders(
 }
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
+  const gateEnabled = isReviewerGateEnabled(env);
+  const publicUrl = new URL(request.url);
+
+  if (gateEnabled) {
+    const gateCheck = await enforceReviewerGateBeforeOrigin(request, publicUrl, env);
+    if (gateCheck.response) {
+      return gateCheck.response;
+    }
+  }
+
   if (!env.AIOS_ORIGIN || typeof env.AIOS_ORIGIN.fetch !== "function") {
-    return jsonErrorResponse(
+    const missingRes = jsonErrorResponse(
       503,
       "ORIGIN_BINDING_MISSING",
       "AIOS origin VPC service binding is not configured.",
     );
+    if (gateEnabled) {
+      missingRes.headers.set("x-robots-tag", X_ROBOTS_TAG_VALUE);
+    }
+    return missingRes;
   }
 
-  const publicUrl = new URL(request.url);
   const upstreamUrl = `${UPSTREAM_BASE}${publicUrl.pathname}${publicUrl.search}`;
   const forwardHeaders = buildForwardHeaders(request.headers, publicUrl);
+  if (gateEnabled) {
+    const strippedCookie = stripGateCookieHeader(forwardHeaders.get("cookie"));
+    if (strippedCookie === null) {
+      forwardHeaders.delete("cookie");
+    } else {
+      forwardHeaders.set("cookie", strippedCookie);
+    }
+  }
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const init: WorkersRequestInit = {
@@ -204,17 +236,24 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   try {
     upstreamResponse = await env.AIOS_ORIGIN.fetch(upstreamUrl, init);
   } catch {
-    return jsonErrorResponse(
+    const errRes = jsonErrorResponse(
       502,
       "UPSTREAM_UNREACHABLE",
       "AIOS upstream origin is temporarily unreachable.",
     );
+    if (gateEnabled) {
+      errRes.headers.set("x-robots-tag", X_ROBOTS_TAG_VALUE);
+    }
+    return errRes;
   }
 
   const responseHeaders = buildResponseHeaders(
     upstreamResponse.headers,
     publicUrl,
   );
+  if (gateEnabled) {
+    responseHeaders.set("x-robots-tag", X_ROBOTS_TAG_VALUE);
+  }
 
   return new Response(upstreamResponse.body, {
     status: upstreamResponse.status,

@@ -13,6 +13,12 @@ export {
 export { Avatar, type AvatarProps, type AvatarStatus } from "./Avatar";
 export { SourceTag, type SourceTagProps } from "./SourceTag";
 export {
+  TheodicLogo,
+  TheodicMark,
+  type TheodicLogoProps,
+  type TheodicMarkProps,
+} from "./TheodicBrand";
+export {
   LanguageSwitcher,
   ThemeToggle,
   PreferencesBar,

@@ -13,3 +13,8 @@ deploy/cloudflare-worker/node_modules/
 deploy/cloudflare-worker/.wrangler/
 deploy/cloudflare-worker/.wrangler-deploy.*.json
 deploy/cloudflare-worker/.wrangler-deploy.*.jsonc
+.reviewer-pass.local.json
+deploy/cloudflare-worker/.reviewer-pass.local.json
+.DS_Store
+deliverables/
+docs/pitch/assets/qr_mvp_reviewer_pass.png

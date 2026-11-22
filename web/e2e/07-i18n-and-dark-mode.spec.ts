@@ -14,8 +14,8 @@ import {
 type LocaleCode = "zh-CN" | "zh-HK" | "en";
 type ThemeMode = "light" | "dark";
 
-const DARK_BODY_BG = "rgb(12, 14, 19)"; // #0C0E13 (--bg-app in html[data-theme="dark"])
-const LIGHT_BODY_BG = "rgb(245, 246, 248)"; // #F5F6F8 (--bg-app in :root)
+const DARK_BODY_BG = "rgb(17, 17, 16)"; // #111110 (--bg-app in html[data-theme="dark"])
+const LIGHT_BODY_BG = "rgb(250, 248, 245)"; // #FAF8F5 (--bg-app in :root)
 const CJK_REGEX = /[\u4e00-\u9fff]/;
 
 function visibleLocaleSwitcher(page: Page): Locator {

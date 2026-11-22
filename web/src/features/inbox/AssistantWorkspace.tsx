@@ -10,6 +10,7 @@ import {
   CalendarDays,
   ChevronLeft,
   Clock,
+  Compass,
   FilePlus2,
   LayoutGrid,
   Mail,
@@ -19,7 +20,6 @@ import {
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Video,
   Warehouse,
   X,
@@ -138,7 +138,7 @@ function getSuggestionIcon(domainId: CapabilityDomainId) {
     case "mail":
       return Mail;
     default:
-      return Sparkles;
+      return Compass;
   }
 }
 
@@ -1141,7 +1141,7 @@ export function AssistantWorkspace() {
                 kind="agent"
                 className="shadow-[var(--shadow-card)]"
               />
-              <h3 className="mt-5 text-[22px] font-semibold tracking-[-0.025em] text-[var(--ink-primary)] text-balance">
+              <h3 className="mt-5 font-[family-name:var(--font-display)] text-[22px] font-semibold tracking-[-0.025em] text-[var(--ink-primary)] text-balance">
                 {tx({
                   "zh-CN": "你好，今天想推进哪项业务？",
                   "zh-HK": "你好，今天想推進哪項業務？",

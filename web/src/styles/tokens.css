@@ -1,25 +1,25 @@
 /* ==========================================================================
-   SME AIOS v2 Unified Design Tokens — Frosted Alabaster (Light) & Obsidian Porcelain (Dark)
+   Theodic Design Tokens — Warm Museum Alabaster (Light) & Warm Carbon Obsidian (Dark)
    Single unified system across all routes (/login -> /inbox -> /work -> /calendar -> /admin).
    ========================================================================== */
 :root {
   color-scheme: light;
 
-  /* === 1. Unified Surface & Vibrancy Layers (Frosted Alabaster & Porcelain) === */
-  --bg-app: #F5F6F8;                        /* Global canvas: /login, /work, /admin, /calendar */
-  --bg-sidebar: rgba(246, 247, 249, 0.82);  /* macOS Sequoia frosted sidebar material */
-  --bg-sidebar-solid: #F3F4F7;              /* Fallback when backdrop-filter unavailable */
-  --bg-header: rgba(255, 255, 255, 0.82);   /* Translucent sticky header / top bar */
-  --bg-header-solid: rgba(255, 255, 255, 0.94);
+  /* === 1. Unified Surface & Vibrancy Layers (Warm Museum Alabaster) === */
+  --bg-app: #FAF8F5;                        /* Global canvas: /login, /work, /admin, /calendar */
+  --bg-sidebar: rgba(244, 240, 233, 0.86);  /* Warm museum limestone frosted sidebar */
+  --bg-sidebar-solid: #F4F0E9;              /* Fallback when backdrop-filter unavailable */
+  --bg-header: rgba(250, 248, 245, 0.84);   /* Translucent sticky header / top bar */
+  --bg-header-solid: rgba(250, 248, 245, 0.96);
   --bg-sheet: #FFFFFF;                      /* Elevated sheet / card canvas */
   --bg-surface: #FFFFFF;                    /* Luminous white elevated sheet / chat canvas / cards */
-  --bg-surface-subtle: #F2F4F7;             /* Recessed tonal well: incoming bubble, search fill, muted pills */
-  --bg-surface-tint: #F8F9FB;               /* Ultra-soft table thead / inset well / collapsible surface */
-  --bg-surface-hover: #EAECEF;              /* Subtle elevated row/button hover surface */
-  --bg-inset: #ECEFF4;                      /* Deep inset well for segmented controls (clear chip contrast) */
+  --bg-surface-subtle: #F2EDE6;             /* Recessed tonal well: incoming bubble, search fill, muted pills */
+  --bg-surface-tint: #F7F4EE;               /* Ultra-soft table thead / inset well / collapsible surface */
+  --bg-surface-hover: #ECE6DC;              /* Subtle elevated row/button hover surface */
+  --bg-inset: #EDE8DF;                      /* Deep inset well for segmented controls */
   --bg-glass: var(--bg-header);             /* Backwards-compatible frosted header alias */
-  --bg-hover: rgba(17, 19, 24, 0.042);      /* Whisper macOS pointer hover */
-  --bg-active: rgba(17, 19, 24, 0.075);     /* Active neutral press / selection */
+  --bg-hover: rgba(23, 23, 23, 0.042);      /* Whisper warm pointer hover */
+  --bg-active: rgba(23, 23, 23, 0.075);     /* Active neutral press / selection */
 
   /* Backwards-compatible v1 surface aliases */
   --bg-canvas: var(--bg-app);
@@ -28,49 +28,57 @@
   --bg-subtle: var(--bg-surface-tint);
 
   /* Login & 3D Architectural Stage Surfaces */
-  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(22, 104, 227, 0.065), transparent 72%);
-  --canvas-stage-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.94) 0%, rgba(244, 246, 250, 0.9) 100%);
-  --canvas-footer-bg: rgba(255, 255, 255, 0.78);
+  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(27, 79, 156, 0.055), transparent 72%);
+  --canvas-stage-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.96) 0%, rgba(244, 240, 233, 0.92) 100%);
+  --canvas-footer-bg: rgba(250, 248, 245, 0.86);
 
-  /* === 2. Ink & Optical Contrast Hierarchy (WCAG AA+ on #FFFFFF & #F5F6F8) === */
-  --ink-primary: #111318;                   /* Deep obsidian ink (18.4:1 on white) */
-  --ink-secondary: #525B6C;                 /* Calibrated secondary slate (6.8:1 on white) */
-  --ink-muted: #667085;                     /* Timestamps, captions, hints (4.97:1 on white) */
-  --ink-faint: #98A2B3;                     /* Placeholders, decorative separators & disabled labels ONLY */
+  /* === 2. Carbon Ink & Optical Contrast Hierarchy (WCAG AA+ on #FFFFFF & #FAF8F5) === */
+  --ink-primary: #171717;                   /* Architectural carbon ink */
+  --ink-secondary: #4A4640;                 /* Warm stone secondary ink */
+  --ink-muted: #6E6860;                     /* Timestamps, captions, hints (AA on #FFF & #FAF8F5) */
+  --ink-faint: #9C958B;                     /* Placeholders, decorative separators & disabled labels ONLY */
 
   /* === 3. Structural Hairlines (Major Seams Only — Shadows Carry Card Elevation) === */
-  --hairline: rgba(17, 19, 24, 0.075);      /* Pane dividers, subtle row separators */
-  --hairline-strong: rgba(17, 19, 24, 0.14);/* Input rest borders, secondary control edges */
-  --hairline-subtle: rgba(17, 19, 24, 0.055);/* Table row dividers inside elevated white sheets */
-  --hairline-specular: rgba(255, 255, 255, 0.88); /* Top rim light on glass/3D cards */
-  --crosshair-mark: rgba(17, 19, 24, 0.18); /* Legacy blueprint reference mark */
+  --hairline: rgba(23, 23, 23, 0.08);       /* Pane dividers, subtle row separators */
+  --hairline-strong: rgba(23, 23, 23, 0.16);/* Input rest borders, secondary control edges */
+  --hairline-subtle: rgba(23, 23, 23, 0.055);/* Table row dividers inside elevated white sheets */
+  --hairline-specular: rgba(255, 255, 255, 0.90); /* Top rim light on glass/3D cards */
+  --crosshair-mark: rgba(23, 23, 23, 0.16); /* Architectural blueprint reference mark */
 
-  /* === 4. Calibrated AA+ Oceanic Cobalt Accent System === */
-  --accent: #1668E3;                        /* Text & icon accent on light surfaces (5.09:1 on white) */
-  --accent-hover: #1254BA;
-  --accent-active: #0E47A1;
-  --accent-solid: #1668E3;                  /* Solid fill for primary buttons, badges, selected chips (5.09:1 w/ #FFF) */
-  --accent-solid-hover: #1254BA;            /* Darker on hover for higher contrast */
-  --accent-solid-active: #0E47A1;
-  --accent-ink: #1258C4;                    /* Accent text on --accent-wash (5.42:1 AA+) */
+  /* === 4. Surgical Deep Navy-Cobalt Accent & Carbon Primary CTA System === */
+  --accent: #1B4F9C;                        /* Text & icon accent on light surfaces */
+  --accent-hover: #153E7C;
+  --accent-active: #103163;
+  --accent-solid: #1B4F9C;                  /* Solid fill for semantic highlights, badges, selected chips */
+  --accent-solid-hover: #153E7C;
+  --accent-solid-active: #103163;
+  --accent-ink: #18468B;                    /* Accent text on --accent-wash */
   --accent-fg: #FFFFFF;
-  --accent-wash: rgba(22, 104, 227, 0.085);
-  --accent-wash-strong: rgba(22, 104, 227, 0.15);
-  --accent-border: rgba(22, 104, 227, 0.28);
-  --accent-ring: rgba(22, 104, 227, 0.24);
+  --accent-wash: rgba(27, 79, 156, 0.085);
+  --accent-wash-strong: rgba(27, 79, 156, 0.15);
+  --accent-border: rgba(27, 79, 156, 0.28);
+  --accent-ring: rgba(27, 79, 156, 0.24);
+
+  /* Primary Architectural Carbon CTA Tokens */
+  --cta-bg: #171717;
+  --cta-hover: #2A2825;
+  --cta-active: #0E0D0C;
+  --cta-fg: #FAF8F5;
+  --cta-shadow: 0 1px 2px rgba(23, 23, 23, 0.18);
+  --cta-shadow-hover: 0 4px 12px -2px rgba(23, 23, 23, 0.26);
 
   /* Agent Signature Material & Native iMessage Bubble Tokens */
-  --agent-surface: linear-gradient(145deg, #F3F7FF 0%, #EAF0FD 100%);
-  --agent-bubble-bg: #F2F4F7;
-  --agent-ring: rgba(22, 104, 227, 0.18);
-  --bubble-sent-bg: #1668E3;
-  --bubble-sent-ink: #FFFFFF;
-  --bubble-received-bg: #F2F4F7;
-  --bubble-received-ink: #111318;
+  --agent-surface: linear-gradient(145deg, #FAF8F5 0%, #EFEAE2 100%);
+  --agent-bubble-bg: #F2EDE6;
+  --agent-ring: rgba(23, 23, 23, 0.14);
+  --bubble-sent-bg: #1D1C1A;
+  --bubble-sent-ink: #FAF8F5;
+  --bubble-received-bg: #F2EDE6;
+  --bubble-received-ink: #171717;
 
   /* Avatar Identity Washes (4 Restrained Editorial Hues) */
-  --avatar-tone-0-bg: rgba(22, 104, 227, 0.09);
-  --avatar-tone-0-ink: #1D5BC4;
+  --avatar-tone-0-bg: rgba(27, 79, 156, 0.09);
+  --avatar-tone-0-ink: #1B4F9C;
   --avatar-tone-1-bg: rgba(18, 122, 70, 0.09);
   --avatar-tone-1-ink: #127A46;
   --avatar-tone-2-bg: rgba(34, 104, 120, 0.09);
@@ -79,8 +87,8 @@
   --avatar-tone-3-ink: #855920;
 
   /* Scrollbars */
-  --scrollbar-thumb: rgba(17, 19, 24, 0.16);
-  --scrollbar-thumb-hover: rgba(17, 19, 24, 0.28);
+  --scrollbar-thumb: rgba(23, 23, 23, 0.16);
+  --scrollbar-thumb-hover: rgba(23, 23, 23, 0.28);
 
   /* === 5. Semantic Status Tokens (AA+ Calibrated — Always Icon + Text + Color) === */
   --status-emerald: #127A46;
@@ -98,9 +106,9 @@
   --status-crimson-wash: rgba(201, 42, 55, 0.09);
   --status-crimson-border: rgba(201, 42, 55, 0.22);
 
-  --status-neutral: #525E70;
-  --status-neutral-wash: rgba(82, 94, 112, 0.09);
-  --status-neutral-border: rgba(82, 94, 112, 0.18);
+  --status-neutral: #5B554D;
+  --status-neutral-wash: rgba(91, 85, 77, 0.09);
+  --status-neutral-border: rgba(91, 85, 77, 0.18);
 
   /* === 6. Concentric Apple-Grade Radii === */
   --radius-none: 0px;
@@ -113,47 +121,47 @@
   --radius-tile: var(--radius-md);          /* Semantic alias for KPI / inset tiles (14px) */
   --radius-pill: 9999px;                    /* Pill controls, circular avatars, send button, search bar */
 
-  /* === 7. Layered Ambient Shadows (Replaces Harsh Nested Borders) === */
+  /* === 7. Layered Ambient Shadows (Warm Carbon Tint — Zero Cold Slate Cast) === */
   --shadow-none: none;
   --shadow-subtle:
-    0 1px 2px rgba(17, 19, 24, 0.05),
-    0 0 0 1px rgba(17, 19, 24, 0.07);
+    0 1px 2px rgba(23, 23, 23, 0.05),
+    0 0 0 1px rgba(23, 23, 23, 0.07);
   --shadow-card:
-    0 1px 2px rgba(17, 19, 24, 0.04),
-    0 6px 18px -6px rgba(17, 19, 24, 0.06),
-    0 0 0 1px rgba(17, 19, 24, 0.055);
+    0 1px 2px rgba(23, 23, 23, 0.04),
+    0 6px 18px -6px rgba(23, 23, 23, 0.06),
+    0 0 0 1px rgba(23, 23, 23, 0.06);
   --shadow-card-hover:
-    0 4px 10px -2px rgba(17, 19, 24, 0.06),
-    0 14px 32px -10px rgba(17, 19, 24, 0.10),
-    0 0 0 1px rgba(17, 19, 24, 0.08);
+    0 4px 10px -2px rgba(23, 23, 23, 0.06),
+    0 14px 32px -10px rgba(23, 23, 23, 0.10),
+    0 0 0 1px rgba(23, 23, 23, 0.09);
   --shadow-floating:
-    0 6px 16px -4px rgba(17, 19, 24, 0.07),
-    0 18px 40px -12px rgba(17, 19, 24, 0.12),
-    0 0 0 1px rgba(17, 19, 24, 0.07);
+    0 6px 16px -4px rgba(23, 23, 23, 0.07),
+    0 18px 40px -12px rgba(23, 23, 23, 0.12),
+    0 0 0 1px rgba(23, 23, 23, 0.075);
   --shadow-composer:
-    0 2px 6px rgba(17, 19, 24, 0.04),
-    0 12px 32px -8px rgba(17, 19, 24, 0.09),
-    0 0 0 1px rgba(17, 19, 24, 0.08);
+    0 2px 6px rgba(23, 23, 23, 0.04),
+    0 12px 32px -8px rgba(23, 23, 23, 0.09),
+    0 0 0 1px rgba(23, 23, 23, 0.085);
   --shadow-composer-focus:
-    0 4px 14px -2px rgba(22, 104, 227, 0.10),
-    0 14px 36px -10px rgba(17, 19, 24, 0.10),
-    0 0 0 1.5px rgba(22, 104, 227, 0.36);
+    0 4px 14px -2px rgba(27, 79, 156, 0.10),
+    0 14px 36px -10px rgba(23, 23, 23, 0.10),
+    0 0 0 1.5px rgba(27, 79, 156, 0.36);
   --shadow-popover:
-    0 4px 12px rgba(17, 19, 24, 0.06),
-    0 18px 42px -10px rgba(17, 19, 24, 0.14),
-    0 0 0 1px rgba(17, 19, 24, 0.065);
+    0 4px 12px rgba(23, 23, 23, 0.06),
+    0 18px 42px -10px rgba(23, 23, 23, 0.14),
+    0 0 0 1px rgba(23, 23, 23, 0.07);
   --shadow-modal:
-    0 12px 32px rgba(17, 19, 24, 0.10),
-    0 28px 64px -16px rgba(17, 19, 24, 0.18),
-    0 0 0 1px rgba(17, 19, 24, 0.07);
-  --scrim: rgba(17, 19, 24, 0.22);
+    0 12px 32px rgba(23, 23, 23, 0.10),
+    0 28px 64px -16px rgba(23, 23, 23, 0.18),
+    0 0 0 1px rgba(23, 23, 23, 0.075);
+  --scrim: rgba(23, 23, 23, 0.24);
 
-  /* === 8. Typography Stack & Optical Scale (Locale-specialized in globals.css) === */
-  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+  /* === 8. Typography Triad & Optical Scale (Locale-specialized in globals.css) === */
+  --font-sans: var(--font-geist), "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
                "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
-  --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont,
+  --font-display: var(--font-jakarta), var(--font-geist), "SF Pro Display", -apple-system, BlinkMacSystemFont,
                   "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
-  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular,
+  --font-mono: var(--font-geist-mono), "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular,
                Menlo, Consolas, monospace;
 
   --fs-display: 1.625rem;                   /* 26px: Login title */
@@ -195,76 +203,83 @@
 }
 
 /* ==========================================================================
-   True Apple macOS Sequoia Dark Mode — Linear Obsidian Porcelain
+   Warm Carbon Obsidian Dark Mode (Zero Cold Blue Cast)
    Calibrated WCAG AA+ contrast across fills, washes, inks, and elevated planes.
    ========================================================================== */
 html[data-theme="dark"] {
   color-scheme: dark;
 
-  /* 1. Layered Obsidian Surface Hierarchy (clear plane separation: app -> sheet -> surface) */
-  --bg-app: #0C0E13;
-  --bg-sidebar: rgba(20, 24, 34, 0.86);
-  --bg-sidebar-solid: #141822;
-  --bg-header: rgba(20, 24, 34, 0.84);
-  --bg-header-solid: #141822;
-  --bg-sheet: #141822;
-  --bg-surface: #1E2332;
-  --bg-surface-subtle: #242A3B;
-  --bg-surface-tint: #252B3C;
-  --bg-surface-hover: #2C3347;
-  --bg-inset: #11141C;
+  /* 1. Layered Warm Carbon Obsidian Surface Hierarchy */
+  --bg-app: #111110;
+  --bg-sidebar: rgba(22, 22, 20, 0.88);
+  --bg-sidebar-solid: #161614;
+  --bg-header: rgba(22, 22, 20, 0.86);
+  --bg-header-solid: #161614;
+  --bg-sheet: #171614;
+  --bg-surface: #1D1C1A;
+  --bg-surface-subtle: #252420;
+  --bg-surface-tint: #21201D;
+  --bg-surface-hover: #2C2A26;
+  --bg-inset: #141312;
   --bg-glass: var(--bg-header);
-  --bg-hover: rgba(255, 255, 255, 0.06);
-  --bg-active: rgba(255, 255, 255, 0.105);
+  --bg-hover: rgba(244, 241, 236, 0.055);
+  --bg-active: rgba(244, 241, 236, 0.095);
 
   --bg-canvas: var(--bg-app);
   --bg-plane: var(--bg-sidebar-solid);
   --bg-plane-hover: var(--bg-surface-hover);
   --bg-subtle: var(--bg-surface-tint);
 
-  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(59, 139, 255, 0.095), transparent 72%);
-  --canvas-stage-bg: linear-gradient(155deg, #141926 0%, #0E1119 100%);
-  --canvas-footer-bg: rgba(20, 24, 34, 0.84);
+  --bg-login-glow: radial-gradient(ellipse 75% 65% at 72% 38%, rgba(110, 163, 242, 0.08), transparent 72%);
+  --canvas-stage-bg: linear-gradient(155deg, #1B1A18 0%, #121110 100%);
+  --canvas-footer-bg: rgba(22, 22, 20, 0.86);
 
-  /* 2. High-Contrast Obsidian Ink Hierarchy (WCAG AA+ on surface & tint) */
-  --ink-primary: #F2F4F8;
-  --ink-secondary: #BAC2D1;
-  --ink-muted: #8E98AA;                     /* >= 5.5:1 on --bg-surface, >= 4.95:1 on --bg-surface-tint */
-  --ink-faint: #636D80;                     /* Placeholders, decorative separators & disabled labels ONLY */
+  /* 2. High-Contrast Warm Bone Ink Hierarchy (WCAG AA+ on surface & tint) */
+  --ink-primary: #F4F1EC;
+  --ink-secondary: #C4BEB5;
+  --ink-muted: #969087;
+  --ink-faint: #6B665F;                     /* Placeholders, decorative separators & disabled labels ONLY */
 
-  /* 3. Precision Rim & Structural Hairlines */
-  --hairline: rgba(255, 255, 255, 0.09);
-  --hairline-strong: rgba(255, 255, 255, 0.16);
-  --hairline-subtle: rgba(255, 255, 255, 0.07);
-  --hairline-specular: rgba(255, 255, 255, 0.10);
-  --crosshair-mark: rgba(255, 255, 255, 0.18);
+  /* 3. Precision Warm Rim & Structural Hairlines */
+  --hairline: rgba(244, 241, 236, 0.085);
+  --hairline-strong: rgba(244, 241, 236, 0.16);
+  --hairline-subtle: rgba(244, 241, 236, 0.06);
+  --hairline-specular: rgba(244, 241, 236, 0.09);
+  --crosshair-mark: rgba(244, 241, 236, 0.16);
 
-  /* 4. Split AA+ Cobalt Accent (Solid Fills >= 4.63:1 w/ #FFF; Text on Wash >= 5.52:1) */
-  --accent: #3B8BFF;                        /* Icons & accent links on dark surfaces */
-  --accent-hover: #589CFF;
-  --accent-active: #2574EE;
-  --accent-solid: #1F6FEB;                  /* Solid primary buttons, pills, badges (4.63:1 with #FFF) */
-  --accent-solid-hover: #1A60D4;            /* Darker on hover (5.45:1 with #FFF) */
-  --accent-solid-active: #1553BC;
-  --accent-ink: #6AA6FF;                    /* Accent text on --accent-wash (5.52:1 AA+) */
+  /* 4. Steel-Cobalt Dark Accent & Warm Bone Primary CTA */
+  --accent: #6EA3F2;                        /* Icons & accent links on dark surfaces */
+  --accent-hover: #8BB7F7;
+  --accent-active: #4D88E5;
+  --accent-solid: #2563BE;                  /* Solid accent pills, badges */
+  --accent-solid-hover: #1E54A3;
+  --accent-solid-active: #17468C;
+  --accent-ink: #8BB7F7;                    /* Accent text on --accent-wash */
   --accent-fg: #FFFFFF;
-  --accent-wash: rgba(59, 139, 255, 0.15);
-  --accent-wash-strong: rgba(59, 139, 255, 0.24);
-  --accent-border: rgba(59, 139, 255, 0.38);
-  --accent-ring: rgba(59, 139, 255, 0.32);
+  --accent-wash: rgba(110, 163, 242, 0.14);
+  --accent-wash-strong: rgba(110, 163, 242, 0.22);
+  --accent-border: rgba(110, 163, 242, 0.34);
+  --accent-ring: rgba(110, 163, 242, 0.30);
+
+  --cta-bg: #F2EDE6;
+  --cta-hover: #FFFFFF;
+  --cta-active: #E4DDD2;
+  --cta-fg: #141311;
+  --cta-shadow: 0 1px 2px rgba(0, 0, 0, 0.38);
+  --cta-shadow-hover: 0 4px 14px -2px rgba(0, 0, 0, 0.52);
 
   /* Agent & iMessage Bubble Dark Material */
-  --agent-surface: linear-gradient(145deg, #18253C 0%, #131C2E 100%);
-  --agent-bubble-bg: #202636;
-  --agent-ring: rgba(59, 139, 255, 0.34);
-  --bubble-sent-bg: #1F6FEB;                /* AA+ 4.63:1 with #FFFFFF */
-  --bubble-sent-ink: #FFFFFF;
-  --bubble-received-bg: #202636;
-  --bubble-received-ink: #F2F4F8;
+  --agent-surface: linear-gradient(145deg, #242320 0%, #1A1917 100%);
+  --agent-bubble-bg: #252420;
+  --agent-ring: rgba(244, 241, 236, 0.16);
+  --bubble-sent-bg: #2557A0;
+  --bubble-sent-ink: #FAF8F5;
+  --bubble-received-bg: #252420;
+  --bubble-received-ink: #F4F1EC;
 
   /* Dark-Calibrated Avatar Identity Washes */
-  --avatar-tone-0-bg: rgba(59, 139, 255, 0.17);
-  --avatar-tone-0-ink: #82B8FF;
+  --avatar-tone-0-bg: rgba(110, 163, 242, 0.16);
+  --avatar-tone-0-ink: #8BB7F7;
   --avatar-tone-1-bg: rgba(52, 211, 153, 0.16);
   --avatar-tone-1-ink: #6EE7B7;
   --avatar-tone-2-bg: rgba(56, 189, 248, 0.16);
@@ -273,8 +288,8 @@ html[data-theme="dark"] {
   --avatar-tone-3-ink: #FCD34D;
 
   /* Scrollbars */
-  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+  --scrollbar-thumb: rgba(244, 241, 236, 0.16);
+  --scrollbar-thumb-hover: rgba(244, 241, 236, 0.28);
 
   /* 5. AA+ Calibrated Dark Semantic Status Tokens */
   --status-emerald: #34D399;
@@ -292,49 +307,49 @@ html[data-theme="dark"] {
   --status-crimson-wash: rgba(248, 113, 113, 0.15);
   --status-crimson-border: rgba(248, 113, 113, 0.30);
 
-  --status-neutral: #9AA5B8;
-  --status-neutral-wash: rgba(148, 163, 184, 0.15);
-  --status-neutral-border: rgba(148, 163, 184, 0.26);
+  --status-neutral: #A8A29A;
+  --status-neutral-wash: rgba(168, 162, 154, 0.14);
+  --status-neutral-border: rgba(168, 162, 154, 0.25);
 
-  /* 7. Layered Obsidian Ambient Shadows + Clear 0.09 Rim Elevation */
+  /* 7. Layered Obsidian Ambient Shadows + Warm Rim Elevation */
   --shadow-subtle:
     0 1px 2px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 0 0 1px rgba(255, 255, 255, 0.08);
+    inset 0 1px 0 rgba(244, 241, 236, 0.05),
+    0 0 0 1px rgba(244, 241, 236, 0.08);
   --shadow-card:
     0 1px 2px rgba(0, 0, 0, 0.48),
     0 6px 20px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 0 0 1px rgba(255, 255, 255, 0.09);
+    inset 0 1px 0 rgba(244, 241, 236, 0.06),
+    0 0 0 1px rgba(244, 241, 236, 0.09);
   --shadow-card-hover:
     0 4px 12px rgba(0, 0, 0, 0.52),
     0 14px 32px rgba(0, 0, 0, 0.40),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09),
-    0 0 0 1px rgba(255, 255, 255, 0.13);
+    inset 0 1px 0 rgba(244, 241, 236, 0.09),
+    0 0 0 1px rgba(244, 241, 236, 0.13);
   --shadow-floating:
     0 8px 20px rgba(0, 0, 0, 0.52),
     0 20px 44px rgba(0, 0, 0, 0.44),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 0 0 1px rgba(255, 255, 255, 0.11);
+    inset 0 1px 0 rgba(244, 241, 236, 0.07),
+    0 0 0 1px rgba(244, 241, 236, 0.11);
   --shadow-composer:
     0 2px 8px rgba(0, 0, 0, 0.46),
     0 14px 34px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 0 0 1px rgba(255, 255, 255, 0.10);
+    inset 0 1px 0 rgba(244, 241, 236, 0.07),
+    0 0 0 1px rgba(244, 241, 236, 0.10);
   --shadow-composer-focus:
-    0 4px 16px rgba(59, 139, 255, 0.18),
+    0 4px 16px rgba(110, 163, 242, 0.16),
     0 14px 36px rgba(0, 0, 0, 0.44),
-    0 0 0 1.5px rgba(59, 139, 255, 0.48);
+    0 0 0 1.5px rgba(110, 163, 242, 0.44);
   --shadow-popover:
     0 6px 18px rgba(0, 0, 0, 0.54),
     0 22px 48px rgba(0, 0, 0, 0.46),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 0 0 1px rgba(255, 255, 255, 0.11);
+    inset 0 1px 0 rgba(244, 241, 236, 0.08),
+    0 0 0 1px rgba(244, 241, 236, 0.11);
   --shadow-modal:
     0 16px 40px rgba(0, 0, 0, 0.62),
     0 32px 72px rgba(0, 0, 0, 0.54),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 0 0 1px rgba(255, 255, 255, 0.11);
+    inset 0 1px 0 rgba(244, 241, 236, 0.08),
+    0 0 0 1px rgba(244, 241, 236, 0.11);
   --scrim: rgba(0, 0, 0, 0.58);
 }
 
@@ -415,7 +430,7 @@ html[data-theme-switching="true"] *::after {
     border-color 220ms ease;
 }
 
-/* Light-mode porcelain specular sheen — soft light + whisper cobalt refraction */
+/* Light-mode alabaster specular sheen — warm platinum + subtle navy-cobalt refraction */
 .aios-3d-sheen {
   position: absolute;
   inset: 0;
@@ -426,22 +441,22 @@ html[data-theme-switching="true"] *::after {
   transition: opacity 240ms ease-out;
   background: radial-gradient(
     circle 260px at var(--sheen-x, 50%) var(--sheen-y, 50%),
-    rgba(255, 255, 255, var(--sheen-alpha, 0.48)) 0%,
-    rgba(22, 104, 227, 0.04) 42%,
+    rgba(255, 253, 249, var(--sheen-alpha, 0.50)) 0%,
+    rgba(27, 79, 156, 0.038) 42%,
     transparent 72%
   );
   box-shadow: inset 0 1px 0 var(--hairline-specular);
 }
 
-/* Dark-mode obsidian specular sheen — restrained rim light (never washed white) */
+/* Dark-mode warm obsidian specular sheen — warm platinum + subtle steel-cobalt rim light */
 html[data-theme="dark"] .aios-3d-sheen {
   background: radial-gradient(
     circle 260px at var(--sheen-x, 50%) var(--sheen-y, 50%),
-    rgba(255, 255, 255, var(--sheen-alpha-dark, 0.09)) 0%,
-    rgba(59, 139, 255, 0.05) 42%,
+    rgba(244, 241, 236, var(--sheen-alpha-dark, 0.085)) 0%,
+    rgba(110, 163, 242, 0.045) 42%,
     transparent 72%
   );
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(244, 241, 236, 0.09);
 }
 
 /* ==========================================================================

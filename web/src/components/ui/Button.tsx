@@ -21,7 +21,7 @@ export interface ButtonProps
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[0_1px_2px_rgba(22,104,227,0.22)] hover:bg-[var(--accent-solid-hover)] hover:shadow-[0_4px_12px_-2px_rgba(22,104,227,0.32)] active:bg-[var(--accent-solid-active)] disabled:bg-[var(--bg-surface-subtle)] disabled:text-[var(--ink-muted)] disabled:shadow-none disabled:opacity-75",
+    "bg-[var(--cta-bg)] text-[var(--cta-fg)] shadow-[var(--cta-shadow)] hover:bg-[var(--cta-hover)] hover:shadow-[var(--cta-shadow-hover)] active:bg-[var(--cta-active)] disabled:bg-[var(--bg-surface-subtle)] disabled:text-[var(--ink-muted)] disabled:shadow-none disabled:opacity-75",
   secondary:
     "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface-tint)] hover:shadow-[var(--shadow-card)] disabled:opacity-45",
   ghost:

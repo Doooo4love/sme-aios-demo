@@ -51,6 +51,7 @@ import {
   LanguageSwitcher,
   ThemeToggle,
 } from "@/components/ui/PreferencesControls";
+import { TheodicLogo } from "@/components/ui/TheodicBrand";
 import { fetchRoomMessages } from "@/features/chat/api";
 import { createChatRoom, fetchChatRooms } from "@/features/inbox/api";
 import {
@@ -561,15 +562,27 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
             : "hidden lg:flex lg:w-[var(--sidebar-w)] lg:shrink-0",
         ].join(" ")}
       >
-        {/* Top Sidebar Header: Tenant Monogram + Title + Contacts Directory & New Group */}
+        {/* Top Sidebar Header: Theodic Wordmark + Tenant Monogram + Accessible Title + Contacts Directory & New Group */}
         <div className="flex shrink-0 items-center justify-between gap-2 px-3.5 pt-3.5 pb-2">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--bg-surface)] font-mono-code text-[11px] font-semibold text-[var(--accent)] shadow-[var(--shadow-subtle)]">
-              {actor ? getTenantMark(actor.tenant) : "AI"}
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              href="/inbox/assistant"
+              aria-label={t("brand.name")}
+              className="inline-flex shrink-0 items-center rounded-xs opacity-95 hover:opacity-100 transition-opacity duration-[150ms]"
+            >
+              <TheodicLogo height={18} />
+            </Link>
+            <span
+              aria-hidden="true"
+              className="h-3.5 w-px shrink-0 bg-[var(--hairline-strong)]"
+            />
+            <span
+              title={actor?.tenant}
+              className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-surface)] px-1.5 font-mono-code text-[10.5px] font-semibold text-[var(--accent-ink)] shadow-[var(--shadow-subtle)]"
+            >
+              {actor ? getTenantMark(actor.tenant) : "TD"}
             </span>
-            <h1 className="truncate text-[16px] font-semibold tracking-[-0.02em] text-[var(--ink-primary)]">
-              {t("inbox.title")}
-            </h1>
+            <h1 className="sr-only">{t("inbox.title")}</h1>
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
