@@ -1,0 +1,17 @@
+{
+  "name": "aios-demo-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-secret Cloudflare Workers VPC reverse proxy for SME AIOS demo origin",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/worker.test.mjs",
+    "deploy": "./deploy-worker.sh"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250501.0",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.40.0"
+  }
+}

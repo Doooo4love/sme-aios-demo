@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "aios-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-15",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  // Populate via ./deploy-worker.sh (generates gitignored .wrangler-deploy.jsonc with the real VPC service ID).
+  "vpc_services": [
+    {
+      "binding": "AIOS_ORIGIN",
+      "service_id": "REPLACE_WITH_VPC_SERVICE_ID",
+      "remote": true
+    }
+  ]
+}
