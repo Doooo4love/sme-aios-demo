@@ -93,6 +93,10 @@ export function ChannelsHubPanel() {
   const [logChannelFilter, setLogChannelFilter] = useState<string>("ALL");
 
   const relaySectionRef = useRef<HTMLElement | null>(null);
+  const channelScope: "tenant" | "mine" =
+    actor?.role === "admin" && Boolean(actor?.grants.includes("operations.manage"))
+      ? "tenant"
+      : "mine";
 
   const loadAll = useCallback(
     async (signal?: AbortSignal) => {
@@ -102,8 +106,8 @@ export function ChannelsHubPanel() {
       try {
         const [catRes, bindRes, outRes] = await Promise.all([
           fetchChannelsCatalog(signal),
-          fetchChannelBindings(signal),
-          fetchChannelOutbound({ limit: 30 }, signal),
+          fetchChannelBindings({ scope: channelScope }, signal),
+          fetchChannelOutbound({ limit: 30, scope: channelScope }, signal),
         ]);
         if (signal?.aborted) return;
         const sortedCatalog = [...(catRes.items ?? [])].sort((a, b) => {
@@ -114,11 +118,12 @@ export function ChannelsHubPanel() {
         setCatalog(sortedCatalog);
         setBindings(bindRes.items ?? []);
         setOutboundLog(outRes.items ?? []);
-        if (
-          sortedCatalog.length > 0 &&
-          !sortedCatalog.some((c) => c.channel_id === relayChannelId)
-        ) {
-          setRelayChannelId(sortedCatalog[0]!.channel_id);
+        if (sortedCatalog.length > 0) {
+          setRelayChannelId((prev) =>
+            sortedCatalog.some((c) => c.channel_id === prev)
+              ? prev
+              : sortedCatalog[0]!.channel_id,
+          );
         }
       } catch (err) {
         if (isStaleAuthError(err)) return;
@@ -133,7 +138,7 @@ export function ChannelsHubPanel() {
         setLoading(false);
       }
     },
-    [canAccessAdminOps, handleAccessChanged, relayChannelId],
+    [canAccessAdminOps, channelScope, handleAccessChanged],
   );
 
   useEffect(() => {
