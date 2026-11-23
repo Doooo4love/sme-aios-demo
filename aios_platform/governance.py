@@ -5,13 +5,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+import httpx
 from pydantic import Field, model_validator
 
 from aios_demo.storage import canonical
@@ -20,8 +23,14 @@ from .collaboration import notify, subject_tx
 from .contracts import Actor, Grant, Identifier, Strict
 from .events import EventHub, WorkEvent
 from .module_access import Subject
-from .providers import action_sites, approval_sites, order_read_sites
-from .security_guard import GuardVerdict, evaluate_email_payload, scrub_secrets
+from .providers import action_sites, approval_sites, https_base, order_read_sites
+from .security_guard import (
+    DEFAULT_WORK_APP_ALLOWLIST,
+    GuardVerdict,
+    evaluate_email_payload,
+    evaluate_work_boundary,
+    scrub_secrets,
+)
 from .workflow import Conflict, Workflow
 
 PROMPT_SCOPES: tuple[str, ...] = (
@@ -258,6 +267,69 @@ class SecurityEventUpdate(Strict):
     status: Literal["open", "acknowledged", "resolved"]
     resolution_note: Annotated[str, Field(max_length=400)] | None = None
     expected_status: Literal["open", "acknowledged", "resolved"] | None = None
+
+
+DEFAULT_OFF_TOPIC_ROUTING_RULES: dict[str, list[str]] = {
+    "operator": ["manager"],
+    "viewer": ["manager"],
+    "quality": ["manager", "executive"],
+    "finance": ["executive"],
+    "manager": ["executive", "legal"],
+    "other-manager": ["executive", "legal"],
+    "admin": ["executive", "legal"],
+    "access-admin": ["executive", "legal"],
+    "legal": ["executive"],
+    "executive": ["legal"],
+}
+
+_CHANNEL_RELAY_IDS: tuple[str, ...] = (
+    "whatsapp",
+    "wecom",
+    "feishu",
+    "dingtalk",
+    "slack",
+    "teams",
+    "telegram",
+    "line",
+)
+
+
+def _optional_env_or_file(name: str) -> str | None:
+    file_path = (os.getenv(name + "_FILE") or "").strip()
+    if file_path:
+        path = Path(file_path)
+        if path.is_file():
+            val = path.read_text().strip()
+            return val or None
+    val = (os.getenv(name) or "").strip()
+    return val or None
+
+
+class OffTopicPolicyUpdate(Strict):
+    daily_remind_threshold: Annotated[int, Field(strict=True, ge=1, le=100)] | None = None
+    daily_escalate_threshold: Annotated[int, Field(strict=True, ge=1, le=500)] | None = None
+    seven_day_escalate_threshold: Annotated[int, Field(strict=True, ge=1, le=2000)] | None = None
+    daily_local_auto_escalate_threshold: Annotated[int, Field(strict=True, ge=1, le=500)] | None = None
+    app_allowlist: Annotated[list[Annotated[str, Field(min_length=1, max_length=120)]], Field(max_length=100)] | None = (
+        None
+    )
+    routing_rules: dict[
+        Annotated[str, Field(min_length=1, max_length=64)],
+        Annotated[list[Subject], Field(max_length=20)],
+    ] | None = None
+
+
+class QuotaPolicyUpdate(Strict):
+    scope_type: Literal["tenant", "role", "subject"]
+    scope_key: Subject
+    daily_usd_limit: Annotated[float, Field(ge=0.0, le=1_000_000.0)] | None = None
+    daily_token_limit: Annotated[int, Field(strict=True, ge=0, le=2_000_000_000)] | None = None
+
+    @model_validator(mode="after")
+    def reject_bool_usd_limit(self):
+        if isinstance(self.daily_usd_limit, bool):
+            raise ValueError("daily_usd_limit must be numeric")
+        return self
 
 
 class EmailOutboxCreate(Strict):
@@ -543,6 +615,9 @@ class GovernanceService:
         verdict: GuardVerdict | None = None,
         status: Literal["open", "acknowledged", "resolved"] = "open",
         publish_alert: bool = True,
+        redact_preview: bool = False,
+        notify_recipients: Iterable[str] = (),
+        notify_kind: str | None = None,
     ) -> dict:
         resolved_category = category or (verdict.category if verdict and verdict.category else "SECURITY_POLICY_EVENT")
         resolved_severity = severity or (verdict.severity if verdict else "medium")
@@ -562,14 +637,22 @@ class GovernanceService:
         ).strip()[:400]
 
         input_sha256 = sha256(raw_input.encode("utf-8")).hexdigest()
-        scrubbed_preview = re.sub(r"\s+", " ", scrub_secrets(raw_input)).strip()[:240]
+        scrubbed_preview = (
+            "[REDACTED_PRIVACY_POLICY]"
+            if redact_preview
+            else re.sub(r"\s+", " ", scrub_secrets(raw_input)).strip()[:240]
+        )
 
         safe_metadata: dict = _scrub_metadata_value(metadata or {})
         if not isinstance(safe_metadata, dict):
             safe_metadata = {}
         safe_metadata["preview"] = scrubbed_preview
+        if redact_preview:
+            safe_metadata["privacy_redacted"] = True
         if resolved_rule:
             safe_metadata["matched_rule"] = resolved_rule
+
+        clean_notify = sorted({s for s in notify_recipients if s and s != actor.subject})
 
         now = time.time()
         event_id = uuid4().hex
@@ -622,6 +705,9 @@ class GovernanceService:
                 "PROMPT_POLICY_RESET",
             }:
                 self.workflow._audit(run, actor.tenant, actor.subject, event_id, "SECURITY_ANOMALY_BLOCKED")
+
+            if notify_kind and clean_notify:
+                notify(run, actor.tenant, clean_notify, notify_kind, event_id)
 
             row = run(
                 "SELECT * FROM aios_security_event WHERE tenant = ? AND id = ?",
@@ -954,6 +1040,524 @@ class GovernanceService:
             ).fetchall()
         return [self._format_outbox_row(dict(row)) for row in rows]
 
+    def _ensure_off_topic_tables(self, run) -> None:
+        if self.workflow.db.dsn:
+            exists = run("SELECT to_regclass('aios_off_topic_policy') AS reg").fetchone()
+            if exists and exists["reg"] is not None:
+                return
+        else:
+            exists = run(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'aios_off_topic_policy'"
+            ).fetchone()
+            if exists is not None:
+                return
+        run(
+            """CREATE TABLE IF NOT EXISTS aios_off_topic_policy (
+                   tenant TEXT PRIMARY KEY,
+                   daily_remind_threshold INTEGER NOT NULL DEFAULT 1,
+                   daily_escalate_threshold INTEGER NOT NULL DEFAULT 5,
+                   seven_day_escalate_threshold INTEGER NOT NULL DEFAULT 12,
+                   daily_local_auto_escalate_threshold INTEGER NOT NULL DEFAULT 2,
+                   app_allowlist_json TEXT NOT NULL,
+                   routing_rules_json TEXT NOT NULL,
+                   updated_by TEXT NOT NULL,
+                   updated_at DOUBLE PRECISION NOT NULL
+               )"""
+        )
+
+    @staticmethod
+    def _default_off_topic_policy(tenant: str) -> dict[str, Any]:
+        return {
+            "tenant": tenant,
+            "daily_remind_threshold": 1,
+            "daily_escalate_threshold": 5,
+            "seven_day_escalate_threshold": 12,
+            "daily_local_auto_escalate_threshold": 2,
+            "app_allowlist": list(DEFAULT_WORK_APP_ALLOWLIST),
+            "routing_rules": {k: list(v) for k, v in DEFAULT_OFF_TOPIC_ROUTING_RULES.items()},
+            "updated_by": "system_default",
+            "updated_at": 0.0,
+        }
+
+    @classmethod
+    def _format_off_topic_policy(cls, row: dict[str, Any]) -> dict[str, Any]:
+        defaults = cls._default_off_topic_policy(str(row["tenant"]))
+        try:
+            raw_apps = json.loads(row["app_allowlist_json"])
+            apps = [str(item) for item in raw_apps if isinstance(item, str) and item.strip()] if isinstance(raw_apps, list) else defaults["app_allowlist"]
+        except (TypeError, ValueError):
+            apps = defaults["app_allowlist"]
+        try:
+            raw_rules = json.loads(row["routing_rules_json"])
+            if isinstance(raw_rules, dict):
+                rules = {
+                    str(k): [str(s) for s in v if isinstance(s, str) and s.strip()]
+                    for k, v in raw_rules.items()
+                    if isinstance(k, str) and isinstance(v, list)
+                }
+            else:
+                rules = defaults["routing_rules"]
+        except (TypeError, ValueError):
+            rules = defaults["routing_rules"]
+
+        return {
+            "tenant": str(row["tenant"]),
+            "daily_remind_threshold": int(row["daily_remind_threshold"]),
+            "daily_escalate_threshold": int(row["daily_escalate_threshold"]),
+            "seven_day_escalate_threshold": int(row["seven_day_escalate_threshold"]),
+            "daily_local_auto_escalate_threshold": int(row["daily_local_auto_escalate_threshold"]),
+            "app_allowlist": apps,
+            "routing_rules": rules,
+            "updated_by": str(row["updated_by"]),
+            "updated_at": float(row["updated_at"]),
+        }
+
+    def get_off_topic_policy(self, tenant: str) -> dict[str, Any]:
+        clean_tenant = _clean_text(tenant, max_len=64)
+        with self.workflow.tx(clean_tenant, write=False) as run:
+            self._ensure_off_topic_tables(run)
+            row = run(
+                "SELECT * FROM aios_off_topic_policy WHERE tenant = ?",
+                (clean_tenant,),
+            ).fetchone()
+        if row is None:
+            return self._default_off_topic_policy(clean_tenant)
+        return self._format_off_topic_policy(dict(row))
+
+    @staticmethod
+    def _validate_threshold(value: Any, *, name: str, upper: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > upper:
+            raise ValueError(f"{name} must be an integer between 1 and {upper}")
+        return value
+
+    def update_off_topic_policy(self, actor: Actor, policy_update: dict[str, Any]) -> dict[str, Any]:
+        if actor.role != "admin" or "operations.manage" not in actor.grants:
+            raise PermissionError("Administrator operations permission required")
+        if not isinstance(policy_update, dict):
+            raise ValueError("Invalid off-topic policy update payload")
+
+        allowed_keys = {
+            "daily_remind_threshold",
+            "daily_escalate_threshold",
+            "seven_day_escalate_threshold",
+            "daily_local_auto_escalate_threshold",
+            "app_allowlist",
+            "routing_rules",
+        }
+        unknown_keys = set(policy_update) - allowed_keys
+        if unknown_keys:
+            raise ValueError(f"Unsupported off-topic policy fields: {', '.join(sorted(unknown_keys))}")
+
+        with self.workflow.tx(actor.tenant, bounded=True) as run:
+            if self.workflow._suspended(run, actor.tenant, actor.subject):
+                raise PermissionError("Account access is suspended")
+            self._ensure_off_topic_tables(run)
+            existing = run(
+                "SELECT * FROM aios_off_topic_policy WHERE tenant = ?",
+                (actor.tenant,),
+            ).fetchone()
+            current = (
+                self._format_off_topic_policy(dict(existing))
+                if existing is not None
+                else self._default_off_topic_policy(actor.tenant)
+            )
+
+            daily_remind = (
+                self._validate_threshold(
+                    policy_update["daily_remind_threshold"], name="daily_remind_threshold", upper=100
+                )
+                if "daily_remind_threshold" in policy_update and policy_update["daily_remind_threshold"] is not None
+                else current["daily_remind_threshold"]
+            )
+            daily_escalate = (
+                self._validate_threshold(
+                    policy_update["daily_escalate_threshold"], name="daily_escalate_threshold", upper=500
+                )
+                if "daily_escalate_threshold" in policy_update and policy_update["daily_escalate_threshold"] is not None
+                else current["daily_escalate_threshold"]
+            )
+            seven_day_escalate = (
+                self._validate_threshold(
+                    policy_update["seven_day_escalate_threshold"], name="seven_day_escalate_threshold", upper=2000
+                )
+                if "seven_day_escalate_threshold" in policy_update
+                and policy_update["seven_day_escalate_threshold"] is not None
+                else current["seven_day_escalate_threshold"]
+            )
+            daily_local_auto = (
+                self._validate_threshold(
+                    policy_update["daily_local_auto_escalate_threshold"],
+                    name="daily_local_auto_escalate_threshold",
+                    upper=500,
+                )
+                if "daily_local_auto_escalate_threshold" in policy_update
+                and policy_update["daily_local_auto_escalate_threshold"] is not None
+                else current["daily_local_auto_escalate_threshold"]
+            )
+
+            if "app_allowlist" in policy_update and policy_update["app_allowlist"] is not None:
+                raw_apps = policy_update["app_allowlist"]
+                if not isinstance(raw_apps, list) or len(raw_apps) > 100:
+                    raise ValueError("app_allowlist must be a list of at most 100 entries")
+                cleaned_apps: list[str] = []
+                seen_apps: set[str] = set()
+                for entry in raw_apps:
+                    if not isinstance(entry, str):
+                        raise ValueError("app_allowlist entries must be strings")
+                    clean_app = _clean_text(entry, max_len=120, allow_newlines=False)
+                    low = clean_app.lower()
+                    if low not in seen_apps:
+                        seen_apps.add(low)
+                        cleaned_apps.append(clean_app)
+                app_allowlist = cleaned_apps
+            else:
+                app_allowlist = current["app_allowlist"]
+
+            if "routing_rules" in policy_update and policy_update["routing_rules"] is not None:
+                raw_rules = policy_update["routing_rules"]
+                if not isinstance(raw_rules, dict) or len(raw_rules) > 50:
+                    raise ValueError("routing_rules must be a mapping with at most 50 entries")
+                cleaned_rules: dict[str, list[str]] = {}
+                for role_key, targets in raw_rules.items():
+                    if not isinstance(role_key, str) or not isinstance(targets, list) or len(targets) > 20:
+                        raise ValueError("Invalid routing_rules entry")
+                    clean_key = _clean_text(role_key, max_len=64, allow_newlines=False)
+                    cleaned_targets: list[str] = []
+                    seen_targets: set[str] = set()
+                    for target in targets:
+                        if not isinstance(target, str):
+                            raise ValueError("routing_rules targets must be strings")
+                        clean_target = _clean_text(target, max_len=150, allow_newlines=False)
+                        if clean_target not in seen_targets:
+                            seen_targets.add(clean_target)
+                            cleaned_targets.append(clean_target)
+                    cleaned_rules[clean_key] = cleaned_targets
+                routing_rules = cleaned_rules
+            else:
+                routing_rules = current["routing_rules"]
+
+            now = time.time()
+            apps_json = json.dumps(app_allowlist, ensure_ascii=False)
+            rules_json = canonical(routing_rules)
+            run(
+                """INSERT INTO aios_off_topic_policy
+                   (tenant, daily_remind_threshold, daily_escalate_threshold, seven_day_escalate_threshold,
+                    daily_local_auto_escalate_threshold, app_allowlist_json, routing_rules_json,
+                    updated_by, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (tenant) DO UPDATE SET
+                       daily_remind_threshold = excluded.daily_remind_threshold,
+                       daily_escalate_threshold = excluded.daily_escalate_threshold,
+                       seven_day_escalate_threshold = excluded.seven_day_escalate_threshold,
+                       daily_local_auto_escalate_threshold = excluded.daily_local_auto_escalate_threshold,
+                       app_allowlist_json = excluded.app_allowlist_json,
+                       routing_rules_json = excluded.routing_rules_json,
+                       updated_by = excluded.updated_by,
+                       updated_at = excluded.updated_at""",
+                (
+                    actor.tenant,
+                    daily_remind,
+                    daily_escalate,
+                    seven_day_escalate,
+                    daily_local_auto,
+                    apps_json,
+                    rules_json,
+                    actor.subject,
+                    now,
+                ),
+            )
+            self.workflow._audit(run, actor.tenant, actor.subject, "off-topic-policy", "OFF_TOPIC_POLICY_UPDATED")
+            stored = run(
+                "SELECT * FROM aios_off_topic_policy WHERE tenant = ?",
+                (actor.tenant,),
+            ).fetchone()
+
+        return self._format_off_topic_policy(dict(stored))
+
+    def _relay_off_topic_escalation_channels(
+        self,
+        tenant: str,
+        recipients: list[str],
+        work_event: WorkEvent,
+    ) -> None:
+        """Best-effort, non-blocking, privacy-redacted webhook relay for verified supervisor bindings."""
+        if not recipients:
+            return
+        configured: dict[str, tuple[str, str | None]] = {}
+        for cid in _CHANNEL_RELAY_IDS:
+            prefix = cid.upper()
+            raw_url = _optional_env_or_file(f"AIOS_CHANNEL_{prefix}_WEBHOOK_URL")
+            if not raw_url:
+                continue
+            try:
+                safe_url = https_base(raw_url)
+            except ValueError:
+                continue
+            bearer = _optional_env_or_file(f"AIOS_CHANNEL_{prefix}_WEBHOOK_BEARER")
+            configured[cid] = (safe_url, bearer)
+        if not configured:
+            return
+
+        bindings: list[dict[str, Any]] = []
+        try:
+            with self.workflow.tx(tenant, write=False) as run:
+                if self.workflow.db.dsn:
+                    exists = run("SELECT to_regclass('aios_channel_binding') AS reg").fetchone()
+                    has_table = bool(exists and exists["reg"] is not None)
+                else:
+                    exists = run(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'aios_channel_binding'"
+                    ).fetchone()
+                    has_table = exists is not None
+                if not has_table:
+                    return
+                marks = ",".join("?" for _ in recipients)
+                rows = run(
+                    f"""SELECT channel_id, subject, external_user_id, display_handle
+                        FROM aios_channel_binding
+                        WHERE tenant = ? AND verified = 1 AND subject IN ({marks})""",
+                    (tenant, *recipients),
+                ).fetchall()
+                bindings = [dict(r) for r in rows]
+        except Exception:
+            return
+
+        deliveries: list[tuple[str, str | None, dict[str, Any]]] = []
+        redacted_text = f"{work_event.title} — {work_event.subtitle}"
+        for row in bindings:
+            cid = str(row.get("channel_id") or "").lower()
+            target_cfg = configured.get(cid)
+            if not target_cfg:
+                continue
+            url, bearer = target_cfg
+            target_handle = str(row.get("external_user_id") or row.get("display_handle") or "").strip()
+            if not target_handle:
+                continue
+            deliveries.append(
+                (
+                    url,
+                    bearer,
+                    {
+                        "channel_id": cid,
+                        "tenant": tenant,
+                        "target_handle": target_handle,
+                        "recipient_subject": row.get("subject"),
+                        "kind": "off_topic_escalation",
+                        "reference": work_event.reference,
+                        "text": redacted_text,
+                        "privacy_redacted": True,
+                    },
+                )
+            )
+        if not deliveries:
+            return
+
+        def _dispatch() -> None:
+            try:
+                with httpx.Client(follow_redirects=False, timeout=2.0, trust_env=False) as client:
+                    for url, bearer, payload in deliveries:
+                        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                        if bearer:
+                            headers["Authorization"] = f"Bearer {bearer}"
+                        try:
+                            client.post(url, json=payload, headers=headers)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        threading.Thread(target=_dispatch, name="aios-offtopic-relay", daemon=True).start()
+
+    def evaluate_and_record_off_topic(
+        self,
+        actor: Actor,
+        *,
+        text: str,
+        locale: str = "zh-CN",
+        requested_app: str | None = None,
+        estimated_usd: float = 0.0,
+    ) -> dict[str, Any] | None:
+        policy = self.get_off_topic_policy(actor.tenant)
+        effective_allowlist = (
+            None if policy.get("updated_by") == "system_default" else policy["app_allowlist"]
+        )
+        verdict = evaluate_work_boundary(
+            actor,
+            text,
+            requested_app=requested_app,
+            app_allowlist=effective_allowlist,
+        )
+        if not verdict.is_off_topic or not verdict.category:
+            return None
+
+        now = time.time()
+        since_24h = now - 86_400
+        since_7d = now - 7 * 86_400
+        with self.workflow.tx(actor.tenant, write=False) as run:
+            count_row = run(
+                """SELECT
+                       COALESCE(SUM(CASE WHEN created_at >= ? AND category = 'OFF_TOPIC_PERSONAL_CHAT' THEN 1 ELSE 0 END), 0) AS chat_24h,
+                       COALESCE(SUM(CASE WHEN created_at >= ? AND category = 'OFF_TOPIC_LOCAL_AUTOMATION' THEN 1 ELSE 0 END), 0) AS local_24h,
+                       COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) AS total_7d
+                   FROM aios_security_event
+                   WHERE tenant = ? AND subject = ?
+                     AND category IN ('OFF_TOPIC_PERSONAL_CHAT', 'OFF_TOPIC_LOCAL_AUTOMATION')
+                     AND created_at >= ?""",
+                (since_24h, since_24h, since_7d, actor.tenant, actor.subject, since_7d),
+            ).fetchone()
+            sec_row = run(
+                """SELECT COUNT(*) AS sec_7d
+                   FROM aios_security_event
+                   WHERE tenant = ? AND subject = ?
+                     AND severity IN ('high', 'critical')
+                     AND category NOT IN ('OFF_TOPIC_PERSONAL_CHAT', 'OFF_TOPIC_LOCAL_AUTOMATION')
+                     AND created_at >= ?""",
+                (actor.tenant, actor.subject, since_7d),
+            ).fetchone()
+
+        daily_chat = int(count_row["chat_24h"] or 0) + (1 if verdict.category == "OFF_TOPIC_PERSONAL_CHAT" else 0)
+        daily_local_auto = int(count_row["local_24h"] or 0) + (
+            1 if verdict.category == "OFF_TOPIC_LOCAL_AUTOMATION" else 0
+        )
+        daily_total = daily_chat + daily_local_auto
+        seven_day_total = int(count_row["total_7d"] or 0) + 1
+        seven_day_security_high = int(sec_row["sec_7d"] or 0)
+        counts = {
+            "daily_total": daily_total,
+            "daily_chat": daily_chat,
+            "daily_local_auto": daily_local_auto,
+            "seven_day_total": seven_day_total,
+            "seven_day_security_high": seven_day_security_high,
+        }
+
+        is_l3 = (
+            daily_total >= policy["daily_escalate_threshold"]
+            or seven_day_total >= policy["seven_day_escalate_threshold"]
+            or (
+                verdict.category == "OFF_TOPIC_LOCAL_AUTOMATION"
+                and daily_local_auto >= policy["daily_local_auto_escalate_threshold"]
+            )
+        )
+        is_l2 = (not is_l3) and (verdict.category == "OFF_TOPIC_LOCAL_AUTOMATION" or daily_total > 2)
+
+        recipients: list[str] = []
+        if is_l3:
+            routing_rules: dict[str, list[str]] = policy["routing_rules"]
+            candidates = list(
+                routing_rules.get(actor.subject)
+                or routing_rules.get(actor.role)
+                or ["manager"]
+            )
+            if seven_day_security_high > 0:
+                for extra in ("access-admin", "legal"):
+                    if extra not in candidates:
+                        candidates.append(extra)
+            seen_recipients: set[str] = set()
+            for candidate in candidates:
+                if not candidate or candidate == actor.subject or candidate in seen_recipients:
+                    continue
+                if self.known_subject is not None and not self.known_subject(actor.tenant, candidate):
+                    continue
+                seen_recipients.add(candidate)
+                recipients.append(candidate)
+
+        cost_val = max(0.0, float(estimated_usd or 0.0))
+        if is_l3:
+            level = "L3"
+            severity: Literal["info", "medium", "high", "critical"] = "high"
+            decision: Literal["blocked", "denied", "flagged", "escalated"] = "escalated"
+            status: Literal["open", "acknowledged", "resolved"] = "open"
+            message = verdict.localized_refusal(locale)
+            summary = (
+                f"Employee {actor.subject} ({actor.role}) reached L3 escalation [{verdict.category}]: "
+                f"24h={daily_total}, 7d={seven_day_total}, estimated_usd=${cost_val:.4f}"
+            )
+        elif is_l2:
+            level = "L2"
+            severity = "medium"
+            decision = "denied"
+            status = "open"
+            message = verdict.localized_refusal(locale)
+            summary = (
+                f"Employee {actor.subject} ({actor.role}) blocked at L2 boundary [{verdict.category}]: "
+                f"24h={daily_total}, 7d={seven_day_total}, estimated_usd=${cost_val:.4f}"
+            )
+        else:
+            level = "L1"
+            severity = "info"
+            decision = "flagged"
+            status = "resolved"
+            message = verdict.localized_reminder(locale, actor.subject)
+            summary = (
+                f"Employee {actor.subject} ({actor.role}) received L1 gentle nudge [{verdict.category}]: "
+                f"24h={daily_total}, 7d={seven_day_total}, estimated_usd=${cost_val:.4f}"
+            )
+
+        metadata = {
+            "level": level,
+            "privacy_redacted": True,
+            "counts": counts,
+            "estimated_usd": round(cost_val, 6),
+            "escalated_to": recipients,
+            "security_anomaly_cc": seven_day_security_high > 0,
+        }
+
+        event = self.record_security_event(
+            actor,
+            category=verdict.category,
+            severity=severity,
+            decision=decision,
+            summary=summary,
+            raw_input=text,
+            module="work-boundary",
+            action_attempted=(
+                "local.app.automate"
+                if verdict.category == "OFF_TOPIC_LOCAL_AUTOMATION"
+                else "assistant.chat"
+            ),
+            metadata=metadata,
+            matched_rule=verdict.matched_rule,
+            status=status,
+            publish_alert=False,
+            redact_preview=True,
+            notify_recipients=recipients if is_l3 else (),
+            notify_kind="off_topic_escalation" if is_l3 else None,
+        )
+
+        if is_l3 and recipients:
+            work_event = WorkEvent(
+                id=event["id"],
+                kind="security_alert",
+                title=f"[L3 ESCALATION] {verdict.category}",
+                subtitle=(
+                    f"{actor.subject} ({actor.role}) | 24h={daily_total} 7d={seven_day_total} | "
+                    f"estimated_usd=${cost_val:.4f}"
+                ),
+                reference=event["id"],
+                href=f"/admin/security?event={event['id']}",
+                severity=event["severity"],
+                created_at=float(event["created_at"]),
+            )
+            if self.event_hub is not None:
+                self.event_hub.publish(
+                    actor.tenant,
+                    recipients,
+                    work_event.model_dump(mode="json"),
+                    include_admins=False,
+                )
+            self._relay_off_topic_escalation_channels(actor.tenant, recipients, work_event)
+
+        return {
+            "level": level,
+            "category": verdict.category,
+            "decision": decision,
+            "severity": event["severity"],
+            "message": message,
+            "incident_id": event["id"],
+            "escalated_to": recipients,
+            "counts": counts,
+        }
+
 
 def governance_routes(governance: GovernanceService, workflow: Workflow, authenticate, refresh_actor) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["Governance and mail"])
@@ -1074,6 +1678,67 @@ def governance_routes(governance: GovernanceService, workflow: Workflow, authent
             raise HTTPException(403, str(error)) from error
         except Conflict as error:
             raise HTTPException(409, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.get("/operations/off-topic-policy")
+    def get_off_topic_policy_route(actor: Actor = Depends(require_operations_reader)):
+        return governance.get_off_topic_policy(actor.tenant)
+
+    @router.put("/operations/off-topic-policy")
+    def put_off_topic_policy_route(
+        body: OffTopicPolicyUpdate,
+        actor: Actor = Depends(require_admin),
+    ):
+        try:
+            return governance.update_off_topic_policy(
+                actor,
+                body.model_dump(exclude_none=True),
+            )
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.get("/operations/llm-telemetry")
+    def get_llm_telemetry_route(
+        actor: Actor = Depends(require_operations_reader),
+        hours: Annotated[int, Query(ge=1, le=720)] = 24,
+    ):
+        try:
+            from .routing_context import RoutingTelemetryStore
+        except ImportError as error:
+            raise HTTPException(503, "Routing telemetry store unavailable") from error
+        return RoutingTelemetryStore(workflow).summary(actor.tenant, hours=hours)
+
+    @router.get("/operations/quota-policies")
+    def get_quota_policies_route(actor: Actor = Depends(require_operations_reader)):
+        try:
+            from .routing_context import QuotaManager
+        except ImportError as error:
+            raise HTTPException(503, "Quota policy manager unavailable") from error
+        policies = QuotaManager(workflow).list_policies(actor.tenant)
+        return policies if isinstance(policies, dict) else {"items": list(policies)}
+
+    @router.put("/operations/quota-policies")
+    def put_quota_policies_route(
+        body: QuotaPolicyUpdate,
+        actor: Actor = Depends(require_admin),
+    ):
+        try:
+            from .routing_context import QuotaManager
+        except ImportError as error:
+            raise HTTPException(503, "Quota policy manager unavailable") from error
+        try:
+            return QuotaManager(workflow).upsert_policy(
+                actor,
+                body.scope_type,
+                body.scope_key,
+                daily_usd_limit=body.daily_usd_limit,
+                daily_token_limit=body.daily_token_limit,
+            )
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 

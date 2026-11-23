@@ -1,6 +1,7 @@
 """Deterministic input normalization, prompt/tool guardrails, and output leakage filtering."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 import re
 from typing import Literal
@@ -20,6 +21,8 @@ Category = Literal[
     "CROSS_SCOPE_ACCESS_ATTEMPT",
     "UNAUTHORIZED_MODULE_QUERY",
     "EMAIL_POLICY_VIOLATION",
+    "OFF_TOPIC_PERSONAL_CHAT",
+    "OFF_TOPIC_LOCAL_AUTOMATION",
 ]
 
 _PEM_RE = re.compile(
@@ -902,3 +905,431 @@ def check_output_leakage(reply: str, directives: list[str]) -> str:
                     sanitized = _compile_flexible_phrase_pattern(clean_clause).sub("[REDACTED_POLICY]", sanitized)
 
     return sanitized
+
+
+DEFAULT_WORK_APP_ALLOWLIST: tuple[str, ...] = (
+    "Microsoft Word",
+    "Microsoft Excel",
+    "Microsoft PowerPoint",
+    "Microsoft Outlook",
+    "WPS",
+    "Safari",
+    "Google Chrome",
+    "Microsoft Edge",
+    "Mail",
+    "Finder",
+    "File Explorer",
+    "WeCom",
+    "Feishu",
+    "DingTalk",
+    "Microsoft Teams",
+    "Slack",
+    "Zoom",
+    "Preview",
+    "Adobe Acrobat",
+)
+
+_AUTHORIZED_DEV_APP_KEYS: frozenset[str] = frozenset({"vs code", "terminal"})
+
+_APP_CANONICAL_ALIASES: dict[str, str] = {
+    "microsoft word": "microsoft word",
+    "word": "microsoft word",
+    "com.microsoft.word": "microsoft word",
+    "winword.exe": "microsoft word",
+    "winword": "microsoft word",
+    "microsoft excel": "microsoft excel",
+    "excel": "microsoft excel",
+    "com.microsoft.excel": "microsoft excel",
+    "excel.exe": "microsoft excel",
+    "microsoft powerpoint": "microsoft powerpoint",
+    "powerpoint": "microsoft powerpoint",
+    "ppt": "microsoft powerpoint",
+    "com.microsoft.powerpoint": "microsoft powerpoint",
+    "powerpnt.exe": "microsoft powerpoint",
+    "microsoft outlook": "microsoft outlook",
+    "outlook": "microsoft outlook",
+    "com.microsoft.outlook": "microsoft outlook",
+    "outlook.exe": "microsoft outlook",
+    "wps": "wps",
+    "wps office": "wps",
+    "com.kingsoft.wpsoffice": "wps",
+    "wps.exe": "wps",
+    "et.exe": "wps",
+    "wpp.exe": "wps",
+    "safari": "safari",
+    "com.apple.safari": "safari",
+    "google chrome": "google chrome",
+    "chrome": "google chrome",
+    "com.google.chrome": "google chrome",
+    "chrome.exe": "google chrome",
+    "microsoft edge": "microsoft edge",
+    "edge": "microsoft edge",
+    "com.microsoft.edgemac": "microsoft edge",
+    "msedge.exe": "microsoft edge",
+    "mail": "mail",
+    "apple mail": "mail",
+    "com.apple.mail": "mail",
+    "finder": "finder",
+    "com.apple.finder": "finder",
+    "file explorer": "file explorer",
+    "explorer": "file explorer",
+    "windows explorer": "file explorer",
+    "explorer.exe": "file explorer",
+    "wecom": "wecom",
+    "wework": "wecom",
+    "企业微信": "wecom",
+    "企業微信": "wecom",
+    "com.tencent.weworkmac": "wecom",
+    "wxwork.exe": "wecom",
+    "feishu": "feishu",
+    "lark": "feishu",
+    "飞书": "feishu",
+    "飛書": "feishu",
+    "com.electron.lark": "feishu",
+    "feishu.exe": "feishu",
+    "lark.exe": "feishu",
+    "dingtalk": "dingtalk",
+    "钉钉": "dingtalk",
+    "釘釘": "dingtalk",
+    "com.alibaba.dingtalkmac": "dingtalk",
+    "dingtalk.exe": "dingtalk",
+    "microsoft teams": "microsoft teams",
+    "teams": "microsoft teams",
+    "com.microsoft.teams": "microsoft teams",
+    "com.microsoft.teams2": "microsoft teams",
+    "ms-teams.exe": "microsoft teams",
+    "teams.exe": "microsoft teams",
+    "slack": "slack",
+    "com.tinyspeck.slackmacgap": "slack",
+    "slack.exe": "slack",
+    "zoom": "zoom",
+    "us.zoom.xos": "zoom",
+    "zoom.exe": "zoom",
+    "preview": "preview",
+    "com.apple.preview": "preview",
+    "预览": "preview",
+    "預覽": "preview",
+    "adobe acrobat": "adobe acrobat",
+    "acrobat": "adobe acrobat",
+    "acrobat reader": "adobe acrobat",
+    "com.adobe.acrobat.pro": "adobe acrobat",
+    "com.adobe.reader": "adobe acrobat",
+    "acrobat.exe": "adobe acrobat",
+    "acrord32.exe": "adobe acrobat",
+    "vs code": "vs code",
+    "vscode": "vs code",
+    "visual studio code": "vs code",
+    "com.microsoft.vscode": "vs code",
+    "code.exe": "vs code",
+    "terminal": "terminal",
+    "com.apple.terminal": "terminal",
+    "windowsterminal.exe": "terminal",
+    "wt.exe": "terminal",
+    "iterm": "terminal",
+    "iterm2": "terminal",
+    "com.googlecode.iterm2": "terminal",
+}
+
+
+def _canonicalize_app(app_name: str) -> str:
+    _, compact = normalize_user_text(app_name)
+    key = compact.lower()
+    return _APP_CANONICAL_ALIASES.get(key, key)
+
+
+class WorkBoundaryVerdict(Strict):
+    """Result of evaluating whether a turn or local app target stays within enterprise work boundaries."""
+
+    is_off_topic: bool
+    category: str | None = None
+    matched_rule: str | None = None
+    requested_app: str | None = None
+
+    def localized_reminder(self, locale: str = "zh-CN", subject: str = "") -> str:
+        if not self.is_off_topic:
+            return ""
+        clean_subject = re.sub(r"[\r\n\x00-\x1f\x7f]+", "", (subject or "")).strip()[:64]
+        if self.category == "OFF_TOPIC_LOCAL_AUTOMATION":
+            prefix_zh = f"{clean_subject}，" if clean_subject else ""
+            prefix_en = f"{clean_subject}, " if clean_subject else ""
+            if locale == "zh-HK":
+                return (
+                    f"{prefix_zh}企業工作台僅支援已授權辦公應用與業務流程，無法協助執行個人娛樂、購物或非工作本地自動化。"
+                    "如有文件處理、訂單、運單或電郵需要協助，請直接告訴我。"
+                )
+            if locale == "en":
+                return (
+                    f"{prefix_en}this workbench only supports authorized office applications and business workflows, "
+                    "not personal or non-work local automation. Let me know which document, shipment, or work email you need help with."
+                )
+            return (
+                f"{prefix_zh}企业工作台仅支持已授权办公应用与业务流程，无法协助执行个人娱乐、购物或非工作本地自动化。"
+                "如有文档处理、订单、运单或工作邮件需要协助，直接告诉我。"
+            )
+
+        prefix_zh = f"{clean_subject}，" if clean_subject else ""
+        prefix_en = f"{clean_subject}, " if clean_subject else ""
+        if locale == "zh-HK":
+            return (
+                f"{prefix_zh}我呢邊主要幫你處理訂單、運單、發票、簡報同工作電郵，私人閑聊話題就唔展開喇。"
+                "手頭有邊項業務要跟進或者要草擬郵件，隨時同我講。"
+            )
+        if locale == "en":
+            return (
+                f"{prefix_en}I focus on workbench operations here—orders, shipments, invoices, briefs, and work emails—"
+                "so I'll pass on personal chat topics. Tell me which work item or draft you want to handle next."
+            )
+        return (
+            f"{prefix_zh}我这边主要协助处理订单、运单、发票、简报和工作邮件，私人闲聊话题就不展开了。"
+            "手头有哪项业务要查或需要起草邮件，直接跟我说。"
+        )
+
+    def localized_refusal(self, locale: str = "zh-CN") -> str:
+        if not self.is_off_topic:
+            return ""
+        if self.category == "OFF_TOPIC_LOCAL_AUTOMATION":
+            safe_app = ""
+            if self.requested_app:
+                cleaned_app = scrub_secrets(re.sub(r"[\r\n\x00-\x1f\x7f]+", "", self.requested_app)).strip()[:64]
+                if cleaned_app:
+                    safe_app = cleaned_app
+            app_note_zh = f"（目标应用：{safe_app}）" if safe_app else ""
+            app_note_hk = f"（目標應用：{safe_app}）" if safe_app else ""
+            app_note_en = f" (target app: {safe_app})" if safe_app else ""
+            if locale == "zh-HK":
+                return (
+                    f"工作邊界策略已攔截非工作本地自動化請求{app_note_hk}："
+                    "僅允許操作企業授權名單內的辦公應用與合規業務流程。"
+                )
+            if locale == "en":
+                return (
+                    f"Blocked by work-boundary policy: non-work local automation request{app_note_en} is not permitted; "
+                    "only authorized enterprise applications and business workflows are allowed."
+                )
+            return (
+                f"工作边界策略已拦截非工作本地自动化请求{app_note_zh}："
+                "仅允许操作企业授权名单内的办公应用与合规业务流程。"
+            )
+
+        if locale == "zh-HK":
+            return (
+                "工作邊界策略已攔截：企業工作助手僅供處理授權業務與內部協作，"
+                "連續非工作個人對話請求已被限制並計入合規統計。"
+            )
+        if locale == "en":
+            return (
+                "Blocked by work-boundary policy: the enterprise assistant is limited to authorized business operations "
+                "and collaboration; repeated non-work chat requests are restricted and counted under compliance policy."
+            )
+        return (
+            "工作边界策略已拦截：企业工作助手仅用于处理授权业务与内部协作，"
+            "连续非工作个人对话请求已被限制并计入合规统计。"
+        )
+
+
+_OFF_TOPIC_LOCAL_AUTOMATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "game_bot_automation",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:automate|auto[- ]?(?:farm|play|grind|click|fish|level|quest)|bot|script|macro)\b"
+            r".{0,35}\b(?:game|gaming|mmorpg|rpg|gacha|dota|valorant|league\s+of\s+legends|"
+            r"genshin|minecraft|roblox|steam|fortnite|pubg|world\s+of\s+warcraft|afk)\b|"
+            r"\b(?:game\s+bot|gaming\s+bot|afk\s+farm)\b|"
+            r"(?:自动|自動|脚本|腳本|外挂|外掛|挂机|掛機|代练|代練|按键精灵|按鍵精靈)"
+            r".{0,20}(?:刷副本|刷图|刷圖|打怪|练级|練級|做任务|做任務|游戏|遊戲|手游|手遊|"
+            r"原神|王者|王者荣耀|王者榮耀|英雄联盟|英雄聯盟|吃鸡|吃雞|抽卡|领皮肤|領皮膚)|"
+            r"(?:游戏脚本|遊戲腳本|游戏外挂|遊戲外掛|刷副本脚本|刷圖腳本)"
+            r")"
+        ),
+    ),
+    (
+        "dating_app_automation",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:auto[- ]?swipe|swipe\s+(?:right|left)|auto[- ]?(?:like|match))\b"
+            r".{0,35}\b(?:tinder|bumble|hinge|tantan|dating\s+apps?|okcupid|coffee\s+meets\s+bagel)\b|"
+            r"\b(?:tinder|bumble|hinge|tantan)\b.{0,30}\b(?:swipe|match|bot|automate|open|launch)\b|"
+            r"\bswipe\s+dating\s+apps?\b|"
+            r"(?:自动|自動|帮我|幫我|打开|打開).{0,20}(?:右滑|左滑|刷)"
+            r".{0,15}(?:探探|陌陌|Soul|Tinder|Bumble|约会软件|約會軟件|交友软件|交友軟件|相亲app|相親app)|"
+            r"(?:自动右滑|自動右滑|自动刷探探|自動刷探探|约会软件自动|約會軟件自動)"
+            r")"
+        ),
+    ),
+    (
+        "personal_ticket_shopping_automation",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:auto[- ]?(?:buy|purchase|checkout|snipe|bid|order|grab)|snipe|bot)\b"
+            r".{0,40}\b(?:concert\s+tickets?|festival\s+tickets?|ticketmaster|damai|taobao|tmall|"
+            r"pinduoduo|jd\.com|steam\s+(?:games?|sales?|store)|sneakers?|ps5|nintendo\s+switch|pop\s*mart)\b|"
+            r"\bauto[- ]?buy\s+(?:concert\s+tickets?|taobao|steam)\b|"
+            r"(?:自动|自動|脚本|腳本|帮我|幫我|抢|搶).{0,20}"
+            r"(?:抢票|搶票|演唱会门票|演唱會門票|大麦|大麥|猫眼|貓眼|淘宝秒杀|淘寶秒殺|淘宝抢购|淘寶搶購|"
+            r"淘宝自动下单|淘寶自動下單|京东抢购|京東搶購|拼多多砍一刀|Steam买游戏|Steam買遊戲|抢茅台|搶茅台|抢球鞋|搶球鞋)|"
+            r"(?:大麦抢票|大麥搶票|自动抢演唱会门票|自動搶演唱會門票|自动买淘宝|自動買淘寶|淘宝自动买|淘寶自動買)"
+            r")"
+        ),
+    ),
+    (
+        "personal_media_streaming_social_app",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:open|launch|start|control|automate|play|pause|skip|scroll|browse|stream|watch)\b"
+            r".{0,25}\b(?:spotify|steam|douyin|tiktok|bilibili|netflix|twitch|disney\+|tinder|bumble|"
+            r"epic\s+games|battle\.net|riot\s+client|genshin|netease\s+(?:cloud\s+)?music|qq\s*music)\b|"
+            r"(?:打开|打開|启动|啟動|控制|操作|播放|放歌|听歌|聽歌|切歌|刷一下|刷刷|逛一下|帮我刷|幫我刷|自动刷|自動刷)"
+            r".{0,18}(?:Spotify|Steam|Douyin|抖音|TikTok|Bilibili|B站|哔哩哔哩|嗶哩嗶哩|Netflix|"
+            r"网易云音乐|網易雲音樂|QQ音乐|QQ音樂|酷狗|小红书|小紅書|快手|淘宝|淘寶|拼多多|探探|Tinder|原神|王者荣耀|王者榮耀|英雄联盟|英雄聯盟)"
+            r")"
+        ),
+    ),
+)
+
+_OFF_TOPIC_PERSONAL_CHAT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "horoscope_tarot_fortune",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:horoscopes?|zodiac\s+(?:sign|compatibility|forecast)|tarot(?:\s+card|\s+reading)?|"
+            r"astrology|birth\s+chart|natal\s+chart|fortune\s+telling|palm\s+reading|mercury\s+retrograde)\b|"
+            r"(?:星座|白羊座|金牛座|双子座|巨蟹座|狮子座|处女座|天秤座|天蝎座|射手座|摩羯座|水瓶座|双鱼座|"
+            r"牡羊座|雙子座|獅子座|處女座|天蠍座|雙魚座).{0,10}(?:运势|運勢|占卜|配对|配對|桃花|指数|指數)|"
+            r"(?:星座运势|星座運勢|今日星座|本周星座|本週星座|星座配对|星座配對|塔罗牌|塔羅牌|"
+            r"塔罗占卜|塔羅占卜|算命|占卜|八字合婚|生辰八字|紫微斗数|紫微斗數|看手相|抽签算卦|抽籤算卦|水逆)"
+            r")"
+        ),
+    ),
+    (
+        "love_letter_breakup_romance",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:love\s+letter|love\s+poem|romantic\s+letter|confession\s+letter|"
+            r"breakup\s+(?:letter|message|text)|break\s+up\s+(?:letter|message|text)|"
+            r"pick[- ]?up\s+lines?|flirt\s+lines?|dating\s+advice)\b|"
+            r"\b(?:write|draft|compose)\b.{0,25}\b(?:to\s+my\s+(?:crush|girlfriend|boyfriend|ex)|love\s+note)\b|"
+            r"(?:写|寫|起草|生成|拟|擬|编|編).{0,16}(?:情书|情書|情诗|情詩|告白信|表白信|分手信|分手短信|分手文案|表白文案)|"
+            r"(?:给|給).{0,12}(?:女朋友|男朋友|女友|男友|暗恋对象|暗戀對象|心仪对象|心儀對象|前任|前女友|前男友|crush)"
+            r".{0,16}(?:写|寫|发|發|起草).{0,10}(?:情书|情書|情诗|情詩|表白|告白|分手|情话|情話|挽回)|"
+            r"(?:情书模板|情書模板|表白文案|表白信|告白信|情书|情書|情诗|情詩|"
+            r"分手短信|分手信|分手文案|怎么提分手|怎麼提分手|土味情话|土味情話|撩妹话术|撩妹話術|"
+            r"追男生|追女生|哄女朋友|哄男朋友|和前任复合|和前任複合)"
+            r")"
+        ),
+    ),
+    (
+        "game_cheat_strategy",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:cheat\s+codes?|game\s+cheats?|aimbot|wallhack|god\s+mode\s+cheat|walkthrough|speedrun\s+strat|tier\s+list)\b"
+            r".{0,35}\b(?:game|boss|level|raid|character|weapon|elden\s+ring|genshin|valorant|league|minecraft|zelda|pokemon|gta|cyberpunk|black\s+myth)\b|"
+            r"\b(?:game\s+cheat|game\s+strategy|cheat\s+codes?|gta\s+cheats?|genshin\s+(?:build|pull|team)|"
+            r"elden\s+ring\s+(?:build|boss|guide)|league\s+of\s+legends\s+(?:build|tier|guide))\b|"
+            r"(?:游戏攻略|遊戲攻略|游戏作弊码|遊戲作弊碼|作弊码|作弊碼|金手指|通关攻略|通關攻略|"
+            r"打boss攻略|打Boss攻略|抽卡保底|抽卡建议|抽卡建議|上分阵容|上分陣容|吃鸡攻略|吃雞攻略|"
+            r"出装攻略|出裝攻略|黑神话悟空攻略|黑神話悟空攻略|原神配队|原神配隊|王者荣耀出装|王者榮耀出裝)"
+            r")"
+        ),
+    ),
+    (
+        "personal_stock_crypto_gambling",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:stock\s+picks?|hot\s+stocks?\s+to\s+buy|penny\s+stocks?|meme\s+stocks?|crypto\s+picks?|"
+            r"gambling\s+picks?|sports\s+betting|parlay\s+picks?|lottery\s+numbers?|powerball|mega\s+millions|mark\s+six)\b|"
+            r"\bwhich\s+(?:stock|crypto|coin|token|memecoin)\s+(?:will|to)\s+(?:buy|moon|100x|pump)\b|"
+            r"\b(?:bet\s+on|wager\s+on)\s+(?:football|soccer|basketball|nba|premier\s+league|horse\s+racing)\b|"
+            r"(?:买哪只股票|買哪隻股票|股票推荐|股票推薦|推荐涨停股|推薦漲停股|涨停板推荐|漲停板推薦|明牌牛股|"
+            r"炒股买什么|炒股買什麼|买什么币暴富|買什麼幣暴富|币圈梭哈|幣圈梭哈|比特币梭哈|比特幣梭哈|"
+            r"合约开多|合約開多|合约百倍|合約百倍|彩票号码|彩票號碼|双色球预测|雙色球預測|六合彩贴士|六合彩貼士|"
+            r"六合彩号码|六合彩號碼|足彩推荐|足彩推薦|买球推荐|買球推薦|赌球|賭球|博彩技巧)"
+            r")"
+        ),
+    ),
+    (
+        "bedtime_novel_anime_fanfic",
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:bedtime\s+(?:story|stories|novel)|anime\s+fanfic(?:tion)?|fanfiction|fanfic|isekai\s+story|romance\s+novel|wattpad\s+story|ship\s+fic)\b|"
+            r"\b(?:write|tell|make\s+up)\s+(?:me\s+)?a\s+(?:fairy\s+tale|sci-fi\s+story|fantasy\s+novel|love\s+story)\b|"
+            r"(?:睡前小说|睡前小說|睡前故事|同人文|同人小说|同人小說|二次元同人|动漫同人|動漫同人|CP同人|"
+            r"霸道总裁小说|霸道總裁小說|言情小说|言情小說|玄幻小说|玄幻小說|修仙小说|修仙小說|穿越小说|穿越小說|宫斗小说|宮鬥小說|耽美小说|耽美小說)"
+            r")"
+        ),
+    ),
+    (
+        "casual_entertainment_chitchat",
+        re.compile(
+            r"(?i)(?:"
+            r"\btell\s+me\s+a\s+joke\b|\bcelebrity\s+gossip\b|\bwhat\s+movie\s+should\s+i\s+watch\s+tonight\b|"
+            r"(?:讲个笑话|講個笑話|讲个段子|講個段子|明星八卦|娱乐八卦|娛樂八卦|八卦绯闻|八卦緋聞|"
+            r"追星文案|打榜文案|今晚看什么电影|今晚看什麼電影|推荐一部追剧|推薦一部追劇|猜谜语|猜謎語)"
+            r")"
+        ),
+    ),
+)
+
+
+def evaluate_work_boundary(
+    actor: Actor,
+    text: str,
+    *,
+    requested_app: str | None = None,
+    app_allowlist: Iterable[str] | None = None,
+) -> WorkBoundaryVerdict:
+    """Detect off-topic personal chat or non-work local app automation with zero greeting/work false positives."""
+    if app_allowlist is None:
+        allowed_keys = {_canonicalize_app(name) for name in DEFAULT_WORK_APP_ALLOWLIST}
+        if actor.role == "admin" and "operations.manage" in actor.grants:
+            allowed_keys |= _AUTHORIZED_DEV_APP_KEYS
+    else:
+        allowed_keys = {_canonicalize_app(str(name)) for name in app_allowlist if str(name).strip()}
+
+    clean_requested_app: str | None = None
+    if requested_app is not None and requested_app.strip():
+        _, clean_requested = normalize_user_text(requested_app)
+        clean_requested_app = clean_requested[:80] or None
+        if clean_requested_app is not None:
+            canonical_req = _canonicalize_app(clean_requested_app)
+            if canonical_req not in allowed_keys:
+                return WorkBoundaryVerdict(
+                    is_off_topic=True,
+                    category="OFF_TOPIC_LOCAL_AUTOMATION",
+                    matched_rule="disallowed_local_app",
+                    requested_app=clean_requested_app,
+                )
+
+    _, compact = normalize_user_text(text)
+    if not compact:
+        return WorkBoundaryVerdict(is_off_topic=False, requested_app=clean_requested_app)
+
+    for rule_name, pattern in _OFF_TOPIC_LOCAL_AUTOMATION_PATTERNS:
+        if pattern.search(compact):
+            return WorkBoundaryVerdict(
+                is_off_topic=True,
+                category="OFF_TOPIC_LOCAL_AUTOMATION",
+                matched_rule=rule_name,
+                requested_app=clean_requested_app,
+            )
+
+    if re.search(r"(?i)\b(?:open|launch|start|control|automate)\s+(?:vs\s*code|vscode|visual\s+studio\s+code|terminal)\b", compact):
+        target_key = "vs code" if re.search(r"(?i)(?:vs\s*code|vscode|visual\s+studio\s+code)", compact) else "terminal"
+        if target_key not in allowed_keys:
+            return WorkBoundaryVerdict(
+                is_off_topic=True,
+                category="OFF_TOPIC_LOCAL_AUTOMATION",
+                matched_rule="unauthorized_dev_app",
+                requested_app=clean_requested_app or target_key,
+            )
+
+    for rule_name, pattern in _OFF_TOPIC_PERSONAL_CHAT_PATTERNS:
+        if pattern.search(compact):
+            return WorkBoundaryVerdict(
+                is_off_topic=True,
+                category="OFF_TOPIC_PERSONAL_CHAT",
+                matched_rule=rule_name,
+                requested_app=clean_requested_app,
+            )
+
+    return WorkBoundaryVerdict(is_off_topic=False, requested_app=clean_requested_app)

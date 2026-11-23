@@ -874,11 +874,14 @@ class AssistantAndSSETests(unittest.TestCase):
             self.assertEqual(tamper_resp.json()["kind"], "refusal")
             self.assertEqual(tamper_resp.json()["category"], "PROMPT_TAMPER_ATTEMPT")
 
-        # 2. System prompt sent to DeepSeek embeds SOUL.md, zero-emoji & GFM instructions, and zero snake_case dumps
+        # 2. Zone 1 system prompt embeds SOUL.md + zero-emoji/GFM instructions (without dynamic pulse numbers),
+        #    while Zone 3 user message carries the ephemeral live work pulse.
         seen_system: list[str] = []
+        seen_user_tail: list[str] = []
 
         def fake_stream(_self_client, method, url, **kwargs):
             seen_system.append(kwargs["json"]["messages"][0]["content"])
+            seen_user_tail.append(kwargs["json"]["messages"][-1]["content"])
             return _FakeStreamResponse(
                 {
                     "choices": [
@@ -904,11 +907,13 @@ class AssistantAndSSETests(unittest.TestCase):
         self.assertEqual(turn.status_code, 200, turn.text)
         self.assertEqual(len(seen_system), 1)
         sys_prompt = seen_system[0]
+        user_tail = seen_user_tail[0]
         self.assertIn("You're not a chatbot. You're becoming someone.", sys_prompt)
         self.assertIn("Default to zero decorative emojis", sys_prompt)
         self.assertIn("GitHub-Flavored Markdown", sys_prompt)
-        self.assertIn("Pending approvals awaiting this user's decision: 1", sys_prompt)
-        self.assertIn("Proposals submitted by this user that are still in progress: 0", sys_prompt)
+        self.assertNotIn("Pending approvals awaiting this user's decision:", sys_prompt)
+        self.assertIn("Pending approvals awaiting this user's decision: 1", user_tail)
+        self.assertIn("Proposals submitted by this user that are still in progress: 0", user_tail)
         self.assertNotIn("Live PendingWorkSnapshot", sys_prompt)
         self.assertNotIn("open_submitted=1,", sys_prompt)
         self.assertNotIn("pending_approvals=", sys_prompt)

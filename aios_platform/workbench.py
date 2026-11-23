@@ -36,11 +36,20 @@ class WorkbenchPlanner(Protocol):
     def plan(self, text: str, offered_tools: tuple[str, ...]) -> dict: ...
 
 
+class ActiveDocumentRef(Strict):
+    doc_id: Annotated[str, Field(min_length=1, max_length=128)]
+    title: Annotated[str, Field(min_length=1, max_length=240)]
+    content: Annotated[str, Field(min_length=1, max_length=1_500_000)]
+
+
 class Turn(Strict):
     text: Annotated[str, Field(min_length=1, max_length=2000)]
     client_id: Identifier | None = None
     locale: Literal["zh-CN", "zh-HK", "en"] = "zh-CN"
-    conversation_context: Annotated[list[ConversationTurn], Field(max_length=6)] = Field(default_factory=list)
+    conversation_context: Annotated[list[ConversationTurn], Field(max_length=40)] = Field(default_factory=list)
+    session_id: Identifier | None = None
+    active_document: ActiveDocumentRef | None = None
+    task_switched: bool = False
 
 
 class WorkResult(Strict):
@@ -323,6 +332,9 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
                         execute_call=execute,
                         preview_approval=preview_approval_for_actor,
                         planner_limit=planner_limit,
+                        session_id=body.session_id,
+                        active_document=body.active_document,
+                        task_switched=body.task_switched,
                     )
                 except HTTPException as error:
                     if error.status_code == 404:

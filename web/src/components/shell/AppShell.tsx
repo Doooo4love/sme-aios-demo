@@ -31,6 +31,7 @@ import { TheodicLogo, TheodicMark } from "@/components/ui/TheodicBrand";
 import { DemoPersonaSwitcher } from "@/components/shell/DemoPersonaSwitcher";
 import { NoticesPopover } from "@/components/shell/NoticesPopover";
 import { WorkbenchDrawerSlot } from "@/components/shell/WorkbenchDrawerSlot";
+import { DesktopHarnessOverlay } from "@/components/desktop/DesktopHarnessOverlay";
 
 interface WorkbenchNavTier {
   href: string;
@@ -174,35 +175,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 1. Messenger Routes (/inbox, /inbox/assistant, /inbox/[roomId])
   if (isMessengerRoute) {
     return (
-      <div className="flex h-dvh w-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--ink-primary)]">
-        {accessChangedBanner && (
-          <div
-            role="status"
-            className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-4 py-2 text-[12.5px] text-[var(--status-amber-ink)]"
-          >
-            <span>{t("shell.accessChangedBanner")}</span>
-            <button
-              type="button"
-              onClick={dismissAccessChangedBanner}
-              aria-label={t("shell.closeAccessBannerAria")}
-              className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[var(--status-amber-border)] cursor-pointer"
+      <>
+        <div className="flex h-dvh w-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--ink-primary)]">
+          {accessChangedBanner && (
+            <div
+              role="status"
+              className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-4 py-2 text-[12.5px] text-[var(--status-amber-ink)]"
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
+              <span>{t("shell.accessChangedBanner")}</span>
+              <button
+                type="button"
+                onClick={dismissAccessChangedBanner}
+                aria-label={t("shell.closeAccessBannerAria")}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-[var(--status-amber-border)] cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
 
-        <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-          <WorkbenchDrawerSlot />
+          <div className="relative flex min-h-0 flex-1 overflow-hidden">
+            <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
+            <WorkbenchDrawerSlot />
+          </div>
         </div>
-      </div>
+        <DesktopHarnessOverlay />
+      </>
     );
   }
 
   // 2. Workbench & Management Routes — Calm Frosted Porcelain / Obsidian top bar
   return (
-    <div className="flex h-dvh w-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--ink-primary)]">
+    <>
+      <div className="flex h-dvh w-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--ink-primary)]">
       <header className="aios-topbar-glass sticky top-0 z-30 flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-2 border-b border-[var(--hairline)] px-4 lg:grid lg:grid-cols-[auto_1fr_auto] xl:grid-cols-[1fr_auto_1fr] lg:items-center lg:px-5 xl:px-6">
         {/* Control 1 (Left): Theodic Brand Anchor + Back to Messenger Pill */}
         <div className="flex min-w-0 items-center gap-2.5 lg:justify-self-start">
@@ -433,5 +438,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         })}
       </nav>
     </div>
+    <DesktopHarnessOverlay />
+  </>
   );
 }

@@ -274,9 +274,25 @@ export interface AssistantMessageResult {
   email_draft: EmailDraftPayload | null;
 }
 
+export type KnownSecurityEventCategory =
+  | "SKILL_TAMPER_ATTEMPT"
+  | "PROMPT_TAMPER_ATTEMPT"
+  | "DESTRUCTIVE_ACTION_ATTEMPT"
+  | "FILESYSTEM_ESCAPE_ATTEMPT"
+  | "PROMPT_INJECTION_ATTEMPT"
+  | "SECRET_EXFILTRATION_ATTEMPT"
+  | "PRIVILEGE_ESCALATION_ATTEMPT"
+  | "CROSS_SCOPE_ACCESS_ATTEMPT"
+  | "UNAUTHORIZED_MODULE_QUERY"
+  | "EMAIL_POLICY_VIOLATION"
+  | "OFF_TOPIC_PERSONAL_CHAT"
+  | "OFF_TOPIC_LOCAL_AUTOMATION";
+
+export type SecurityEventCategory = KnownSecurityEventCategory | (string & {});
+
 export interface PolicyRefusalResult {
   kind: "refusal";
-  category: string;
+  category: SecurityEventCategory;
   severity: "medium" | "high" | "critical";
   message: string;
   incident_id: string;
@@ -1035,7 +1051,7 @@ export interface SecurityEventItem {
   id: string;
   subject: string;
   role: string;
-  category: string;
+  category: SecurityEventCategory;
   severity: SecurityEventSeverity;
   module: string | null;
   action_attempted: string | null;
@@ -1182,4 +1198,77 @@ export interface SendChannelOutboundRequest {
   target_handle: string;
   text: string;
   client_id?: string;
+}
+
+export interface OffTopicPolicy {
+  tenant: string;
+  daily_remind_threshold: number;
+  daily_escalate_threshold: number;
+  seven_day_escalate_threshold: number;
+  daily_local_auto_escalate_threshold: number;
+  app_allowlist: string[];
+  routing_rules: Record<string, string[]>;
+  updated_by: string | null;
+  updated_at: number | null;
+}
+
+export interface OffTopicPolicyUpdatePayload {
+  daily_remind_threshold?: number;
+  daily_escalate_threshold?: number;
+  seven_day_escalate_threshold?: number;
+  daily_local_auto_escalate_threshold?: number;
+  app_allowlist?: string[];
+  routing_rules?: Record<string, string[]>;
+}
+
+export type LlmRoutingTier = "T0" | "T1" | "T2" | "T3";
+
+export interface LlmTelemetryBucketMetrics {
+  calls: number;
+  estimated_usd?: number;
+  prompt_tokens?: number;
+  cache_hit_tokens?: number;
+  reasoning_tokens?: number;
+  completion_tokens?: number;
+  avg_latency_ms?: number;
+  cache_hit_ratio?: number;
+}
+
+export type LlmTelemetryBreakdownValue = number | LlmTelemetryBucketMetrics;
+
+export interface LlmTelemetrySummary {
+  window_hours: number;
+  total_calls: number;
+  cache_hit_ratio: number;
+  total_prompt_tokens: number;
+  total_cache_hit_tokens: number;
+  total_reasoning_tokens: number;
+  total_completion_tokens: number;
+  total_estimated_usd: number;
+  avg_latency_ms: number;
+  by_tier: Record<LlmRoutingTier, number>;
+  by_provider: Record<string, LlmTelemetryBreakdownValue>;
+  by_subject: Record<string, LlmTelemetryBreakdownValue>;
+}
+
+export type QuotaScopeType = "tenant" | "role" | "subject" | (string & {});
+
+export interface QuotaPolicyItem {
+  scope_type: QuotaScopeType;
+  scope_key: string;
+  daily_usd_limit: number | null;
+  daily_token_limit: number | null;
+  updated_by: string | null;
+  updated_at: number | null;
+}
+
+export interface QuotaPoliciesResponse {
+  items: QuotaPolicyItem[];
+}
+
+export interface QuotaPolicyUpdatePayload {
+  scope_type: QuotaScopeType;
+  scope_key: string;
+  daily_usd_limit?: number | null;
+  daily_token_limit?: number | null;
 }

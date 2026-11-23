@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Theodic AIOS",
+  "version": "0.1.0",
+  "identifier": "com.theodic.aios.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --dir ../web run dev",
+    "devUrl": "http://127.0.0.1:3000",
+    "beforeBuildCommand": "pnpm --dir ../web run build",
+    "frontendDist": "../../web/.next"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Theodic AIOS Workbench",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://aios-demo.hk-demo.workers.dev; font-src 'self' data:; connect-src 'self' http://127.0.0.1:3000 http://127.0.0.1:8760 https://aios-demo.hk-demo.workers.dev wss://aios-demo.hk-demo.workers.dev; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';",
+      "dangerousDisableAssetCspModification": false,
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app", "msi", "nsis"],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": true
+    },
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

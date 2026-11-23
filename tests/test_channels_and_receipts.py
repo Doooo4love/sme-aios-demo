@@ -120,8 +120,8 @@ class ChannelsAndReceiptsTests(unittest.TestCase):
             try:
                 with patch.dict(os.environ, {"AIOS_MIGRATION_DATABASE_URL": url, "AIOS_MIGRATION_DATABASE_URL_FILE": ""}):
                     command.upgrade(config, "0009_governance_and_mail")
-                    command.upgrade(config, "head")
-                    command.upgrade(config, "head")
+                    command.upgrade(config, "0010_channels_and_read_receipts")
+                    command.upgrade(config, "0010_channels_and_read_receipts")
                 with engine.connect() as conn:
                     version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
                     self.assertEqual(version, "0010_channels_and_read_receipts")

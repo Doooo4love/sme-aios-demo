@@ -2,10 +2,17 @@ import { apiFetch, isApiError, type ApiError } from "@/lib/api-client";
 import type {
   AssuranceCheckpoint,
   ExceptionPage,
+  LlmRoutingTier,
+  LlmTelemetrySummary,
+  OffTopicPolicy,
+  OffTopicPolicyUpdatePayload,
   OperationsSummary,
   PromptPoliciesResponse,
   PromptSimulateResponse,
   Proposal,
+  QuotaPoliciesResponse,
+  QuotaPolicyItem,
+  QuotaPolicyUpdatePayload,
   SecurityEventItem,
   SecurityEventPage,
   SecurityEventSeverity,
@@ -285,4 +292,141 @@ export function updateSecurityEventStatus(
       signal,
     },
   );
+}
+
+function normalizeOffTopicPolicy(
+  raw: Partial<OffTopicPolicy> | null | undefined,
+): OffTopicPolicy {
+  return {
+    tenant: typeof raw?.tenant === "string" ? raw.tenant : "",
+    daily_remind_threshold:
+      typeof raw?.daily_remind_threshold === "number"
+        ? raw.daily_remind_threshold
+        : 1,
+    daily_escalate_threshold:
+      typeof raw?.daily_escalate_threshold === "number"
+        ? raw.daily_escalate_threshold
+        : 5,
+    seven_day_escalate_threshold:
+      typeof raw?.seven_day_escalate_threshold === "number"
+        ? raw.seven_day_escalate_threshold
+        : 12,
+    daily_local_auto_escalate_threshold:
+      typeof raw?.daily_local_auto_escalate_threshold === "number"
+        ? raw.daily_local_auto_escalate_threshold
+        : 2,
+    app_allowlist: Array.isArray(raw?.app_allowlist)
+      ? raw.app_allowlist.filter((item): item is string => typeof item === "string")
+      : [],
+    routing_rules:
+      raw?.routing_rules && typeof raw.routing_rules === "object"
+        ? raw.routing_rules
+        : {},
+    updated_by: typeof raw?.updated_by === "string" ? raw.updated_by : null,
+    updated_at: typeof raw?.updated_at === "number" ? raw.updated_at : null,
+  };
+}
+
+export async function fetchOffTopicPolicy(
+  signal?: AbortSignal,
+): Promise<OffTopicPolicy> {
+  const res = await apiFetch<Partial<OffTopicPolicy>>(
+    "/v1/operations/off-topic-policy",
+    { signal },
+  );
+  return normalizeOffTopicPolicy(res);
+}
+
+export async function updateOffTopicPolicy(
+  payload: OffTopicPolicyUpdatePayload,
+  signal?: AbortSignal,
+): Promise<OffTopicPolicy> {
+  const res = await apiFetch<Partial<OffTopicPolicy>>(
+    "/v1/operations/off-topic-policy",
+    {
+      method: "PUT",
+      body: payload,
+      signal,
+    },
+  );
+  return normalizeOffTopicPolicy(res);
+}
+
+export async function fetchLlmTelemetry(
+  hours = 24,
+  signal?: AbortSignal,
+): Promise<LlmTelemetrySummary> {
+  const safeHours = Number.isFinite(hours)
+    ? Math.max(1, Math.min(Math.round(hours), 720))
+    : 24;
+  const raw = await apiFetch<Partial<LlmTelemetrySummary>>(
+    `/v1/operations/llm-telemetry?hours=${encodeURIComponent(String(safeHours))}`,
+    { signal },
+  );
+  const rawTier = (raw?.by_tier ?? {}) as Partial<Record<LlmRoutingTier, number>>;
+  return {
+    window_hours:
+      typeof raw?.window_hours === "number" ? raw.window_hours : safeHours,
+    total_calls: typeof raw?.total_calls === "number" ? raw.total_calls : 0,
+    cache_hit_ratio:
+      typeof raw?.cache_hit_ratio === "number" ? raw.cache_hit_ratio : 0,
+    total_prompt_tokens:
+      typeof raw?.total_prompt_tokens === "number" ? raw.total_prompt_tokens : 0,
+    total_cache_hit_tokens:
+      typeof raw?.total_cache_hit_tokens === "number"
+        ? raw.total_cache_hit_tokens
+        : 0,
+    total_reasoning_tokens:
+      typeof raw?.total_reasoning_tokens === "number"
+        ? raw.total_reasoning_tokens
+        : 0,
+    total_completion_tokens:
+      typeof raw?.total_completion_tokens === "number"
+        ? raw.total_completion_tokens
+        : 0,
+    total_estimated_usd:
+      typeof raw?.total_estimated_usd === "number" ? raw.total_estimated_usd : 0,
+    avg_latency_ms:
+      typeof raw?.avg_latency_ms === "number" ? raw.avg_latency_ms : 0,
+    by_tier: {
+      T0: typeof rawTier.T0 === "number" ? rawTier.T0 : 0,
+      T1: typeof rawTier.T1 === "number" ? rawTier.T1 : 0,
+      T2: typeof rawTier.T2 === "number" ? rawTier.T2 : 0,
+      T3: typeof rawTier.T3 === "number" ? rawTier.T3 : 0,
+    },
+    by_provider:
+      raw?.by_provider && typeof raw.by_provider === "object"
+        ? raw.by_provider
+        : {},
+    by_subject:
+      raw?.by_subject && typeof raw.by_subject === "object"
+        ? raw.by_subject
+        : {},
+  };
+}
+
+export async function fetchQuotaPolicies(
+  signal?: AbortSignal,
+): Promise<QuotaPoliciesResponse> {
+  const raw = await apiFetch<QuotaPoliciesResponse | QuotaPolicyItem[]>(
+    "/v1/operations/quota-policies",
+    { signal },
+  );
+  if (Array.isArray(raw)) {
+    return { items: raw };
+  }
+  return {
+    items: Array.isArray(raw?.items) ? raw.items : [],
+  };
+}
+
+export function updateQuotaPolicy(
+  payload: QuotaPolicyUpdatePayload,
+  signal?: AbortSignal,
+): Promise<QuotaPolicyItem> {
+  return apiFetch<QuotaPolicyItem>("/v1/operations/quota-policies", {
+    method: "PUT",
+    body: payload,
+    signal,
+  });
 }

@@ -21,7 +21,13 @@ from aios_demo.extract_po import analyze_upload
 from aios_demo.parsing import MAX_UPLOAD_BYTES
 from aios_demo.storage import business_key, digest_of
 
-from .assistant_agent import AssistantAgent, resolve_llm_api_key, resolve_llm_base_url, resolve_llm_model
+from .assistant_agent import (
+    AssistantAgent,
+    resolve_llm_api_key,
+    resolve_llm_base_url,
+    resolve_llm_model,
+    resolve_llm_provider,
+)
 from .assurance import Assurance, assurance_routes
 from .assurance_audit import AuditKeys, SignedAudit
 from .assurance_gateway import ReviewGateway
@@ -608,7 +614,7 @@ def create_app() -> FastAPI:
     workbench_planner = None
     assistant_agent = None
     planner_kind = os.getenv("AIOS_WORKBENCH_PLANNER", "local")
-    if planner_kind not in {"local", "pydantic-ai", "deepseek"}:
+    if planner_kind not in {"local", "pydantic-ai", "deepseek", "llm"}:
         raise ValueError("Unknown AIOS workbench planner")
     identity = identity_for(runtime.demo)
     chat_dir = workspace_source.known_subject if workspace_source else (
@@ -624,13 +630,15 @@ def create_app() -> FastAPI:
         if planner_kind == "pydantic-ai" and not llm_api_key:
             raise ValueError("Configure AIOS_LLM_API_KEY or AIOS_LLM_API_KEY_FILE")
         if llm_api_key:
+            resolved_model = resolve_llm_model()
             assistant_agent = AssistantAgent(
                 runtime.workflow,
                 governance_service,
                 hub,
                 api_key=llm_api_key,
-                base_url=resolve_llm_base_url(),
-                model=resolve_llm_model(),
+                base_url=resolve_llm_base_url(resolved_model),
+                model=resolved_model,
+                provider=resolve_llm_provider(),
                 demo=runtime.demo,
             )
     browser = None
