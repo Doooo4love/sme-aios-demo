@@ -135,7 +135,9 @@ function renderFields() {
 function renderReview(unresolved) {
   badge("decision", "Human review", "warn");
   const form = el("form", undefined, "review-fields");
+  const conflicts = [];
   for (const key of unresolved) {
+    const field = run.fields[key];
     const label = el("label", names[key] || key);
     const input = el("input");
     input.name = key;
@@ -143,6 +145,16 @@ function renderReview(unresolved) {
     input.maxLength = 40;
     input.placeholder = "Read source";
     label.append(input);
+    if (field.reason_code === "ROW_AMOUNT_MISMATCH" && field.calculated_amount) {
+      const currency = run.fields.currency.confirmed || run.fields.currency.ocr?.value || "";
+      const detail = el("p",
+        field.initial_reading + " × " + field.unit_price + " = " + field.calculated_amount +
+          ". The source line total is " + [currency, field.printed_amount].filter(Boolean).join(" ") + ".",
+        "conflict");
+      detail.id = "review-detail-" + key;
+      input.setAttribute("aria-describedby", detail.id);
+      conflicts.push(detail);
+    }
     form.append(label);
   }
   const button = el("button", "Validate reviewed fields", "secondary");
@@ -168,7 +180,8 @@ function renderReview(unresolved) {
       submit.disabled = false;
     }
   };
-  $("review").replaceChildren(el("span", "Confirm the disputed value from the original", "box-head"), form);
+  $("review").replaceChildren(el("span", "Confirm the disputed value from the original", "box-head"),
+    ...conflicts, form);
   $("review").hidden = false;
 }
 
@@ -231,11 +244,13 @@ function renderPreview() {
 async function refreshCommand() {
   const command = await api("/api/commands/" + commandId);
   const isDone = ["COMMITTED", "NEEDS_OPERATOR"].includes(command.status);
+  const receiptChanged = command.status === "COMMITTED" && !command.verified_payload;
   $("tick").disabled = isDone;
-  badge("command-state", stateLabels[command.status] || command.status,
-        command.status === "COMMITTED" ? "good" :
+  badge("command-state", receiptChanged ? "ERP receipt needs review" : stateLabels[command.status] || command.status,
+        receiptChanged ? "warn" : command.status === "COMMITTED" ? "good" :
           ["OUTCOME_UNKNOWN", "NEEDS_OPERATOR"].includes(command.status) ? "warn" : "");
-  $("ledger-context").textContent = command.status === "COMMITTED" ?
+  $("ledger-context").textContent = receiptChanged ? "The current ERP draft could not be matched to the receipt." :
+    command.status === "COMMITTED" ?
     command.erp_id + " · " + command.matching_erp_drafts + " matching ERP draft · approved payload verified" :
     "Command " + command.id.slice(0, 8) + " · exact snapshot approval";
   const nodes = command.events.map((record) => {

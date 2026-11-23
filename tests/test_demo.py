@@ -49,6 +49,17 @@ class ParseAndRouteTests(TestCase):
         with self.assertRaisesRegex(ValueError, "Only unresolved"):
             order_payload(evidence, {"currency": "USD"})
 
+    def test_agreeing_readers_cannot_auto_confirm_conflicting_quantity(self):
+        name = "harbour-po.png"
+        parsed = parse_image(FIXTURES / name)
+        key = "line.1.quantity"
+        parsed.fields[key] = replace(parsed.fields[key], value="8", score=99)
+        primary = FixtureVision(name)
+        primary.answers[key] = "8"
+        evidence = route(parsed, primary, None)
+        self.assertIsNone(evidence["fields"][key]["confirmed"])
+        self.assertEqual(evidence["fields"][key]["reason_code"], "ROW_AMOUNT_MISMATCH")
+        self.assertEqual(order_payload(evidence, {key: "2"})["items"][0]["erp_quantity"], 48)
 
     def test_targeted_vision_reads_only_anchored_uncertainty(self):
         name = "harbour-po.png"
