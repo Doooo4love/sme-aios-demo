@@ -10,13 +10,11 @@ import {
   Calendar,
   CheckSquare,
   FileText,
-  HelpCircle,
   Mail,
   Package,
   PanelRightOpen,
   Receipt,
   ShieldAlert,
-  Sparkles,
   Warehouse,
 } from "lucide-react";
 import { formatShortDigest } from "@/lib/format";
@@ -340,61 +338,44 @@ export function TurnResultCard({
 
   if (result.kind === "clarification") {
     const options = buildCapabilityPromptOptions(capabilities, locale);
+    const resolvedRadius =
+      bubbleRadiusClass ||
+      "rounded-[var(--radius-bubble)] rounded-bl-[var(--radius-bubble-tail)]";
+
     return (
-      <Interactive3DCard
-        maxTilt={2}
-        hoverLiftPx={-1}
-        sheenIntensity="subtle"
+      <div
         data-testid="turn-card-clarification"
-        className="rounded-[var(--radius-chat-card)] border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]"
+        className="flex w-full flex-col items-start gap-2"
       >
-        <div className="flex items-center gap-2">
-          <HelpCircle
-            className="h-4 w-4 text-[var(--accent)]"
-            strokeWidth={1.85}
-          />
-          <span className="aios-micro-label">
-            {tx({
-              "zh-CN": "需要补充指令要素",
-              "zh-HK": "須補充指令條件",
-              en: "More Details Needed",
-            })}
-          </span>
+        <div
+          className={[
+            "imessage-bubble-received relative inline-block max-w-[90%] sm:max-w-[85%] bg-[var(--bubble-received-bg)] px-4 py-[9px] text-[var(--bubble-received-ink)]",
+            resolvedRadius,
+          ].join(" ")}
+        >
+          <MarkdownMessage tone="received" content={result.question} />
+          {bubbleTail && <IMessageBubbleTail side="received" />}
         </div>
-        <MarkdownMessage
-          tone="surface"
-          content={result.question}
-          className="mt-2"
-        />
 
         {options.length > 0 && onSelectClarification && (
-          <div className="mt-3.5 border-t border-[var(--hairline-subtle)] pt-3">
-            <div className="aios-micro-label mb-2">
-              {tx({
-                "zh-CN": "可直接点选常用查询",
-                "zh-HK": "可直接點選常用查詢",
-                en: "Try a quick query",
-              })}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {options.map((opt) => (
-                <button
-                  key={opt.prompt}
-                  type="button"
-                  data-testid={`clarification-option-${opt.domain}`}
-                  onClick={() => onSelectClarification(opt.prompt)}
-                  className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors duration-[140ms] cursor-pointer"
-                >
-                  <span className="text-[11px] text-[var(--ink-muted)]">
-                    {opt.domainLabel}
-                  </span>
-                  <span>{opt.label}</span>
-                </button>
-              ))}
-            </div>
+          <div className="flex max-w-[90%] sm:max-w-[85%] flex-wrap gap-1.5">
+            {options.map((opt) => (
+              <button
+                key={opt.prompt}
+                type="button"
+                data-testid={`clarification-option-${opt.domain}`}
+                onClick={() => onSelectClarification(opt.prompt)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--hairline)] bg-[var(--bg-surface)]/85 px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors duration-[140ms] cursor-pointer"
+              >
+                <span className="text-[11px] text-[var(--ink-muted)]">
+                  {opt.domainLabel}
+                </span>
+                <span>{opt.label}</span>
+              </button>
+            ))}
           </div>
         )}
-      </Interactive3DCard>
+      </div>
     );
   }
 
@@ -856,270 +837,199 @@ export function TurnResultCard({
           pw.meetings_today > 0 ||
           (pw.open_exceptions ?? 0) > 0),
     );
-    const isPureChatBubble =
-      result.mode === "chat" &&
-      !hasPendingWork &&
-      result.suggested_actions.length === 0 &&
-      !result.email_draft;
-
-    if (isPureChatBubble) {
-      return (
-        <div data-testid="turn-card-message" className="space-y-3">
-          <div
-            className={[
-              "relative inline-block max-w-full bg-[var(--bubble-received-bg)] px-4 py-[9px] text-[var(--bubble-received-ink)]",
-              bubbleRadiusClass || "rounded-[var(--radius-chat-card)]",
-            ].join(" ")}
-          >
-            <MarkdownMessage tone="received" content={result.reply} />
-            {bubbleTail && <IMessageBubbleTail side="received" />}
-          </div>
-        </div>
-      );
-    }
+    const resolvedRadius =
+      bubbleRadiusClass ||
+      "rounded-[var(--radius-bubble)] rounded-bl-[var(--radius-bubble-tail)]";
 
     return (
-      <div data-testid="turn-card-message" className="space-y-3">
-        <div className="rounded-[var(--radius-chat-card)] border border-[var(--hairline)] bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]">
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--hairline-subtle)]">
-            <div className="flex items-center gap-1.5">
-              <Sparkles
-                className="h-3.5 w-3.5 text-[var(--accent)]"
-                strokeWidth={1.9}
-              />
-              <span className="aios-micro-label">
-                {result.mode === "proactive_reminder"
-                  ? tx({
-                      "zh-CN": "工作提醒与业务协同",
-                      "zh-HK": "工作提醒與業務協同",
-                      en: "Proactive Work Reminder",
-                    })
-                  : result.mode === "workflow_guidance"
-                    ? tx({
-                        "zh-CN": "业务指引",
-                        "zh-HK": "業務指引",
-                        en: "Workflow Guidance",
-                      })
-                    : result.mode === "email_draft"
-                      ? tx({
-                          "zh-CN": "邮件草稿助手",
-                          "zh-HK": "電郵草稿助手",
-                          en: "Email Draft Assistant",
-                        })
-                      : tx({
-                          "zh-CN": "助手回复",
-                          "zh-HK": "助手回覆",
-                          en: "Agent Reply",
-                        })}
-              </span>
-            </div>
-            {timestamp && (
-              <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                {formatDateTime(timestamp)}
-              </span>
-            )}
-          </div>
-
-          <MarkdownMessage
-            tone="surface"
-            content={result.reply}
-            className="mt-2.5"
-          />
-
-          {/* Unfinished Work Reminder Strip */}
-          {hasPendingWork && pw && (
-            <div
-              data-testid="assistant-pending-work-strip"
-              className="mt-3.5 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-3.5 py-2.5 space-y-2"
-            >
-              <div className="flex items-center gap-1.5">
-                <Bell className="h-3.5 w-3.5 text-[var(--accent)]" strokeWidth={1.9} />
-                <span className="aios-micro-label">
-                  {tx({
-                    "zh-CN": "当前待办与未完成事项",
-                    "zh-HK": "目前待辦與未完成事項",
-                    en: "Unfinished Work Summary",
-                  })}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
-                {pw.pending_approvals > 0 && (
-                  <Link
-                    href="/work"
-                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-2.5 py-1 font-medium text-[var(--status-amber-ink)] hover:opacity-90 transition-opacity font-mono-code tabular-nums"
-                  >
-                    <span>
-                      {tx(
-                        {
-                          "zh-CN": "待我审批 {count} 项",
-                          "zh-HK": "待我審批 {count} 項",
-                          en: "{count} pending approval(s)",
-                        },
-                        { count: pw.pending_approvals },
-                      )}
-                    </span>
-                    <ArrowUpRight className="h-3 w-3" />
-                  </Link>
-                )}
-
-                {pw.returned_proposals > 0 && (
-                  <Link
-                    href="/work"
-                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-1 font-medium text-[var(--status-crimson)] hover:opacity-90 transition-opacity font-mono-code tabular-nums"
-                  >
-                    <span>
-                      {tx(
-                        {
-                          "zh-CN": "被退回修改 {count} 项",
-                          "zh-HK": "被退回修改 {count} 項",
-                          en: "{count} returned proposal(s)",
-                        },
-                        { count: pw.returned_proposals },
-                      )}
-                    </span>
-                    <ArrowUpRight className="h-3 w-3" />
-                  </Link>
-                )}
-
-                {pw.open_submitted > 0 && (
-                  <Link
-                    href="/work"
-                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] px-2.5 py-1 font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--accent-ink)] font-mono-code tabular-nums"
-                  >
-                    <span>
-                      {tx(
-                        {
-                          "zh-CN": "我提交的进行中 {count} 项",
-                          "zh-HK": "我提交的進行中 {count} 項",
-                          en: "{count} open submitted",
-                        },
-                        { count: pw.open_submitted },
-                      )}
-                    </span>
-                  </Link>
-                )}
-
-                {pw.unread_notices > 0 && (
-                  <span className="inline-flex items-center gap-1 rounded-sm border border-[var(--accent-border)] bg-[var(--accent-wash)] px-2.5 py-1 font-medium text-[var(--accent-ink)] font-mono-code tabular-nums">
-                    {tx(
-                      {
-                        "zh-CN": "未读通知 {count} 条",
-                        "zh-HK": "未讀通知 {count} 則",
-                        en: "{count} unread notice(s)",
-                      },
-                      { count: pw.unread_notices },
-                    )}
-                  </span>
-                )}
-
-                {pw.meetings_today > 0 && (
-                  <Link
-                    href="/calendar"
-                    className="inline-flex items-center gap-1 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] px-2.5 py-1 font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--accent-ink)] font-mono-code tabular-nums"
-                  >
-                    <Calendar className="h-3 w-3 text-[var(--accent)]" />
-                    <span>
-                      {tx(
-                        {
-                          "zh-CN": "今日会议 {count} 场",
-                          "zh-HK": "今日會議 {count} 場",
-                          en: "{count} meeting(s) today",
-                        },
-                        { count: pw.meetings_today },
-                      )}
-                    </span>
-                  </Link>
-                )}
-
-                {(pw.open_exceptions ?? 0) > 0 && (
-                  <Link
-                    href="/admin/exceptions"
-                    className="inline-flex items-center gap-1 rounded-sm border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-1 font-medium text-[var(--status-crimson)] hover:opacity-90 font-mono-code tabular-nums"
-                  >
-                    <AlertTriangle className="h-3 w-3" />
-                    <span>
-                      {tx(
-                        {
-                          "zh-CN": "异常单据 {count} 项",
-                          "zh-HK": "異常單據 {count} 項",
-                          en: "{count} exception(s)",
-                        },
-                        { count: pw.open_exceptions ?? 0 },
-                      )}
-                    </span>
-                  </Link>
-                )}
-              </div>
-
-              {pw.pending_approval_ids.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px]">
-                  <span className="text-[var(--ink-muted)]">
-                    {tx({
-                      "zh-CN": "待审单号：",
-                      "zh-HK": "待審單號：",
-                      en: "Proposals:",
-                    })}
-                  </span>
-                  {pw.pending_approval_ids.slice(0, 4).map((pid) => (
-                    <Link
-                      key={pid}
-                      href={`/proposals/${encodeURIComponent(pid)}`}
-                      className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono-code tabular-nums font-medium text-[var(--accent-ink)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] transition-colors"
-                    >
-                      {formatShortDigest(pid, 6, 4)}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Suggested Action Pills */}
-          {result.suggested_actions.length > 0 && (
-            <div className="mt-3.5 flex flex-wrap gap-1.5 border-t border-[var(--hairline-subtle)] pt-3">
-              {result.suggested_actions.map((action) =>
-                action.kind === "navigate" ? (
-                  <Link
-                    key={action.id}
-                    href={action.href || "/work"}
-                    data-testid={`suggested-action-${action.id}`}
-                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors"
-                  >
-                    <span>{action.label}</span>
-                    <ArrowUpRight className="h-3 w-3" />
-                  </Link>
-                ) : (
-                  <button
-                    key={action.id}
-                    type="button"
-                    data-testid={`suggested-action-${action.id}`}
-                    onClick={() => {
-                      if (onSelectSuggestedAction) {
-                        onSelectSuggestedAction(action);
-                      } else if (onSelectClarification && action.command) {
-                        onSelectClarification(action.command);
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
-                  >
-                    {action.kind === "email" && (
-                      <Mail className="h-3 w-3 text-[var(--accent)]" />
-                    )}
-                    <span>{action.label}</span>
-                  </button>
-                ),
-              )}
-            </div>
-          )}
+      <div
+        data-testid="turn-card-message"
+        className="flex w-full flex-col items-start gap-2"
+      >
+        <div
+          className={[
+            "imessage-bubble-received relative inline-block max-w-[90%] sm:max-w-[85%] bg-[var(--bubble-received-bg)] px-4 py-[9px] text-[var(--bubble-received-ink)]",
+            resolvedRadius,
+          ].join(" ")}
+        >
+          <MarkdownMessage tone="received" content={result.reply} />
+          {bubbleTail && <IMessageBubbleTail side="received" />}
         </div>
 
+        {/* Unfinished Work Reminder Pills */}
+        {hasPendingWork && pw && (
+          <div
+            data-testid="assistant-pending-work-strip"
+            className="flex max-w-[90%] sm:max-w-[85%] flex-wrap items-center gap-1.5 text-[11.5px]"
+          >
+            {pw.pending_approvals > 0 && (
+              <Link
+                href="/work"
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] px-2.5 py-0.5 font-medium text-[var(--status-amber-ink)] hover:opacity-90 transition-opacity font-mono-code tabular-nums"
+              >
+                <span>
+                  {tx(
+                    {
+                      "zh-CN": "待我审批 {count} 项",
+                      "zh-HK": "待我審批 {count} 項",
+                      en: "{count} pending approval(s)",
+                    },
+                    { count: pw.pending_approvals },
+                  )}
+                </span>
+                <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            )}
+
+            {pw.returned_proposals > 0 && (
+              <Link
+                href="/work"
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-0.5 font-medium text-[var(--status-crimson)] hover:opacity-90 transition-opacity font-mono-code tabular-nums"
+              >
+                <span>
+                  {tx(
+                    {
+                      "zh-CN": "被退回修改 {count} 项",
+                      "zh-HK": "被退回修改 {count} 項",
+                      en: "{count} returned proposal(s)",
+                    },
+                    { count: pw.returned_proposals },
+                  )}
+                </span>
+                <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            )}
+
+            {pw.open_submitted > 0 && (
+              <Link
+                href="/work"
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--hairline)] bg-[var(--bg-surface)]/85 px-2.5 py-0.5 font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--accent-ink)] font-mono-code tabular-nums"
+              >
+                <span>
+                  {tx(
+                    {
+                      "zh-CN": "我提交的进行中 {count} 项",
+                      "zh-HK": "我提交的進行中 {count} 項",
+                      en: "{count} open submitted",
+                    },
+                    { count: pw.open_submitted },
+                  )}
+                </span>
+              </Link>
+            )}
+
+            {pw.unread_notices > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--accent-border)] bg-[var(--accent-wash)] px-2.5 py-0.5 font-medium text-[var(--accent-ink)] font-mono-code tabular-nums">
+                <Bell className="h-3 w-3 shrink-0" />
+                <span>
+                  {tx(
+                    {
+                      "zh-CN": "未读通知 {count} 条",
+                      "zh-HK": "未讀通知 {count} 則",
+                      en: "{count} unread notice(s)",
+                    },
+                    { count: pw.unread_notices },
+                  )}
+                </span>
+              </span>
+            )}
+
+            {pw.meetings_today > 0 && (
+              <Link
+                href="/calendar"
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--hairline)] bg-[var(--bg-surface)]/85 px-2.5 py-0.5 font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--accent-ink)] font-mono-code tabular-nums"
+              >
+                <Calendar className="h-3 w-3 text-[var(--accent)]" />
+                <span>
+                  {tx(
+                    {
+                      "zh-CN": "今日会议 {count} 场",
+                      "zh-HK": "今日會議 {count} 場",
+                      en: "{count} meeting(s) today",
+                    },
+                    { count: pw.meetings_today },
+                  )}
+                </span>
+              </Link>
+            )}
+
+            {(pw.open_exceptions ?? 0) > 0 && (
+              <Link
+                href="/admin/exceptions"
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-0.5 font-medium text-[var(--status-crimson)] hover:opacity-90 font-mono-code tabular-nums"
+              >
+                <AlertTriangle className="h-3 w-3" />
+                <span>
+                  {tx(
+                    {
+                      "zh-CN": "异常单据 {count} 项",
+                      "zh-HK": "異常單據 {count} 項",
+                      en: "{count} exception(s)",
+                    },
+                    { count: pw.open_exceptions ?? 0 },
+                  )}
+                </span>
+              </Link>
+            )}
+
+            {pw.pending_approval_ids.slice(0, 4).map((pid) => (
+              <Link
+                key={pid}
+                href={`/proposals/${encodeURIComponent(pid)}`}
+                className="inline-flex items-center rounded-full border border-[var(--hairline)] bg-[var(--bg-surface)]/85 px-2.5 py-0.5 font-mono-code tabular-nums font-medium text-[var(--accent-ink)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] transition-colors"
+              >
+                {formatShortDigest(pid, 6, 4)}
+              </Link>
+            ))}
+          </div>
+        )}
+
+        {/* Suggested Action Pills */}
+        {result.suggested_actions.length > 0 && (
+          <div className="flex max-w-[90%] sm:max-w-[85%] flex-wrap items-center gap-1.5">
+            {result.suggested_actions.map((action) =>
+              action.kind === "navigate" ? (
+                <Link
+                  key={action.id}
+                  href={action.href || "/work"}
+                  data-testid={`suggested-action-${action.id}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[var(--hairline)] bg-[var(--bg-surface)]/85 px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors"
+                >
+                  <span>{action.label}</span>
+                  <ArrowUpRight className="h-3 w-3" />
+                </Link>
+              ) : (
+                <button
+                  key={action.id}
+                  type="button"
+                  data-testid={`suggested-action-${action.id}`}
+                  onClick={() => {
+                    if (onSelectSuggestedAction) {
+                      onSelectSuggestedAction(action);
+                    } else if (onSelectClarification && action.command) {
+                      onSelectClarification(action.command);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[var(--hairline)] bg-[var(--bg-surface)]/85 px-3 py-1 text-[12px] font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
+                >
+                  {action.kind === "email" && (
+                    <Mail className="h-3 w-3 text-[var(--accent)]" />
+                  )}
+                  <span>{action.label}</span>
+                </button>
+              ),
+            )}
+          </div>
+        )}
+
         {result.email_draft && (
-          <EmailComposeCard
-            draft={result.email_draft}
-            initialSent={initialEmailSent}
-            onSent={onEmailSent}
-          />
+          <div className="w-full">
+            <EmailComposeCard
+              draft={result.email_draft}
+              initialSent={initialEmailSent}
+              onSent={onEmailSent}
+            />
+          </div>
         )}
       </div>
     );

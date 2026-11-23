@@ -262,7 +262,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
   const autoResizeTextarea = useCallback((el: HTMLTextAreaElement | null) => {
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(150, Math.max(26, el.scrollHeight))}px`;
+    el.style.height = `${Math.min(150, Math.max(32, el.scrollHeight))}px`;
   }, []);
 
   useEffect(() => {
@@ -959,105 +959,104 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
       data-room-id={roomId}
       className="flex h-full min-h-0 flex-col bg-[var(--bg-sheet)]"
     >
-      {/* Centered Frosted macOS Sequoia Messages Header */}
-      <ConversationHeader
-        leftSlot={
-          <Link
-            href="/inbox"
-            aria-label={tx({
-              "zh-CN": "返回会话列表",
-              "zh-HK": "返回對話清單",
-              en: "Back to conversations",
-            })}
-            data-testid="room-mobile-back"
-            className="inline-flex h-8 items-center gap-0.5 rounded-full pr-2.5 pl-1.5 text-[13.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors lg:hidden"
-          >
-            <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
-            <span>
-              {tx({ "zh-CN": "返回", "zh-HK": "返回", en: "Back" })}
-            </span>
-          </Link>
-        }
-        avatarSrc={otherPeer?.avatarSrc ?? null}
-        avatarName={otherPeer?.name || displayRoomTitle}
-        avatarFallbackText={otherPeer?.subject || roomMeta?.owner || "RM"}
-        avatarStatus={otherPeer?.availability}
-        title={displayRoomTitle}
-        titleTestId="room-header-title"
-        subtitle={headerSubtitle}
-        onOpenProfile={openCenterProfile}
-        profileAriaLabel={tx(
-          {
-            "zh-CN": "查看 {name} 资料",
-            "zh-HK": "檢視 {name} 資料",
-            en: "View {name} details",
-          },
-          { name: displayRoomTitle },
-        )}
-        rightSlot={
-          <>
-            <button
-              type="button"
-              data-testid="room-schedule-meeting-btn"
-              disabled={initialLoading}
-              onClick={() => setMeetingModalOpen(true)}
-              title={tx({
-                "zh-CN": "预约 Zoom / 房间会议",
-                "zh-HK": "預約 Zoom / 對話會議",
-                en: "Schedule Zoom or room meeting",
-              })}
-              className="inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-2.5 md:px-3 text-[12px] md:text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:text-[var(--accent)] transition-all duration-[150ms] cursor-pointer disabled:opacity-50"
-            >
-              <CalendarPlus
-                className="h-3.5 w-3.5 text-[var(--accent)]"
-                strokeWidth={1.9}
-              />
-              <span className="hidden md:inline whitespace-nowrap">
-                {tx({
-                  "zh-CN": "Zoom / 日历预约",
-                  "zh-HK": "Zoom / 日曆預約",
-                  en: "Zoom / Schedule",
-                })}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="room-members-btn"
-              onClick={(e) =>
-                openDrawer(
-                  {
-                    kind: "room-members",
-                    id: roomId,
-                    title: tx({
-                      "zh-CN": "会话成员管理",
-                      "zh-HK": "對話成員管理",
-                      en: "Room Members",
-                    }),
-                  },
-                  { tab: "current", trigger: e.currentTarget },
-                )
-              }
-              title={tx({
-                "zh-CN": "查看或管理成员",
-                "zh-HK": "檢視或管理成員",
-                en: "View or manage members",
-              })}
-              className="inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)] px-2.5 md:px-3 text-[12px] md:text-[12.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
-            >
-              <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span className="tabular-nums">{members.length}</span>
-            </button>
-          </>
-        }
-      />
-
-      {/* Fluid iMessage Stream */}
+      {/* Fluid iMessage Stream with Borderless Floating Header Overlay */}
       <div
         data-testid="room-message-feed"
-        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)] px-4 py-6 sm:px-8"
+        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)]"
       >
-        <div className="mx-auto max-w-[740px]">
+        <ConversationHeader
+          leftSlot={
+            <Link
+              href="/inbox"
+              aria-label={tx({
+                "zh-CN": "返回会话列表",
+                "zh-HK": "返回對話清單",
+                en: "Back to conversations",
+              })}
+              data-testid="room-mobile-back"
+              className="inline-flex h-8 items-center gap-0.5 rounded-full pr-2.5 pl-1.5 text-[13.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors lg:hidden"
+            >
+              <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
+              <span>
+                {tx({ "zh-CN": "返回", "zh-HK": "返回", en: "Back" })}
+              </span>
+            </Link>
+          }
+          avatarSrc={otherPeer?.avatarSrc ?? null}
+          avatarName={otherPeer?.name || displayRoomTitle}
+          avatarFallbackText={otherPeer?.subject || roomMeta?.owner || "RM"}
+          avatarStatus={otherPeer?.availability}
+          title={displayRoomTitle}
+          titleTestId="room-header-title"
+          subtitle={headerSubtitle}
+          onOpenProfile={openCenterProfile}
+          profileAriaLabel={tx(
+            {
+              "zh-CN": "查看 {name} 资料",
+              "zh-HK": "檢視 {name} 資料",
+              en: "View {name} details",
+            },
+            { name: displayRoomTitle },
+          )}
+          rightSlot={
+            <>
+              <button
+                type="button"
+                data-testid="room-schedule-meeting-btn"
+                disabled={initialLoading}
+                onClick={() => setMeetingModalOpen(true)}
+                title={tx({
+                  "zh-CN": "预约 Zoom / 房间会议",
+                  "zh-HK": "預約 Zoom / 對話會議",
+                  en: "Schedule Zoom or room meeting",
+                })}
+                className="inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 rounded-full bg-[var(--bg-surface)]/90 backdrop-blur-md border border-[var(--hairline)] px-2.5 md:px-3 text-[12px] md:text-[12.5px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:text-[var(--accent)] transition-all duration-[150ms] cursor-pointer disabled:opacity-50"
+              >
+                <CalendarPlus
+                  className="h-3.5 w-3.5 text-[var(--accent)]"
+                  strokeWidth={1.9}
+                />
+                <span className="hidden md:inline whitespace-nowrap">
+                  {tx({
+                    "zh-CN": "Zoom / 日历预约",
+                    "zh-HK": "Zoom / 日曆預約",
+                    en: "Zoom / Schedule",
+                  })}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="room-members-btn"
+                onClick={(e) =>
+                  openDrawer(
+                    {
+                      kind: "room-members",
+                      id: roomId,
+                      title: tx({
+                        "zh-CN": "会话成员管理",
+                        "zh-HK": "對話成員管理",
+                        en: "Room Members",
+                      }),
+                    },
+                    { tab: "current", trigger: e.currentTarget },
+                  )
+                }
+                title={tx({
+                  "zh-CN": "查看或管理成员",
+                  "zh-HK": "檢視或管理成員",
+                  en: "View or manage members",
+                })}
+                className="inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 rounded-full bg-[var(--bg-surface-subtle)]/90 backdrop-blur-md border border-[var(--hairline)] px-2.5 md:px-3 text-[12px] md:text-[12.5px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
+              >
+                <Users className="h-3.5 w-3.5" strokeWidth={1.85} />
+                <span className="tabular-nums">{members.length}</span>
+              </button>
+            </>
+          }
+        />
+
+        <div className="mx-auto max-w-[740px] px-4 pt-[96px] pb-6 sm:px-8">
           {initialLoading ? (
             <div className="py-16 text-center text-[13px] text-[var(--ink-muted)]">
               {tx({
@@ -1187,7 +1186,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                       data-testid={`room-message-${msg.seq}`}
                       className={[
                         "flex items-end gap-2",
-                        isSelf ? "justify-end pr-1.5" : "justify-start pl-1",
+                        isSelf ? "justify-end pr-1.5" : "justify-start pl-1.5",
                         idx === 0 || showBurstTs
                           ? ""
                           : isGroupStart
@@ -1195,8 +1194,8 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                             : "mt-[3px]",
                       ].join(" ")}
                     >
-                      {/* Left Colleague Avatar (only visible at group end, spacer preserves alignment) */}
-                      {!isSelf && (
+                      {/* Left Colleague Avatar (multi-member group chats only; 1:1 keeps peer avatar centered in header) */}
+                      {!isSelf && isMultiMemberGroup && (
                         <div className="w-8 shrink-0">
                           {showTail && (
                             <button
@@ -1376,7 +1375,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
       {/* Organic 24px Rounded Capsule Composer */}
       <footer className="shrink-0 bg-gradient-to-t from-[var(--bg-sheet)] via-[var(--bg-sheet)] to-transparent px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-8 sm:pb-5">
         <div className="mx-auto max-w-[740px]">
-          <div className="flex items-end gap-2 rounded-[var(--radius-composer)] border border-[var(--hairline)] bg-[var(--bg-surface)] py-2 pl-4 pr-2.5 shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
+          <div className="flex items-end gap-2 rounded-[var(--radius-composer)] border border-[var(--hairline)] bg-[var(--bg-surface)] py-2 pl-4 pr-2 shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
             <textarea
               ref={textareaRef}
               data-composer-input
@@ -1395,7 +1394,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                 { room: displayRoomTitle },
               )}
               style={{ outline: "none" }}
-              className="my-1 block max-h-[150px] min-h-[26px] flex-1 resize-none border-0 bg-transparent text-[14.5px] leading-[1.45] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
+              className="my-0 block max-h-[150px] min-h-[32px] flex-1 resize-none border-0 bg-transparent py-[5px] text-[14.5px] leading-[22px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
             />
             <button
               type="button"

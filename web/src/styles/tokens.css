@@ -439,6 +439,46 @@ html[data-theme-switching="true"] *::after {
 }
 
 /* ==========================================================================
+   Floating iMessage / WhatsApp Conversation Header + Progressive Blur Veil
+   ========================================================================== */
+.aios-chat-header-veil {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 112px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  background: linear-gradient(
+    to bottom,
+    var(--bg-header-solid) 0%,
+    var(--bg-header) 56%,
+    transparent 100%
+  );
+  backdrop-filter: blur(20px) saturate(170%);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 54%,
+    rgba(0, 0, 0, 0.42) 78%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 54%,
+    rgba(0, 0, 0, 0.42) 78%,
+    transparent 100%
+  );
+  transition: opacity 260ms var(--ease-settle);
+}
+
+.aios-chat-header:hover .aios-chat-header-veil,
+.aios-chat-header:focus-within .aios-chat-header-veil {
+  opacity: 1;
+}
+
+/* ==========================================================================
    Interactive 3D Porcelain / Obsidian Card Micro-Physics (Zero React Re-Renders)
    ========================================================================== */
 .aios-3d-card {

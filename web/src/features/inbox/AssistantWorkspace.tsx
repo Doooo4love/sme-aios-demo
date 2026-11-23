@@ -1211,74 +1211,73 @@ export function AssistantWorkspace() {
       data-testid="assistant-workspace"
       className="flex h-full min-h-0 flex-col bg-[var(--bg-sheet)]"
     >
-      {/* Centered Frosted macOS Sequoia Messages Header */}
-      <ConversationHeader
-        leftSlot={
-          <Link
-            href="/inbox"
-            aria-label={tx({
-              "zh-CN": "返回会话列表",
-              "zh-HK": "返回對話清單",
-              en: "Back to conversations",
-            })}
-            data-testid="assistant-mobile-back"
-            className="inline-flex h-8 items-center gap-0.5 rounded-full pr-2.5 pl-1.5 text-[13.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors lg:hidden"
-          >
-            <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
-            <span>
-              {tx({ "zh-CN": "返回", "zh-HK": "返回", en: "Back" })}
-            </span>
-          </Link>
-        }
-        avatarSrc={agentAvatarSrc}
-        avatarName={agentDisplayName}
-        avatarFallbackText="AG"
-        avatarKind="agent"
-        avatarStatus="online"
-        title={agentDisplayName}
-        titleTestId="assistant-header-name"
-        subtitle={agentSubtitle}
-        onOpenProfile={() => setAgentProfileDialogOpen(true)}
-        profileAriaLabel={tx(
-          {
-            "zh-CN": "查看 {name} 详情",
-            "zh-HK": "檢視 {name} 詳情",
-            en: "View {name} profile",
-          },
-          { name: agentDisplayName },
-        )}
-        rightSlot={
-          <Link
-            href="/work"
-            data-testid="agent-open-workbench-btn"
-            className="inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--bg-surface)] px-2.5 sm:px-3.5 text-[12px] sm:text-[13px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:-translate-y-[0.5px] active:scale-[0.98] transition-all duration-[150ms]"
-          >
-            <LayoutGrid
-              className="h-3.5 w-3.5 text-[var(--accent)]"
-              strokeWidth={1.9}
-            />
-            <span>
-              {tx({
-                "zh-CN": "工作台",
-                "zh-HK": "工作台",
-                en: "Workbench",
-              })}
-            </span>
-            {assignedCount > 0 && (
-              <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 font-mono-code text-[10.5px] font-semibold text-[var(--accent-fg)]">
-                {assignedCount > 99 ? "99+" : assignedCount}
-              </span>
-            )}
-          </Link>
-        }
-      />
-
-      {/* Main Breathable Conversation Stream */}
+      {/* Main Breathable Conversation Stream with Borderless Floating Header Overlay */}
       <div
         data-testid="assistant-feed"
-        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)] px-4 py-6 sm:px-8"
+        className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)]"
       >
-        <div className="mx-auto max-w-[740px]">
+        <ConversationHeader
+          leftSlot={
+            <Link
+              href="/inbox"
+              aria-label={tx({
+                "zh-CN": "返回会话列表",
+                "zh-HK": "返回對話清單",
+                en: "Back to conversations",
+              })}
+              data-testid="assistant-mobile-back"
+              className="inline-flex h-8 items-center gap-0.5 rounded-full pr-2.5 pl-1.5 text-[13.5px] font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] transition-colors lg:hidden"
+            >
+              <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
+              <span>
+                {tx({ "zh-CN": "返回", "zh-HK": "返回", en: "Back" })}
+              </span>
+            </Link>
+          }
+          avatarSrc={agentAvatarSrc}
+          avatarName={agentDisplayName}
+          avatarFallbackText="AG"
+          avatarKind="agent"
+          avatarStatus="online"
+          title={agentDisplayName}
+          titleTestId="assistant-header-name"
+          subtitle={agentSubtitle}
+          onOpenProfile={() => setAgentProfileDialogOpen(true)}
+          profileAriaLabel={tx(
+            {
+              "zh-CN": "查看 {name} 详情",
+              "zh-HK": "檢視 {name} 詳情",
+              en: "View {name} profile",
+            },
+            { name: agentDisplayName },
+          )}
+          rightSlot={
+            <Link
+              href="/work"
+              data-testid="agent-open-workbench-btn"
+              className="inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--bg-surface)]/90 backdrop-blur-md border border-[var(--hairline)] px-2.5 sm:px-3.5 text-[12px] sm:text-[13px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:-translate-y-[0.5px] active:scale-[0.98] transition-all duration-[150ms]"
+            >
+              <LayoutGrid
+                className="h-3.5 w-3.5 text-[var(--accent)]"
+                strokeWidth={1.9}
+              />
+              <span>
+                {tx({
+                  "zh-CN": "工作台",
+                  "zh-HK": "工作台",
+                  en: "Workbench",
+                })}
+              </span>
+              {assignedCount > 0 && (
+                <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 font-mono-code text-[10.5px] font-semibold text-[var(--accent-fg)]">
+                  {assignedCount > 99 ? "99+" : assignedCount}
+                </span>
+              )}
+            </Link>
+          }
+        />
+
+        <div className="mx-auto max-w-[740px] px-4 pt-[96px] pb-6 sm:px-8">
           {/* Whisper-Quiet Centered History Pill */}
           {historyItems.length > 0 && (
             <div className="mb-4 flex justify-center">
@@ -1320,7 +1319,7 @@ export function AssistantWorkspace() {
 
           {/* Serene Unboxed Muse Empty State — Opus Nit #2: text-balance & crisp max-w-[520px] (zero widow chars) */}
           {turns.length === 0 && (
-            <div className="flex flex-col items-center justify-center pt-[10vh] pb-6 text-center">
+            <div className="flex flex-col items-center justify-center pt-[6vh] pb-6 text-center">
               <Avatar
                 src={agentAvatarSrc}
                 name={agentDisplayName}
@@ -1479,7 +1478,7 @@ export function AssistantWorkspace() {
                 <div
                   data-testid={`assistant-turn-${turn.clientId}`}
                   className={[
-                    "aios-row-in flex items-end gap-2.5 max-w-[96%]",
+                    "aios-row-in flex flex-col items-start pl-1.5",
                     idx === 0 || showBurstTs
                       ? ""
                       : isGroupStart
@@ -1487,120 +1486,100 @@ export function AssistantWorkspace() {
                         : "mt-[3px]",
                   ].join(" ")}
                 >
-                  <div className="w-8 shrink-0">
-                    {showTail && (
-                      <button
-                        type="button"
-                        onClick={() => setAgentProfileDialogOpen(true)}
-                        aria-label={tx(
-                          {
-                            "zh-CN": "查看 {name} 详情",
-                            "zh-HK": "檢視 {name} 詳情",
-                            en: "View {name} profile",
-                          },
-                          { name: agentDisplayName },
-                        )}
-                        className="block rounded-full cursor-pointer transition-transform duration-[140ms] hover:scale-[1.05]"
-                      >
-                        <Avatar
-                          src={agentAvatarSrc}
-                          name={agentDisplayName}
-                          fallbackText="AG"
-                          size="sm"
-                          kind="agent"
-                        />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    {turn.sourceKind === "proactive_alert" && turn.proactiveAlert && (
-                      <div
-                        data-testid={`proactive-alert-${turn.proactiveAlert.id}`}
-                        className={[
-                          "rounded-[var(--radius-chat-card)] border bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]",
-                          turn.proactiveAlert.severity === "critical" ||
-                          turn.proactiveAlert.severity === "high"
-                            ? "border-[var(--status-crimson-border)]"
-                            : "border-[var(--hairline)]",
-                        ].join(" ")}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--hairline-subtle)]">
-                          <div className="flex items-center gap-2">
-                            {turn.proactiveAlert.kind === "security_alert" ||
-                            turn.proactiveAlert.severity === "critical" ||
-                            turn.proactiveAlert.severity === "high" ? (
-                              <ShieldAlert
-                                className="h-3.5 w-3.5 text-[var(--status-crimson)]"
-                                strokeWidth={1.9}
-                              />
-                            ) : (
-                              <Bell
-                                className="h-3.5 w-3.5 text-[var(--accent)]"
-                                strokeWidth={1.9}
-                              />
-                            )}
-                            <span
-                              className={[
-                                "inline-flex items-center rounded-xs border px-2 py-0.5 text-[10.5px] font-semibold tracking-[0.02em]",
-                                turn.proactiveAlert.kind === "security_alert" ||
-                                turn.proactiveAlert.severity === "critical" ||
-                                turn.proactiveAlert.severity === "high"
-                                  ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
-                                  : "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]",
-                              ].join(" ")}
-                            >
-                              {turn.proactiveAlert.kind === "security_alert"
-                                ? tx({
-                                    "zh-CN": "安全实时告警",
-                                    "zh-HK": "安全即時告警",
-                                    en: "Security Alert",
-                                  })
-                                : tx({
-                                    "zh-CN": "主动协同提醒",
-                                    "zh-HK": "主動協同提醒",
-                                    en: "Proactive Work Alert",
-                                  })}
-                            </span>
-                          </div>
-                          <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                            {formatDateTime(turn.proactiveAlert.created_at)}
-                          </span>
-                        </div>
-
-                        <div className="mt-2.5 text-[14px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                          {turn.proactiveAlert.title}
-                        </div>
-                        {turn.proactiveAlert.subtitle && (
-                          <p className="mt-1 text-[13px] leading-relaxed text-[var(--ink-secondary)]">
-                            {turn.proactiveAlert.subtitle}
-                          </p>
-                        )}
-
-                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
-                          {turn.proactiveAlert.reference ? (
-                            <span className="font-mono-code text-[11px] tabular-nums text-[var(--ink-muted)]">
-                              {turn.proactiveAlert.reference}
-                            </span>
-                          ) : (
-                            <span />
-                          )}
-                          <Link
-                            href={turn.proactiveAlert.href || "/work"}
-                            className="inline-flex h-8 items-center gap-1 rounded-sm bg-[var(--accent-solid)] px-3 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)] transition-colors"
+                  <div className="w-full max-w-[92%] space-y-1.5">
+                    {turn.sourceKind === "proactive_alert" &&
+                      turn.proactiveAlert &&
+                      (() => {
+                        const alert = turn.proactiveAlert;
+                        const isSecurityOrHigh =
+                          alert.kind === "security_alert" ||
+                          alert.severity === "critical" ||
+                          alert.severity === "high";
+                        return (
+                          <div
+                            data-testid={`proactive-alert-${alert.id}`}
+                            className="flex w-full flex-col items-start gap-2"
                           >
-                            <span>
-                              {tx({
-                                "zh-CN": "查看处理",
-                                "zh-HK": "檢視處理",
-                                en: "View & Handle",
-                              })}
-                            </span>
-                            <ArrowUpRight className="h-3.5 w-3.5" />
-                          </Link>
-                        </div>
-                      </div>
-                    )}
+                            <div
+                              className={[
+                                "imessage-bubble-received relative inline-block max-w-[90%] sm:max-w-[85%] bg-[var(--bubble-received-bg)] px-4 py-[9px] text-[var(--bubble-received-ink)]",
+                                isSecurityOrHigh
+                                  ? "border border-[var(--status-crimson-border)]"
+                                  : "",
+                                getBubbleRadiusClass("received", pos),
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                            >
+                              <div className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.01em]">
+                                {isSecurityOrHigh ? (
+                                  <ShieldAlert
+                                    className="h-3.5 w-3.5 shrink-0 text-[var(--status-crimson)]"
+                                    strokeWidth={1.9}
+                                  />
+                                ) : (
+                                  <Bell
+                                    className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]"
+                                    strokeWidth={1.9}
+                                  />
+                                )}
+                                <span
+                                  className={
+                                    isSecurityOrHigh
+                                      ? "text-[var(--status-crimson)]"
+                                      : "text-[var(--accent-ink)]"
+                                  }
+                                >
+                                  {alert.kind === "security_alert"
+                                    ? tx({
+                                        "zh-CN": "安全实时告警",
+                                        "zh-HK": "安全即時告警",
+                                        en: "Security Alert",
+                                      })
+                                    : tx({
+                                        "zh-CN": "工作提醒",
+                                        "zh-HK": "工作提醒",
+                                        en: "Work Reminder",
+                                      })}
+                                </span>
+                              </div>
+
+                              <div className="mt-1 text-[14.5px] font-medium leading-[1.45] text-[var(--bubble-received-ink)]">
+                                {alert.title}
+                              </div>
+                              {alert.subtitle && (
+                                <p className="mt-1 text-[13.5px] leading-[1.48] text-[var(--ink-secondary)]">
+                                  {alert.subtitle}
+                                </p>
+                              )}
+                              {showTail && (
+                                <IMessageBubbleTail side="received" />
+                              )}
+                            </div>
+
+                            <div className="flex max-w-[90%] sm:max-w-[85%] flex-wrap items-center gap-2">
+                              {alert.reference && (
+                                <span className="rounded-full border border-[var(--hairline)] bg-[var(--bg-surface)]/85 px-2.5 py-0.5 font-mono-code text-[11px] tabular-nums text-[var(--ink-muted)]">
+                                  {alert.reference}
+                                </span>
+                              )}
+                              <Link
+                                href={alert.href || "/work"}
+                                className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-solid)] px-3 py-1 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)] transition-colors"
+                              >
+                                <span>
+                                  {tx({
+                                    "zh-CN": "查看处理",
+                                    "zh-HK": "檢視處理",
+                                    en: "View & Handle",
+                                  })}
+                                </span>
+                                <ArrowUpRight className="h-3 w-3" />
+                              </Link>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     {turn.sourceKind === "zoom_booking" && turn.zoomBooking && (
                       <ZoomBookingCard
                         parsing={turn.zoomBooking.phase === "parsing"}
@@ -1790,6 +1769,7 @@ export function AssistantWorkspace() {
                         {turn.status === "done" && turn.result && (
                           <>
                             {turn.result.kind !== "message" &&
+                              turn.result.kind !== "clarification" &&
                               turn.result.kind !== "refusal" && (
                                 <BriefProgressChain
                                   phase="done"
