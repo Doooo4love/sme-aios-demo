@@ -1407,7 +1407,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
               disabled={composerText.trim().length === 0}
               onClick={handleSend}
               className={[
-                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-[150ms]",
+                "inline-flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full transition-all duration-[150ms]",
                 composerText.trim().length > 0
                   ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] hover:bg-[var(--accent-solid-hover)] active:scale-[0.92] cursor-pointer"
                   : "bg-[var(--bg-surface-subtle)] text-[var(--ink-faint)] cursor-not-allowed",
