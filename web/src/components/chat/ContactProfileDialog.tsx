@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  BookOpen,
   Building2,
   Check,
   ChevronLeft,
@@ -469,7 +470,22 @@ export function ContactProfileDialog({
             </div>
           </div>
 
-          <div className="flex justify-end pt-1">
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+            <Link
+              href="/settings/memory"
+              data-testid="contact-dialog-edit-memory"
+              onClick={() => onOpenChange(false)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-3.5 text-[12px] font-medium text-[var(--ink-secondary)] hover:border-[var(--hairline-strong)] hover:text-[var(--ink-primary)] transition-colors"
+            >
+              <BookOpen className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
+              <span>
+                {tx({
+                  "zh-CN": "查看/编辑 MEMORY.md",
+                  "zh-HK": "查看/編輯 MEMORY.md",
+                  en: "Edit MEMORY.md",
+                })}
+              </span>
+            </Link>
             <Link
               href="/settings/agent"
               onClick={() => onOpenChange(false)}

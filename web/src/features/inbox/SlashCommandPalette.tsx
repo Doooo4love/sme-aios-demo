@@ -13,6 +13,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  BookOpen,
   CheckSquare,
   FilePlus2,
   HelpCircle,
@@ -83,6 +84,8 @@ function getSkillIcon(command: string) {
       return Scale;
     case "/exceptions":
       return AlertTriangle;
+    case "/memory":
+      return BookOpen;
     case "/help":
       return HelpCircle;
     default:
@@ -297,6 +300,32 @@ export function buildFallbackSlashSkills(
       keywords: ["exceptions", "ops", "reconcile", "异常", "異常", "运维"],
     },
     {
+      command: "/memory",
+      title: "长期记忆 (MEMORY.md)",
+      title_en: "Long-Term Memory (MEMORY.md)",
+      description: "查看、新增、遗忘或整理跨会话长期记忆与偏好",
+      description_en:
+        "View, add, forget, or tidy persistent cross-session MEMORY.md",
+      category: "navigation",
+      usage: "/memory [view | add <fact> | forget <query> | tidy]",
+      requires_args: true,
+      allowed: true,
+      required_module: null,
+      keywords: [
+        "memory",
+        "remember",
+        "forget",
+        "tidy",
+        "preferences",
+        "记忆",
+        "記憶",
+        "长期记忆",
+        "長期記憶",
+        "记住",
+        "忘掉",
+      ],
+    },
+    {
       command: "/help",
       title: "助手指令与权限说明",
       title_en: "Commands & Access Help",
@@ -380,8 +409,11 @@ export const SlashCommandPalette = forwardRef<
   }, [status, authGeneration, capabilities]);
 
   const allSkills = useMemo(() => {
-    if (remoteSkills && remoteSkills.length > 0) return remoteSkills;
-    return buildFallbackSlashSkills(actor, capabilities);
+    const fallback = buildFallbackSlashSkills(actor, capabilities);
+    if (!remoteSkills || remoteSkills.length === 0) return fallback;
+    if (remoteSkills.some((s) => s.command === "/memory")) return remoteSkills;
+    const memorySkill = fallback.find((s) => s.command === "/memory");
+    return memorySkill ? [...remoteSkills, memorySkill] : remoteSkills;
   }, [remoteSkills, actor, capabilities]);
 
   const query = useMemo(() => {
@@ -623,9 +655,17 @@ export const SlashCommandPalette = forwardRef<
                   const Icon = getSkillIcon(skill.command);
                   const isSelected = selectedCommand === skill.command;
                   const titleText =
-                    locale === "en" ? skill.title_en : skill.title;
+                    locale === "en"
+                      ? skill.title_en
+                      : locale === "zh-HK" && skill.command === "/memory"
+                        ? "長期記憶 (MEMORY.md)"
+                        : skill.title;
                   const descText =
-                    locale === "en" ? skill.description_en : skill.description;
+                    locale === "en"
+                      ? skill.description_en
+                      : locale === "zh-HK" && skill.command === "/memory"
+                        ? "檢視、新增、遺忘或整理跨會話長期記憶與偏好"
+                        : skill.description;
 
                   return (
                     <Command.Item
@@ -700,7 +740,10 @@ export const SlashCommandPalette = forwardRef<
                       </div>
 
                       <div className="hidden md:flex shrink-0 items-center gap-1.5">
-                        <code className="max-w-[190px] truncate rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]">
+                        <code
+                          title={skill.usage}
+                          className="max-w-[210px] truncate rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]"
+                        >
                           {skill.usage}
                         </code>
                       </div>

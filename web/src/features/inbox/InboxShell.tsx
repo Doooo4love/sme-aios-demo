@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Popover } from "radix-ui";
 import {
+  BookOpen,
   BookUser,
   Bot,
   Briefcase,
@@ -1233,11 +1234,11 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                     onClick={() => setAccountOpen(false)}
                     className="flex items-center justify-between gap-2 rounded-sm px-3 py-2 text-[12.5px] text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors"
                   >
-                    <span className="flex items-center gap-2.5">
-                      <User className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
-                      <span>{t("shell.menu.profile")}</span>
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <User className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                      <span className="truncate">{t("shell.menu.profile")}</span>
                     </span>
-                    <ChevronRight className="h-3.5 w-3.5 text-[var(--ink-faint)]" />
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ink-faint)]" />
                   </Link>
 
                   <Link
@@ -1259,6 +1260,25 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                           },
                           { name: agentDisplayName },
                         )}
+                      </span>
+                    </span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ink-faint)]" />
+                  </Link>
+
+                  <Link
+                    href="/settings/memory"
+                    data-testid="inbox-menu-memory"
+                    onClick={() => setAccountOpen(false)}
+                    className="flex items-center justify-between gap-2 rounded-sm px-3 py-2 text-[12.5px] text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                  >
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <BookOpen className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                      <span className="truncate">
+                        {tx({
+                          "zh-CN": "长期记忆 (MEMORY.md)",
+                          "zh-HK": "長期記憶 (MEMORY.md)",
+                          en: "Long-Term Memory",
+                        })}
                       </span>
                     </span>
                     <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ink-faint)]" />

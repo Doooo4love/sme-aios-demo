@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import Field
 
 from .contracts import Actor, Strict
+from .security_guard import normalize_user_text, scrub_secrets
 from .llm_provider import (
     EFFORT_MAX_TOKENS,
     EFFORT_TIMEOUT_SECONDS,
@@ -27,6 +28,7 @@ RoutingTier = Literal["T0", "T1", "T2", "T3"]
 HK_TZ = timezone(timedelta(hours=8))
 
 ZONE1_5_HARD_MAX_TOKENS = 140_000
+ZONE1_2_MAX_TOKENS = 1_200
 ZONE1_5_SAFETY_RESERVE_TOKENS = 38_000
 ZONE1_5_UNMOUNT_SUMMARY_MAX_TOKENS = 2_000
 ZONE2_TOOL_OUTPUT_MAX_TOKENS = 1_500
@@ -267,6 +269,7 @@ class ZoneAssembly(Strict):
     messages: list[dict[str, Any]]
     sorted_tool_schemas: list[dict[str, Any]]
     zone1_tokens: int
+    zone1_2_tokens: int = 0
     zone1_5_tokens: int
     zone2_tokens: int
     zone3_tokens: int
@@ -525,14 +528,38 @@ class ContextManager:
         user_text: str,
         pulse_summary: str,
         profile: ModelProfile,
+        user_memory: str | None = None,
         active_document: ActiveDocumentInput | None = None,
         task_switched: bool = False,
         now: float | None = None,
     ) -> ZoneAssembly:
-        """Assemble Zone 1 (immutable) + Zone 1.5 (doc slot) + Zone 2 (trajectory) + Zone 3 (ephemeral pulse)."""
+        """Assemble Zone 1 (immutable) + Zone 1.2 (MEMORY.md) + Zone 1.5 (doc slot) + Zone 2 (trajectory) + Zone 3 (ephemeral pulse)."""
         ts = time.time() if now is None else now
         sorted_schemas = self.zone1_tool_schemas(tool_schemas)
         zone1_tokens = approx_tokens(system_prompt) + approx_tokens(sorted_schemas)
+
+        # Zone 1.2: Per-user long-term MEMORY.md wrapped in untrusted user-facts XML fence (after Zone 1).
+        zone1_2_messages: list[dict[str, Any]] = []
+        zone1_2_tokens = 0
+        raw_memory = (user_memory or "").strip()
+        if raw_memory:
+            safe_memory = scrub_secrets(normalize_user_text(raw_memory)[0]).strip()
+            if safe_memory:
+                safe_memory = truncate_to_tokens(safe_memory, ZONE1_2_MAX_TOKENS).strip()
+            if safe_memory:
+                memory_block = (
+                    '<user_long_term_memory trust="user_editable_facts_only">\n'
+                    f"{safe_memory}\n"
+                    "</user_long_term_memory>"
+                )
+                zone1_2_tokens = approx_tokens(memory_block)
+                zone1_2_messages = [
+                    {"role": "user", "content": memory_block},
+                    {
+                        "role": "assistant",
+                        "content": "Noted user long-term memory facts and preferences (non-authoritative).",
+                    },
+                ]
 
         prior_state = self.get_session_state(actor, session_id) if session_id else None
         rolling_summary = str((prior_state or {}).get("rolling_summary") or "")
@@ -674,6 +701,7 @@ class ContextManager:
         zone3_tokens = approx_tokens(clean_pulse)
 
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        messages.extend(zone1_2_messages)
         messages.extend(zone1_5_messages)
         messages.extend(zone2_messages)
         messages.append({"role": "user", "content": zone3_content})
@@ -682,6 +710,7 @@ class ContextManager:
             messages=messages,
             sorted_tool_schemas=sorted_schemas,
             zone1_tokens=zone1_tokens,
+            zone1_2_tokens=zone1_2_tokens,
             zone1_5_tokens=zone1_5_tokens,
             zone2_tokens=trajectory_tokens,
             zone3_tokens=zone3_tokens,

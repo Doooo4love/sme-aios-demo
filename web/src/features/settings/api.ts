@@ -1,6 +1,12 @@
-import { apiFetch } from "@/lib/api-client";
+import { ApiError, apiFetch, isApiError } from "@/lib/api-client";
 import { DEFAULT_LOCALE, translateInline, type Locale } from "@/lib/i18n";
-import type { Profile } from "@/lib/types";
+import type {
+  Profile,
+  UserMemoryForgetResponse,
+  UserMemoryState,
+  UserMemoryTidyResponse,
+  UserMemoryUpdatePayload,
+} from "@/lib/types";
 
 export type ProfileKind = "user" | "agent";
 
@@ -83,4 +89,142 @@ export function validateAvatarFile(
     });
   }
   return null;
+}
+
+export class MemoryApiError extends ApiError {
+  readonly detail: string | null;
+  readonly reason: string | null;
+
+  constructor(
+    base: ApiError,
+    code: string,
+    message: string,
+    detail: string | null,
+    reason: string | null,
+  ) {
+    super(
+      {
+        status: base.status,
+        code,
+        message,
+        requestId: base.requestId,
+        retryAfter: base.retryAfter,
+        fieldErrors: base.fieldErrors,
+        nextStep: base.nextStep,
+        viewProposalId: base.viewProposalId,
+        allowedActions: base.allowedActions,
+        warehouses: base.warehouses,
+        runId: base.runId,
+      },
+      base.rawDetail,
+    );
+    this.name = "MemoryApiError";
+    this.detail = detail;
+    this.reason = reason;
+  }
+}
+
+export function isMemoryApiError(error: unknown): error is MemoryApiError {
+  return error instanceof MemoryApiError;
+}
+
+function toMemoryApiError(error: unknown): unknown {
+  if (!isApiError(error)) {
+    return error;
+  }
+  const raw = error.rawDetail;
+  let code = error.code;
+  let detail: string | null = null;
+  let reason: string | null = null;
+
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    detail = raw.trim();
+  } else if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.code === "string" && obj.code.trim().length > 0) {
+      code = obj.code.trim();
+    }
+    if (typeof obj.reason === "string" && obj.reason.trim().length > 0) {
+      reason = obj.reason.trim();
+    }
+    if (typeof obj.detail === "string" && obj.detail.trim().length > 0) {
+      detail = obj.detail.trim();
+    } else if (
+      typeof obj.message === "string" &&
+      obj.message.trim().length > 0
+    ) {
+      detail = obj.message.trim();
+    }
+  }
+
+  const preferredMessage = reason || detail || error.message;
+  return new MemoryApiError(error, code, preferredMessage, detail, reason);
+}
+
+async function runMemoryRequest<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    throw toMemoryApiError(err);
+  }
+}
+
+export function fetchUserMemory(signal?: AbortSignal): Promise<UserMemoryState> {
+  return runMemoryRequest(() =>
+    apiFetch<UserMemoryState>("/v1/memory", { signal }),
+  );
+}
+
+export function updateUserMemory(
+  payload: UserMemoryUpdatePayload,
+): Promise<UserMemoryState> {
+  return runMemoryRequest(() =>
+    apiFetch<UserMemoryState>("/v1/memory", {
+      method: "PUT",
+      body: {
+        version: payload.version,
+        content: payload.content,
+      },
+    }),
+  );
+}
+
+export function revertUserMemory(version: number): Promise<UserMemoryState> {
+  return runMemoryRequest(() =>
+    apiFetch<UserMemoryState>("/v1/memory/revert", {
+      method: "POST",
+      body: { version },
+    }),
+  );
+}
+
+export function tidyUserMemory(
+  useLlm = false,
+): Promise<UserMemoryTidyResponse> {
+  return runMemoryRequest(() =>
+    apiFetch<UserMemoryTidyResponse>("/v1/memory/tidy", {
+      method: "POST",
+      body: { use_llm: useLlm },
+    }),
+  );
+}
+
+export function forgetUserMemory(
+  query: string,
+): Promise<UserMemoryForgetResponse> {
+  return runMemoryRequest(() =>
+    apiFetch<UserMemoryForgetResponse>("/v1/memory/forget", {
+      method: "POST",
+      body: { query },
+    }),
+  );
+}
+
+export function clearUserMemory(version: number): Promise<UserMemoryState> {
+  const sp = new URLSearchParams({ version: String(version) });
+  return runMemoryRequest(() =>
+    apiFetch<UserMemoryState>(`/v1/memory?${sp.toString()}`, {
+      method: "DELETE",
+    }),
+  );
 }

@@ -45,6 +45,10 @@ const ALLOWED_V1_PATTERNS: readonly RegExp[] = [
   /^\/v1\/profile\/avatar$/,
   /^\/v1\/agent-profile$/,
   /^\/v1\/agent-profile\/avatar$/,
+  /^\/v1\/memory$/,
+  /^\/v1\/memory\/tidy$/,
+  /^\/v1\/memory\/revert$/,
+  /^\/v1\/memory\/forget$/,
   /^\/v1\/calendar\/events$/,
   /^\/v1\/calendar\/events\/[^/]+$/,
   /^\/v1\/calendar\/events\/[^/]+\/cancel$/,
@@ -351,8 +355,17 @@ export async function proxyToAios(
   outgoingHeaders.set("Content-Type", "application/json; charset=utf-8");
 
   if (!upstreamRes.ok) {
-    const sanitizedError = sanitizeErrorPayload(upstreamRes.status, parsed);
-    return new Response(JSON.stringify(sanitizedError), {
+    const isMemoryPath =
+      normalizedPath === "/v1/memory" ||
+      normalizedPath.startsWith("/v1/memory/");
+    const errorInput = isMemoryPath
+      ? normalizeMemoryErrorPayload(upstreamRes.status, parsed)
+      : parsed;
+    const sanitizedError = sanitizeErrorPayload(upstreamRes.status, errorInput);
+    const responseError = isMemoryPath
+      ? enrichSanitizedMemoryError(upstreamRes.status, sanitizedError)
+      : sanitizedError;
+    return new Response(JSON.stringify(responseError), {
       status: upstreamRes.status,
       headers: outgoingHeaders,
     });
@@ -409,4 +422,78 @@ function sanitizeSlashSkillsResponse(payload: unknown): { items: unknown[] } {
     .filter((entry) => entry.command.length > 0);
 
   return { items };
+}
+
+function normalizeMemoryErrorPayload(
+  status: number,
+  parsed: unknown,
+): unknown {
+  if (
+    (status !== 409 && status !== 422) ||
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    return parsed;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const rawDetail = record.detail;
+  if (Array.isArray(rawDetail)) {
+    return parsed;
+  }
+
+  const detailObj: Record<string, unknown> =
+    typeof rawDetail === "object" && rawDetail !== null && !Array.isArray(rawDetail)
+      ? { ...(rawDetail as Record<string, unknown>) }
+      : {};
+
+  if (typeof record.code === "string" && typeof detailObj.code !== "string") {
+    detailObj.code = record.code;
+  }
+  if (typeof record.reason === "string" && typeof detailObj.reason !== "string") {
+    detailObj.reason = record.reason;
+  }
+  if (typeof rawDetail === "string" && rawDetail.trim().length > 0) {
+    if (typeof detailObj.detail !== "string") {
+      detailObj.detail = rawDetail;
+    }
+    if (typeof detailObj.message !== "string") {
+      detailObj.message = rawDetail;
+    }
+  }
+  if (
+    typeof detailObj.message !== "string" &&
+    typeof detailObj.reason === "string" &&
+    detailObj.reason.trim().length > 0
+  ) {
+    detailObj.message = detailObj.reason;
+  }
+
+  if (Object.keys(detailObj).length === 0) {
+    return parsed;
+  }
+  return { detail: detailObj };
+}
+
+function enrichSanitizedMemoryError(
+  status: number,
+  sanitizedError: Record<string, unknown>,
+): Record<string, unknown> {
+  if (status !== 409 && status !== 422) {
+    return sanitizedError;
+  }
+  const detail = sanitizedError.detail;
+  if (typeof detail !== "object" || detail === null || Array.isArray(detail)) {
+    return sanitizedError;
+  }
+  const detailRecord = detail as Record<string, unknown>;
+  const enriched: Record<string, unknown> = { ...sanitizedError };
+  if (typeof detailRecord.code === "string") {
+    enriched.code = detailRecord.code;
+  }
+  if (typeof detailRecord.reason === "string") {
+    enriched.reason = detailRecord.reason;
+  }
+  return enriched;
 }

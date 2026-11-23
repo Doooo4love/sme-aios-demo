@@ -52,6 +52,7 @@ from .profile import profile_routes
 from .purchase import OrderIssue, PurchaseOrder, draft_order, from_ocr
 from .service import Services, identity_for, optional_opa, planner_for, services, setting
 from .tasks import task_routes
+from .user_memory import MemoryBudgetError, MemoryPolicyError, memory_routes
 from .workflow import Conflict, tick
 from .workspace_source import DirectoryUnavailable, WorkspaceSource
 from .workbench import WorkbenchPlanner, workbench_routes
@@ -128,6 +129,28 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     @app.exception_handler(InvalidCollaborationRequest)
     async def invalid_collaboration(_request: Request, error: InvalidCollaborationRequest):
         return JSONResponse(status_code=422, content={"detail": str(error)})
+
+    @app.exception_handler(MemoryPolicyError)
+    async def memory_policy_error(_request: Request, error: MemoryPolicyError):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": error.detail, "code": error.code, "reason": error.reason},
+        )
+
+    @app.exception_handler(MemoryBudgetError)
+    async def memory_budget_error(_request: Request, error: MemoryBudgetError):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": error.detail,
+                "code": error.code,
+                "reason": error.reason,
+                "token_count": error.token_count,
+                "char_count": error.char_count,
+                "max_tokens": error.max_tokens,
+                "max_chars": error.max_chars,
+            },
+        )
 
     @app.exception_handler(Conflict)
     async def conflict(_request: Request, error: Conflict):
@@ -582,6 +605,14 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
     app.include_router(assurance_routes(authenticate, assurance, concurrency=assurance_concurrency))
     app.include_router(profile_routes(workflow, authenticate, chat_available=chat_directory is not None))
+    app.include_router(
+        memory_routes(
+            workflow,
+            authenticate,
+            llm_provider=active_assistant.llm_provider if active_assistant is not None else None,
+            telemetry=active_assistant.telemetry if active_assistant is not None else None,
+        )
+    )
     app.include_router(calendar_routes(workflow, authenticate, chat_directory))
     app.include_router(task_routes(workflow, authenticate, visible_proposal, require_policy, directory_actor))
     if sessions is not None:

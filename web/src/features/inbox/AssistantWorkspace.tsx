@@ -8,6 +8,7 @@ import {
   ArrowUp,
   ArrowUpRight,
   Bell,
+  BookOpen,
   Calendar,
   CalendarDays,
   ChevronLeft,
@@ -290,6 +291,8 @@ export function AssistantWorkspace() {
   const slashPaletteOpen =
     /^\/([^\s\n]*)$/.test(composerText) &&
     dismissedSlashQuery !== composerText;
+  const memorySlashHintOpen =
+    !slashPaletteOpen && /^\/memory(?:\s|$)/i.test(composerText);
 
   // + Add Context Popover & Modals
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -661,6 +664,10 @@ export function AssistantWorkspace() {
       if (!trimmed) return;
 
       if (!existingEntry) {
+        if (/^\/memory\s+(?:edit|open|settings)\s*$/i.test(trimmed)) {
+          router.push("/settings/memory");
+          return;
+        }
         const meetingSlashMatch = /^\/meeting(?:\s+(.*))?$/i.exec(trimmed);
         if (meetingSlashMatch && meetingSlashMatch[1]?.trim()) {
           await executeZoomBookingParse(meetingSlashMatch[1].trim());
@@ -813,6 +820,7 @@ export function AssistantWorkspace() {
       handleAccessChanged,
       loadHistory,
       locale,
+      router,
       scheduleInProgressPoll,
       tx,
     ],
@@ -880,6 +888,16 @@ export function AssistantWorkspace() {
   const handleComposerKeyDown = (
     e: React.KeyboardEvent<HTMLTextAreaElement>,
   ) => {
+    if (
+      composerText.trim() === "/memory" &&
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !e.nativeEvent.isComposing
+    ) {
+      e.preventDefault();
+      handleSendComposer();
+      return;
+    }
     if (paletteRef.current?.handleKeyDown(e)) {
       return;
     }
@@ -891,7 +909,7 @@ export function AssistantWorkspace() {
 
   const handleSelectSlashSkill = useCallback(
     (skill: SlashSkillItem) => {
-      if (skill.requires_args) {
+      if (skill.requires_args || skill.command === "/memory") {
         setDismissedSlashQuery(null);
         updateComposer(`${skill.command} `);
         requestAnimationFrame(() => {
@@ -1943,6 +1961,85 @@ export function AssistantWorkspace() {
             onDismiss={() => setDismissedSlashQuery(composerText)}
           />
 
+          {memorySlashHintOpen && (
+            <div
+              data-testid="memory-slash-helper"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] px-3 py-2 text-[12px] shadow-[var(--shadow-subtle)]"
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1.5 pr-1 font-medium text-[var(--ink-secondary)]">
+                  <BookOpen
+                    className="h-3.5 w-3.5 text-[var(--accent)]"
+                    strokeWidth={1.85}
+                  />
+                  <span className="font-mono-code text-[11.5px] text-[var(--ink-primary)]">
+                    /memory
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  disabled={hasPendingTurn}
+                  onClick={() => {
+                    clearDraft("assistant");
+                    setComposerText("");
+                    setDismissedSlashQuery(null);
+                    void executeTurn("/memory view");
+                  }}
+                  className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 font-mono-code text-[11px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  view
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateComposer("/memory add ");
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                  className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 font-mono-code text-[11px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
+                >
+                  add &lt;fact&gt;
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateComposer("/memory forget ");
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                  className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 font-mono-code text-[11px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
+                >
+                  forget &lt;query&gt;
+                </button>
+                <button
+                  type="button"
+                  disabled={hasPendingTurn}
+                  onClick={() => {
+                    clearDraft("assistant");
+                    setComposerText("");
+                    setDismissedSlashQuery(null);
+                    void executeTurn("/memory tidy");
+                  }}
+                  className="rounded-full bg-[var(--bg-surface-subtle)] px-2.5 py-1 font-mono-code text-[11px] text-[var(--ink-secondary)] hover:bg-[var(--accent-wash)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  tidy
+                </button>
+              </div>
+              <Link
+                href="/settings/memory"
+                data-testid="memory-slash-open-editor"
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--ink-primary)] hover:border-[var(--accent-border)] hover:text-[var(--accent-ink)] transition-colors"
+              >
+                <span>
+                  {tx({
+                    "zh-CN": "打开 MEMORY.md",
+                    "zh-HK": "開啟 MEMORY.md",
+                    en: "Edit MEMORY.md",
+                  })}
+                </span>
+                <ArrowUpRight className="h-3 w-3" strokeWidth={1.85} />
+              </Link>
+            </div>
+          )}
+
           {/* Muse Floating Capsule Composer (24px Organic Pill Radius — STRICTLY TWO CONTROLS: + 添加上下文 & ↑ Send) */}
           <div className="rounded-[var(--radius-composer)] border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
             <div className="px-4 pt-3.5 pb-1.5">
@@ -2103,6 +2200,40 @@ export function AssistantWorkspace() {
                           </span>
                         </button>
                       )}
+
+                      <Link
+                        href="/settings/memory"
+                        data-testid="context-menu-memory"
+                        onClick={() => setContextMenuOpen(false)}
+                        className="flex items-center justify-between gap-2 rounded-sm px-3 py-2 text-[13px] text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                      >
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <BookOpen
+                            className="h-4 w-4 shrink-0 text-[var(--ink-muted)]"
+                            strokeWidth={1.85}
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium leading-tight">
+                              {tx({
+                                "zh-CN": "长期记忆 MEMORY.md",
+                                "zh-HK": "長期記憶 MEMORY.md",
+                                en: "Long-Term Memory",
+                              })}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] font-normal text-[var(--ink-muted)]">
+                              {tx({
+                                "zh-CN": "查看与编辑跨会话偏好",
+                                "zh-HK": "檢視與編輯跨會話偏好",
+                                en: "View & edit cross-session preferences",
+                              })}
+                            </span>
+                          </span>
+                        </span>
+                        <ArrowUpRight
+                          className="h-3.5 w-3.5 shrink-0 text-[var(--ink-faint)]"
+                          strokeWidth={1.85}
+                        />
+                      </Link>
                     </div>
 
                     {quickPromptOptions.length > 0 && (

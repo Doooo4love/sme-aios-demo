@@ -7,6 +7,7 @@ import { DropdownMenu } from "radix-ui";
 import {
   Activity,
   ArrowLeft,
+  BookOpen,
   Bot,
   Briefcase,
   CalendarDays,
@@ -45,7 +46,7 @@ interface WorkbenchNavTier {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/inbox";
   const router = useRouter();
-  const { t, localizeRole, localizePersona } = useLocale();
+  const { t, tx, localizeRole, localizePersona } = useLocale();
   const {
     status,
     actor,
@@ -350,8 +351,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     href="/settings/profile"
                     className="mt-1 flex items-center gap-2.5 rounded-sm px-3 py-2 text-[12.5px] text-[var(--ink-primary)] outline-none hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)]"
                   >
-                    <User className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
-                    <span>{t("shell.menu.profile")}</span>
+                    <User className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                    <span className="truncate">{t("shell.menu.profile")}</span>
                   </Link>
                 </DropdownMenu.Item>
 
@@ -360,9 +361,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     href="/settings/agent"
                     className="flex items-center gap-2.5 rounded-sm px-3 py-2 text-[12.5px] text-[var(--ink-primary)] outline-none hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)]"
                   >
-                    <Bot className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
+                    <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
                     <span className="truncate">
                       {t("shell.menu.agentProfile", { name: agentDisplayName })}
+                    </span>
+                  </Link>
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item asChild>
+                  <Link
+                    href="/settings/memory"
+                    data-testid="shell-menu-memory"
+                    className="flex items-center gap-2.5 rounded-sm px-3 py-2 text-[12.5px] text-[var(--ink-primary)] outline-none hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)]"
+                  >
+                    <BookOpen className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                    <span className="truncate">
+                      {tx({
+                        "zh-CN": "长期记忆 (MEMORY.md)",
+                        "zh-HK": "長期記憶 (MEMORY.md)",
+                        en: "Long-Term Memory",
+                      })}
                     </span>
                   </Link>
                 </DropdownMenu.Item>

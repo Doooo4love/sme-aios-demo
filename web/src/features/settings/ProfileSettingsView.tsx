@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
+  BookOpen,
   Bot,
   CheckCircle2,
   RotateCcw,
@@ -359,36 +360,50 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
       <div className="mx-auto max-w-[740px] space-y-5">
         {/* Clean Pill Sub-Navigation Switcher */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-full bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-subtle)]">
+          <div className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-2xl sm:rounded-full bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-subtle)]">
             <Link
               href="/settings/profile"
               aria-current={!isAgent ? "page" : undefined}
               className={[
-                "inline-flex h-8 items-center gap-1.5 rounded-full px-4 text-[13px] font-medium transition-all duration-[150ms]",
+                "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 sm:px-4 text-[13px] font-medium transition-all duration-[150ms]",
                 !isAgent
                   ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[var(--shadow-subtle)]"
                   : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]",
               ].join(" ")}
             >
-              <User className="h-3.5 w-3.5" strokeWidth={1.85} />
+              <User className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
               <span>{t("shell.menu.profile")}</span>
             </Link>
             <Link
               href="/settings/agent"
               aria-current={isAgent ? "page" : undefined}
               className={[
-                "inline-flex h-8 items-center gap-1.5 rounded-full px-4 text-[13px] font-medium transition-all duration-[150ms]",
+                "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 sm:px-4 text-[13px] font-medium transition-all duration-[150ms]",
                 isAgent
                   ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[var(--shadow-subtle)]"
                   : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]",
               ].join(" ")}
             >
-              <Bot className="h-3.5 w-3.5" strokeWidth={1.85} />
+              <Bot className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
               <span>
                 {tx({
                   "zh-CN": "助手设定",
                   "zh-HK": "助手設定",
                   en: "Agent Settings",
+                })}
+              </span>
+            </Link>
+            <Link
+              href="/settings/memory"
+              data-testid="settings-tab-memory"
+              className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 sm:px-4 text-[13px] font-medium text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition-all duration-[150ms]"
+            >
+              <BookOpen className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+              <span>
+                {tx({
+                  "zh-CN": "长期记忆 · MEMORY.md",
+                  "zh-HK": "長期記憶 · MEMORY.md",
+                  en: "Long-Term Memory",
                 })}
               </span>
             </Link>

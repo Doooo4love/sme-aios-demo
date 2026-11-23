@@ -30,7 +30,7 @@ class MigrationTests(unittest.TestCase):
                     self.assertEqual(connection.execute(text("SELECT id FROM aios_intake")).scalar_one(), "id1")
                     self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM aios_write_control")).scalar_one(), 0)
                     self.assertEqual(connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
-                                     "0011_routing_telemetry_and_escalation")
+                                     "0012_user_long_term_memory")
             finally:
                 legacy.dispose()
 
@@ -41,7 +41,7 @@ class MigrationTests(unittest.TestCase):
             config = Config(str(ROOT / "alembic.ini"))
             try:
                 with patch.dict(os.environ, {"AIOS_MIGRATION_DATABASE_URL": url, "AIOS_MIGRATION_DATABASE_URL_FILE": ""}):
-                    command.upgrade(config, "head")
+                    command.upgrade(config, "0011_routing_telemetry_and_escalation")
                     with engine.connect() as conn:
                         self.assertEqual(
                             conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
@@ -82,7 +82,46 @@ class MigrationTests(unittest.TestCase):
                     with engine.connect() as conn:
                         self.assertEqual(
                             conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
+                            "0012_user_long_term_memory",
+                        )
+            finally:
+                engine.dispose()
+
+    def test_0012_upgrade_and_rollback_compatibility(self):
+        with TemporaryDirectory() as temporary:
+            url = f"sqlite:///{temporary}/rollback_0012.sqlite"
+            engine = create_engine(url)
+            config = Config(str(ROOT / "alembic.ini"))
+            try:
+                with patch.dict(os.environ, {"AIOS_MIGRATION_DATABASE_URL": url, "AIOS_MIGRATION_DATABASE_URL_FILE": ""}):
+                    command.upgrade(config, "head")
+                    with engine.connect() as conn:
+                        self.assertEqual(
+                            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
+                            "0012_user_long_term_memory",
+                        )
+                        tables = {
+                            row[0]
+                            for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+                        }
+                        self.assertTrue({"aios_user_memory", "aios_user_memory_staging"} <= tables)
+                    command.downgrade(config, "0011_routing_telemetry_and_escalation")
+                    with engine.connect() as conn:
+                        self.assertEqual(
+                            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
                             "0011_routing_telemetry_and_escalation",
+                        )
+                        tables_after = {
+                            row[0]
+                            for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+                        }
+                        self.assertFalse(tables_after & {"aios_user_memory", "aios_user_memory_staging"})
+                        self.assertIn("aios_llm_telemetry", tables_after)
+                    command.upgrade(config, "head")
+                    with engine.connect() as conn:
+                        self.assertEqual(
+                            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
+                            "0012_user_long_term_memory",
                         )
             finally:
                 engine.dispose()

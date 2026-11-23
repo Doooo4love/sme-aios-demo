@@ -13,7 +13,7 @@ Organizations can adopt Theodic SME AIOS incrementally without disrupting existi
 | Tier | Offering | Stack & Scope | Primary Value |
 |---|---|---|---|
 | **Tier 0** | **Entry-Level Paid Starter: Wholesale PO OCR Intake** | [`aios_demo/`](aios_demo/) · Local Tesseract OCR + bounded opt-in vision + SQLite/PostgreSQL outbox | Immediate ROI wedge: digitizes messy purchase orders with pixel-level evidence, deterministic pack/amount checks, and lost-reply-safe ERP draft verification. |
-| **Tier 1** | **Full Enterprise AIOS Cloud Workbench** | [`web/`](web/) + [`aios_platform/`](aios_platform/) + [`mcp/email-server/`](mcp/email-server/) | Multi-tenant RBAC & PostgreSQL forced RLS, native macOS iMessage/WhatsApp collaboration, 8-channel IM hub, Ed25519 signed Assurance, `<2ms` `EffortRouter`, 4-Zone KV Prompt Cache, and L1/L2/L3 work-boundary governance. |
+| **Tier 1** | **Full Enterprise AIOS Cloud Workbench** | [`web/`](web/) + [`aios_platform/`](aios_platform/) + [`mcp/email-server/`](mcp/email-server/) | Multi-tenant RBAC & PostgreSQL forced RLS, native macOS iMessage/WhatsApp collaboration, 8-channel IM hub, Ed25519 signed Assurance, `<2ms` `EffortRouter`, KV-optimal per-user `MEMORY.md` (`Zone 1.2`) + 4-Zone KV Prompt Cache, and L1/L2/L3 work-boundary governance. |
 | **Tier 2** | **Tauri 2 Cross-Platform Desktop Harness & Local MCP/CUA** | [`desktop/`](desktop/) + [`mcp/workspace-server/`](mcp/workspace-server/) | Native macOS (`.dmg`/`.app`) & Windows (`.msi`/`.exe`) shell holding **zero LLM API keys**, OS Keychain/Credential Manager scoped device tokens, sandboxed OOXML/PDF document tools, allowlisted single-window CUA, and `CmdOrCtrl+Escape` kill switch. |
 
 ### Verified Enterprise Workbench Showcase
@@ -35,7 +35,7 @@ Organizations can adopt Theodic SME AIOS incrementally without disrupting existi
 ```mermaid
 flowchart TB
     subgraph CLIENT_LAYER ["Client & Desktop Harness Layer"]
-        WEB["Web Browser: Next.js 16 Warm Porcelain / Obsidian UI"]
+        WEB["Web Browser: Next.js 16 Warm Porcelain / Obsidian UI (/inbox, /settings/memory)"]
         DESK["Tauri 2 Desktop Shell: macOS .dmg/.app & Windows .msi/.exe"]
         KEYCHAIN["OS Keychain / Windows Credential Manager (Device Token <= 24h, Zero LLM Keys)"]
         ESTOP["Global Hotkey CmdOrCtrl+Escape & Red-Tier Confirmation Modal"]
@@ -43,14 +43,16 @@ flowchart TB
 
     subgraph EDGE_BFF ["Edge Cryptographic Gate & Same-Origin BFF"]
         CF["Cloudflare Workers VPC & Reviewer Gate"]
-        BFF["Next.js Same-Origin BFF (:3000): HttpOnly Cookie, CSRF, Output Sanitizer, Streamable MCP"]
+        BFF["Next.js Same-Origin BFF (:3000): HttpOnly Cookie, CSRF, /v1/memory* Allowlist, Output Sanitizer, Streamable MCP"]
     end
 
     subgraph CLOUD_CORE ["Theodic Cloud Control Plane (aios_platform)"]
         API["FastAPI Core (:8760) + Governed Assurance Companion (:8761)"]
         RBAC["OIDC / Demo Auth + Module RBAC + Optional OPA + PostgreSQL Forced RLS"]
         GOV["Sealed SOUL.md + 12-Category Guardrails + L1/L2/L3 Escalation"]
-        ROUTER["EffortRouter (<2ms T0-T3) + 4-Zone ContextManager + Pure httpx LLMProvider"]
+        MEM["Per-User MEMORY.md (aios_user_memory + T0 Staging + 4-Layer Anti-Poisoning)"]
+        TIDY["Nightly Tidy CLI (python -m aios_platform.memory_tidy: 0-Tok / Gated T2)"]
+        ROUTER["EffortRouter (<2ms T0-T3) + KV-Cache Zone 1/1.2/1.5/2/3 ContextManager + Pure httpx LLMProvider"]
         OUTBOX["Proposal Digest-Lock + Transactional Outbox + Independent aios_worker"]
         CHHUB["8-Channel Enterprise Hub + Standalone Email MCP (mcp/email-server)"]
     end
@@ -66,10 +68,14 @@ flowchart TB
     DESK -->|"Rust IPC Commands"| ESTOP
     DESK -->|"HTTPS Control Plane (Zero Local LLM Keys)"| CF
     CF -->|"Cloudflare Named Tunnel"| BFF
-    BFF -->|"Allowlisted /v1/* & SSE"| API
+    BFF -->|"Allowlisted /v1/* & /v1/memory* & SSE"| API
     API --> RBAC
     RBAC --> GOV
+    RBAC --> MEM
     GOV --> ROUTER
+    MEM -->|"Zone 1.2 (<=1200 tok, Non-Empty Only)"| ROUTER
+    ROUTER -.->|"T0 Regex / /memory Cue Staging"| MEM
+    TIDY -->|"Nightly Dedup & Section Merge"| MEM
     API --> OUTBOX
     API --> CHHUB
     DESK -->|"Stdio JSON-RPC 2.0"| SANDBOX
@@ -98,29 +104,34 @@ flowchart TD
     SEALED -.-> SCRUB
 ```
 
-### 3. Cross-Provider `EffortRouter` & 4-Zone KV Prompt Cache / Dual-Bucket Flow
+### 3. Cross-Provider `EffortRouter`, Per-User `MEMORY.md` (`Zone 1.2`) & Dual-Bucket KV Cache Flow
 
 ```mermaid
 flowchart LR
-    TURN["User Turn + Active Doc + Work Pulse"] --> QUOTA["QuotaManager (Tenant / Role / Subject Daily USD & Token Cap)"]
+    TURN["User Turn + Per-User MEMORY.md + Active Doc + Work Pulse"] --> QUOTA["QuotaManager (Tenant / Role / Subject Daily USD & Token Cap)"]
     QUOTA --> ROUTER["EffortRouter (<2ms Deterministic Classifier)"]
-    ROUTER -->|"T0: Security / Slash / Local Rule / Off-Topic L1"| ZERO["0 LLM Calls -> Immediate Deterministic Output"]
-    ROUTER -->|"T1: Greeting / Pulse / Single Read"| EFF_N["effort=none (1200 tok, 15s)"]
-    ROUTER -->|"T2: Draft / Summary / Clarification"| EFF_L["effort=low (2400 tok, 22s)"]
-    ROUTER -->|"T3: Cross-Module / Contract Conflict"| EFF_H["effort=high (8192 tok, 55s)"]
+    ROUTER -->|"T0: Security / /memory / Remember-Forget / Off-Topic L1"| ZERO["0 LLM Calls -> Immediate Output & T0 Capture"]
+    ROUTER -->|"T1: Greeting / Pulse / Single Read + T0 Staging"| EFF_N["effort=none (1200 tok, 15s)"]
+    ROUTER -->|"T2: Draft / Summary / Clarification + T0 Staging"| EFF_L["effort=low (2400 tok, 22s)"]
+    ROUTER -->|"T3: Cross-Module / Contract Conflict + T0 Staging"| EFF_H["effort=high (8192 tok, 55s)"]
 
-    EFF_N --> CTX["ContextManager 4-Zone Assembly"]
+    EFF_N --> CTX["ContextManager KV-Cache Zone Assembly"]
     EFF_L --> CTX
     EFF_H --> CTX
 
-    subgraph ZONES ["4-Zone Dual-Bucket KV Cache Architecture"]
-        Z1["Zone 1 (~3K-5K Immutable Prefix): Sealed SOUL.md + Role/Module Policy + Sorted Tool Schemas"]
+    subgraph ZONES ["KV-Cache-Optimal Zone 1 / 1.2 / 1.5 / 2 / 3 Architecture"]
+        Z1["Zone 1 (~3K-5K Global Invariant Prefix): Sealed SOUL.md + Policy + Sorted Schemas + Memory Rule"]
+        Z12["Zone 1.2 (Per-User <=1200 tok / 6000 chars): Non-Empty MEMORY.md in Untrusted XML Fence"]
         Z15["Zone 1.5 (<=140K & <=safe_cap-38K): Single Active Doc Slot (Auto-Unmount <=2K Summary)"]
         Z2["Zone 2 (32K Trajectory Bucket): <=1500 tok Clamped Tool Outputs, Compact >=28K -> ~7K, >60m Idle Compact"]
         Z3["Zone 3 (Ephemeral Tail): Live pulse_summary Attached to Current User Request Only"]
     end
 
-    CTX --> Z1 --> Z15 --> Z2 --> Z3
+    CTX --> Z1 --> Z12 --> Z15 --> Z2 --> Z3
+    TURN -.->|"T0 Regex Preference Cues (0 LLM)"| STAGE["T0 Passive Staging (aios_user_memory_staging, SHA-256 Dedup)"]
+    ZERO -.->|"Direct /memory or Remember/Forget"| STAGE
+    STAGE --> TIDY_CLI["Nightly Tidy CLI (memory_tidy: 0-Tok Deterministic / Gated T2 -> 4-Layer Guard)"]
+    TIDY_CLI -->|"Validated <=1200 tok Snapshot"| Z12
     Z15 -->|">140K Document Pack"| MR["MapReduceDocumentAnalyzer: <=24K Chunks (T1/T2 Map) -> <=80K (T3 Reduce)"]
     Z3 --> PROV["Pure httpx+pydantic LLMProvider (OpenAICompat / Anthropic / Gemini + Circuit Breaker)"]
     MR --> PROV
@@ -149,6 +160,58 @@ flowchart LR
 
 ---
 
+## Per-User Long-Term Memory (`MEMORY.md`)
+
+Inspired by Muse-style editorial transparency, every authenticated employee owns an inspectable, user-editable **`MEMORY.md`** document scoped strictly to `(tenant, subject)` in [`aios_platform/user_memory.py`](aios_platform/user_memory.py) and [`aios_platform/user_memory.sql`](aios_platform/user_memory.sql):
+
+- **How It Works**: Your assistant reads `MEMORY.md` at the start of every session (`Zone 1.2`), captures explicit or passive preference cues during conversations at `T0` (zero extra LLM calls), and consolidates them on a nightly tidy pass ([`aios_platform/memory_tidy.py`](aios_platform/memory_tidy.py)). You can inspect, edit, revert, or clear `MEMORY.md` directly in `/settings/memory` ([`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx)) or update it conversationally in chat via `/memory` and natural cues (`"remember that..."` / `"记住..."` / `"忘掉..."`). The Muse-style editorial explainer note displayed above the `/settings/memory` editor (**"This note is not part of the file."**) lives purely in UI chrome and is never persisted to `MEMORY.md` or injected into model prompts.
+- **Structured File Layout**: Starts from a clean Markdown scaffold (`# MEMORY.md` with `## Identity & Role`, `## Communication Preferences`, `## Working Context`, `## Ongoing Commitments & Habits`) strictly bounded to **`1,200` tokens** (`approx_tokens`) and **`6,000` characters**.
+
+### Architectural Trade-Off: File-First Structured Markdown vs. Mem0 / Letta / Zep
+
+Rather than introducing an external vector store, knowledge-graph daemon, or per-turn extractor LLM loop, Theodic SME AIOS persists `MEMORY.md` directly inside transactional PostgreSQL (with Forced RLS) / SQLite:
+
+| Dimension | Theodic File-First `MEMORY.md` (PostgreSQL / SQLite) | Mem0 / Zep (Vector & Graph Fact Stores) | Letta / MemGPT (Stateful Agent Paging) |
+|---|---|---|---|
+| **Storage & Infra Ops** | **Zero extra DBs** (`aios_user_memory` + `aios_user_memory_staging` in existing PG/SQLite with Forced RLS) | Requires separate Vector DB + Graph DB sync & embedding pipelines | Requires agent-runtime memory blocks & paging state stores |
+| **Per-Turn Token Overhead** | **`0` extra LLM extraction calls** (`T0` deterministic regex/command cue staging, SHA-256 deduped via `fact_sha256`) | Asynchronous or per-turn LLM fact extraction + embedding calls | Agent tool-call loops (`archival_memory_insert/search`) per turn |
+| **Nightly Consolidation Cost** | **Deterministic `0`-token tidy** by default; optional gated `T2` (`effort="low"`) pass only when staged cues or `>900` tokens exist | Continuous graph re-indexing & conflict-resolution LLM passes | Periodic LLM summary / memory-pressure compaction passes |
+| **KV Prefix Cache Impact** | **Global `Zone 1` stays 100% byte-invariant**; `MEMORY.md` isolates cleanly in `Zone 1.2` (`<= 1,200` tok, omitted when empty) | Dynamic retrieval snippets shift prefix/context across turns | Dynamic block mutations invalidate prefix between steps |
+| **Debugging & Auditability** | **Human-readable Markdown diffs**, integer optimistic `version`, `previous_content` snapshot, 1-click Undo | Opaque vector chunks / graph edges hard to inspect or edit directly | Tool-managed block state harder for end-users to review directly |
+
+### KV-Cache-Optimal `Zone 1.2` Injection
+
+To preserve high prompt-cache hit rates across `OpenAICompatAdapter` (DeepSeek/OpenAI/Qwen), `AnthropicAdapter` (`cache_control`), and `GeminiAdapter` (`cachedContent`) in our pure `httpx` + `pydantic` [`LLMProvider`](aios_platform/llm_provider.py) (zero `litellm`):
+
+1. **`Zone 1` (~3K–5K Global Invariant Prefix)**: Contains only sealed [`SOUL.md`](aios_platform/SOUL.md), role/module policies, lexicographically sorted `zone1_tool_schemas`, and a single static 1-sentence boundary note stating that `<user_long_term_memory>` carries user-editable factual preferences only. `Zone 1` stays **100% byte-invariant across all users and all memory states** for maximum shared prefix caching.
+2. **`Zone 1.2` (Per-User `MEMORY.md`, `<= 1,200` Tokens)**: Immediately after `Zone 1` (`messages[0]`) and strictly before **`Zone 1.5` Active Document** and **`Zone 2` Trajectory**, `ContextManager.assemble(..., user_memory=...)` injects non-empty `MEMORY.md` fenced with:
+   ```xml
+   <user_long_term_memory trust="user_editable_facts_only">
+   ...
+   </user_long_term_memory>
+   ```
+   When `MEMORY.md` is empty or whitespace, **zero** `Zone 1.2` messages are emitted (`zone1_2_tokens = 0`).
+
+### 4-Layer Anti-Memory-Poisoning Defense
+
+Because `MEMORY.md` is user-editable and persisted across sessions, four deterministic defense layers prevent cross-session prompt poisoning, privilege escalation, and secret leakage:
+
+1. **Layer 1 — Canonical Sanitization & Secret Redaction**: Every write runs `unicodedata.normalize("NFKC", text)`, strips invisible Unicode formatting characters (category `Cf`), and applies `scrub_secrets()` ([`security_guard.py`](aios_platform/security_guard.py)) so API keys, bearer tokens, and hidden homoglyph payloads never enter storage.
+2. **Layer 2 — Deterministic Save-Time Validator & Hard Budget Cap**: Rejects attempts to edit or override `SOUL.md`, escalate RBAC/roles/warehouses/grants (`admin`, `bypass`, `grant`, `all warehouses`, `disable security`, `override policy`), tamper with `SKILL.md`/plugins/tools, inject prompt delimiters (`<system>`, `</user_long_term_memory>`, `<|im_start|>`, `ignore previous instructions`, `you are now`), or execute shell/filesystem escapes (`rm -rf`, `curl | sh`, `sudo`, `chmod`, `../etc`) with **`HTTP 422 MEMORY_POLICY_VIOLATION`**, and enforces the hard `1,200`-token / `6,000`-character budget with **`HTTP 422 MEMORY_TOKEN_LIMIT_EXCEEDED`** (including re-validating any optional `T2` nightly consolidation output before commit).
+3. **Layer 3 — Untrusted `Zone 1.2` XML Fence & `Zone 1` Override Immunity**: Wrapping memory inside `<user_long_term_memory trust="user_editable_facts_only">` alongside the sealed `Zone 1` static directive ensures long-term notes can never override `SOUL.md`, RBAC module/warehouse grants, or tool safety rules.
+4. **Layer 4 — Per-`(tenant, subject)` Isolation, Optimistic Concurrency & 1-Click Undo**: All SQL reads/writes scope strictly to `(tenant, subject)` via `subject_tx` (enforced by PostgreSQL Forced RLS in production), concurrent edits fail closed with **`HTTP 409 Conflict`**, and every save, tidy, forget, or clear snapshots `previous_content` for instant 1-click rollback (`POST /v1/memory/revert`).
+
+### Memory API, Nightly Tidy CLI & Editorial UI Surface
+
+| Surface | Contract & Behavior |
+|---|---|
+| **REST API (`/v1/memory*`)** | `GET /v1/memory` (returns `MEMORY.md`, `version`, `token_count`, `max_tokens: 1200`, `max_chars: 6000`, `has_previous`, `last_tidy_at`, `pending_staged_items`), `PUT /v1/memory` (`{version, content}` optimistic save), `POST /v1/memory/tidy` (`{use_llm?: false}` deterministic merge or gated `T2`), `POST /v1/memory/revert` (`{version}` 1-click undo), `POST /v1/memory/forget` (`{query}` removes matching lines & staged cues), `DELETE /v1/memory?version=<n>` (clears file while preserving `previous_content`). |
+| **Nightly Tidy CLI** | `python -m aios_platform.memory_tidy` (`--tenant`, `--subject`, `--dry-run`, `--use-llm`, `--stale-days`): scans pending staged rows in `aios_user_memory_staging` or stale/large `MEMORY.md` files, applies `0`-token deterministic deduplication (or gated `T2` consolidation when `--use-llm` is set and provider is configured), updates `last_tidy_at`, and prints structured JSON metrics. |
+| **Editorial Editor (`/settings/memory`)** | [`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx) adapts seamlessly across **Warm Porcelain Light (`#FAF8F5`)** and **Carbon Obsidian Dark (`#111110`)**: Muse editorial banner (separate from file), **Edit / Split / Preview** modes (`MarkdownMessage` live render, `Cmd/Ctrl+S`), token/char budget gauge (`>=80%` amber, `>=100%` crimson), 1-click template insertion, Pending Staged Capture Queue, Quick Forget bar, Undo Last Version, and `409` / `422` recovery alerts. |
+| **Chat `/memory` & `T0` Capture** | In `/inbox/assistant`, `/memory` (`/memory [view \| add <fact> \| forget <query> \| tidy]`), natural cues (`"记住..."`, `"忘掉..."`, `"remember that..."`, `"forget ..."`), and `+ Add context` → `Long-Term Memory (MEMORY.md)` execute deterministically at **`T0` (`0` LLM calls)** while normal turns passively stage non-secret preference cues at `T0`. |
+
+---
+
 ## Frontend Engineering Highlights (`web/`)
 
 Built on **Next.js 16 (App Router)**, **React 19**, **TypeScript 5.9 (`strict: true`, `noUncheckedIndexedAccess: true`)**, **Tailwind CSS v4**, and unified **Radix UI** (`web/package.json`):
@@ -162,17 +225,20 @@ Built on **Next.js 16 (App Router)**, **React 19**, **TypeScript 5.9 (`strict: t
   - Organic stacked message geometry ([`bubble-group.tsx`](web/src/features/inbox/bubble-group.tsx)): `20px` outer corners (`--radius-bubble`), `6px` shared seam corners (`--radius-bubble-tight`) on consecutive bursts within 300s, `10px` tail-joining corner (`--radius-bubble-tail`), bottom-most overlapping SVG tails (`IMessageBubbleTail`), CSS `linear(...)` physical spring entry (`--ease-spring-bubble`), and centered burst timestamps (`shouldShowBurstTimestamp` / `formatBurstTimestamp`).
   - Live **Delivered / Read** receipts (`fetchRoomReceipts`, `markRoomRead`, SSE `chat_read` events) across [`ChatRoomWorkspace.tsx`](web/src/features/chat/ChatRoomWorkspace.tsx) and [`AssistantWorkspace.tsx`](web/src/features/inbox/AssistantWorkspace.tsx).
   - Interactive **Contact Profile Cards** ([`ContactProfileDialog.tsx`](web/src/components/chat/ContactProfileDialog.tsx)) and tenant-scoped **Company Contacts Directory** ([`ContactsDirectoryModal.tsx`](web/src/features/inbox/ContactsDirectoryModal.tsx)) with 1-click email, Zoom meeting scheduling, and 1:1 DM creation (`/api/directory/contacts`, `/api/directory/direct-room`).
-- **GFM Markdown Compiler, `cmdk` Slash Skill Palette & Real-Time SSE Work Pulse**:
+- **GFM Markdown Compiler, `cmdk` `/` Slash Skill Palette, `/memory` & Real-Time SSE Work Pulse**:
   - [`MarkdownMessage.tsx`](web/src/components/ui/MarkdownMessage.tsx) compiles full GitHub-Flavored Markdown (`react-markdown` + `remark-gfm`) with `safeUrlTransform` blocking `javascript:`, `data:`, `vbscript:`, and protocol-relative `//` URLs.
-  - [`SlashCommandPalette.tsx`](web/src/features/inbox/SlashCommandPalette.tsx) (`cmdk`) surfaces grant-filtered `/` skills (`/brief`, `/todo`, `/shipment`, `/reschedule`, `/order`, `/invoice`, `/warehouse`, `/approve`, `/email`, `/inbox-mail`, `/meeting`, `/assurance`, `/exceptions`, `/help`).
+  - [`SlashCommandPalette.tsx`](web/src/features/inbox/SlashCommandPalette.tsx) (`cmdk`) surfaces grant-filtered `/` skills (`/brief`, `/todo`, `/shipment`, `/reschedule`, `/order`, `/invoice`, `/warehouse`, `/approve`, `/email`, `/inbox-mail`, `/meeting`, `/assurance`, `/exceptions`, `/memory`, `/help`), paired with the `+ Add context` shortcut to `/settings/memory` and `T0` `/memory` execution in [`AssistantWorkspace.tsx`](web/src/features/inbox/AssistantWorkspace.tsx).
   - [`ProactiveAgentNotifier.tsx`](web/src/components/shell/ProactiveAgentNotifier.tsx) streams `/v1/workbench/events/stream` SSE events (with `/v1/workbench/work-pulse` fallback) to push real-time approvals, returned drafts, notices, and read receipts into the shell and right-hand slide-over inspector drawer ([`WorkbenchDrawerSlot.tsx`](web/src/components/shell/WorkbenchDrawerSlot.tsx), shortcut `⌘.`).
+- **Editorial Long-Term Memory Workspace (`/settings/memory`, [`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx))**:
+  - Accessible from top-level profile/inbox settings navigation ([`AppShell.tsx`](web/src/components/shell/AppShell.tsx), [`InboxShell.tsx`](web/src/features/inbox/InboxShell.tsx), [`ProfileSettingsView.tsx`](web/src/features/settings/ProfileSettingsView.tsx)) and the assistant card in [`ContactProfileDialog.tsx`](web/src/components/chat/ContactProfileDialog.tsx).
+  - Uses Warm Porcelain (`#FAF8F5`) / Carbon Obsidian (`#111110`) design tokens with Edit / Split / Preview tabs, live token/char meter (`1,200` tokens / `6,000` chars), Pending Staged Capture Queue, Quick Forget bar, 1-click Undo, and inline `409` / `422` error handling.
 - **Admin Operations Console, Sealed Governance, 8-Channel Hub & Telemetry/Off-Topic Monitor**:
   - [`AdminOpsOverview.tsx`](web/src/features/admin/AdminOpsOverview.tsx): tenant write-pause kill switch, demo worker stepping, subject suspension, and exception queue triage.
   - [`PromptGovernancePanel.tsx`](web/src/features/admin/PromptGovernancePanel.tsx): sealed governance integrity banner (`managedBy: theodic_core_team`) and Role/Module Capability Simulator without exposing sealed directive text.
   - [`ChannelsHubPanel.tsx`](web/src/features/admin/ChannelsHubPanel.tsx): 8-channel catalog, webhook URL copy, employee handle bindings, and governed outbound relay testing.
   - [`SecurityMonitorPanel.tsx`](web/src/features/admin/SecurityMonitorPanel.tsx): 12-category security event feed with PDPO/GDPR privacy-redacted badges, **Smart Routing & KV Cache Telemetry** (`T0–T3` distribution, cache hit ratio, USD cost, latency, tenant daily quota guardrail), and **Non-Work Boundary & Role Escalation Policy** editor.
 - **Same-Origin Sanitized BFF, MCP Calendar/Zoom & Desktop Overlay**:
-  - Allowlisted BFF proxy ([`proxy.ts`](web/src/lib/bff/proxy.ts), [`route.ts`](web/src/app/v1/[...path]/route.ts)) recursively strips `planner` and internal LLM keys ([`sanitize.ts`](web/src/lib/bff/sanitize.ts)), normalizes `404` responses to `RECORD_UNAVAILABLE`, enforces `Cache-Control: no-store`, and invalidates stale async responses across `authGeneration` resets.
+  - Allowlisted BFF proxy ([`proxy.ts`](web/src/lib/bff/proxy.ts), [`route.ts`](web/src/app/v1/[...path]/route.ts)) exposes `/v1/memory*` (`/v1/memory`, `/tidy`, `/revert`, `/forget`) alongside core workbench routes, recursively strips `planner` and internal LLM keys ([`sanitize.ts`](web/src/lib/bff/sanitize.ts)), normalizes `404` responses to `RECORD_UNAVAILABLE`, enforces `Cache-Control: no-store`, and invalidates stale async responses across `authGeneration` resets.
   - Server-side Streamable HTTP MCP connectors & trilingual natural-language Zoom booking ([`web/src/lib/mcp/`](web/src/lib/mcp/), `/api/integrations/*`, `/api/calendar/ics`).
   - [`DesktopHarnessOverlay.tsx`](web/src/components/desktop/DesktopHarnessOverlay.tsx) (mounted in [`AppShell.tsx`](web/src/components/shell/AppShell.tsx)) strictly renders `null` in standard web browsers and activates only inside Tauri 2 (`window.__TAURI_INTERNALS__`) to surface the `Cmd/Ctrl+Esc` emergency-stop pill and RED-action confirmation modal.
 
@@ -199,9 +265,10 @@ Built on **Next.js 16 (App Router)**, **React 19**, **TypeScript 5.9 (`strict: t
   - Zero embedded `litellm` SDK (eliminating third-party LLM wrapper supply-chain risk) while remaining compatible with external OpenAI-format gateways via `base_url`.
   - `ModelProfile` registry covering `deepseek-chat`, `deepseek-flash`, `deepseek-v4-pro`, `gpt-5.4-mini`, `claude-sonnet-4-6`, `gemini-2.5-pro`, and `qwen-plus`, enforcing `safe_cap_tokens = min(180_000, int(surcharge_cliff * 0.90), int(context_window * 0.60))`.
   - Three pooled `httpx.Client` adapters (`OpenAICompatAdapter`, `AnthropicAdapter`, `GeminiAdapter`) supporting provider prompt caching, `reasoning_effort` / `thinking` translation with HTTP 400 fallback stripping, multi-turn `reasoning_content` and `thinking_blocks` preservation, `MAX_LLM_RESPONSE_BYTES = 524_288`, jittered retries, and `ProviderCircuitBreaker`.
-- **`<2ms` `EffortRouter`, 4-Zone KV Cache Context Manager & Plan-Act-Observe Harness ([`aios_platform/routing_context.py`](aios_platform/routing_context.py), [`aios_platform/assistant_agent.py`](aios_platform/assistant_agent.py))**:
-  - `EffortRouter` deterministically routes requests into `T0` (0 LLM calls), `T1` (`effort="none"`, `1200` tokens / `15s`), `T2` (`effort="low"`, `2400` tokens / `22s`), or `T3` (`effort="high"`, `8192` tokens / `55s`), preserving same-model KV cache warmth and applying **Cascade Escalation** (`T1/T2` → `T3`) on malformed tool calls.
-  - `ContextManager` separates **Zone 1** (~3K–5K immutable prefix + sorted `zone1_tool_schemas`), **Zone 1.5** (single Active Document Slot capped at `<= 140K` and `<= safe_cap_tokens - 38K`, auto-unmounting to a `<= 2,000`-token structured summary), **Zone 2** (`32K` append-only trajectory clamping tool outputs to `<= 1,500` tokens before insertion, compacting at `>= 28,000` down to `~7,000`, plus `>60m` idle compaction), and **Zone 3** (ephemeral `pulse_summary` tail attached only to the active turn).
+- **`<2ms` `EffortRouter`, `Zone 1.2` Per-User `MEMORY.md` & KV Cache Context Manager ([`aios_platform/routing_context.py`](aios_platform/routing_context.py), [`aios_platform/assistant_agent.py`](aios_platform/assistant_agent.py), [`aios_platform/user_memory.py`](aios_platform/user_memory.py))**:
+  - `EffortRouter` deterministically routes requests into `T0` (0 LLM calls—including `/memory` and unambiguous remember/forget intents), `T1` (`effort="none"`, `1200` tokens / `15s`), `T2` (`effort="low"`, `2400` tokens / `22s`), or `T3` (`effort="high"`, `8192` tokens / `55s`), preserving same-model KV cache warmth and applying **Cascade Escalation** (`T1/T2` → `T3`) on malformed tool calls.
+  - `ContextManager` separates **Zone 1** (~3K–5K 100% byte-invariant prefix across all users + sorted `zone1_tool_schemas` + static memory boundary rule), **Zone 1.2** (non-empty per-user `MEMORY.md` `<= 1,200` tokens fenced inside `<user_long_term_memory trust="user_editable_facts_only">`, `0` messages when empty), **Zone 1.5** (single Active Document Slot capped at `<= 140K` and `<= safe_cap_tokens - 38K`, auto-unmounting to a `<= 2,000`-token structured summary), **Zone 2** (`32K` append-only trajectory clamping tool outputs to `<= 1,500` tokens before insertion, compacting at `>= 28,000` down to `~7,000`, plus `>60m` idle compaction), and **Zone 3** (ephemeral `pulse_summary` tail attached only to the active turn).
+  - `UserMemory` & `python -m aios_platform.memory_tidy` ([`user_memory.sql`](aios_platform/user_memory.sql), migration [`0012_user_long_term_memory.py`](migrations/versions/0012_user_long_term_memory.py)) enforce 4-layer anti-memory-poisoning validation (`NFKC` + `Cf` strip + `scrub_secrets()`, `422 MEMORY_POLICY_VIOLATION` / `MEMORY_TOKEN_LIMIT_EXCEEDED`, `Zone 1.2` XML fence, `(tenant, subject)` RLS isolation + `409` optimistic locking + `POST /v1/memory/revert`), `T0` passive regex staging (`fact_sha256` dedup), and `0`-token nightly consolidation (with optional gated `T2` pass).
   - `MapReduceDocumentAnalyzer` handles `>140K` document packs by splitting into `<= 24K` token chunks for concurrent `T1/T2` map extraction followed by `T3` synthesis (`<= 80K`).
   - `RoutingTelemetryStore` & `QuotaManager` back `/v1/operations/llm-telemetry`, `/v1/operations/quota-policies`, and `/v1/operations/off-topic-policy` ([`routing_and_escalation.sql`](aios_platform/routing_and_escalation.sql), migration [`0011_routing_telemetry_and_escalation.py`](migrations/versions/0011_routing_telemetry_and_escalation.py)).
 - **Proposal Digest-Lock, Outbox & Ed25519 Signed Assurance ([`aios_platform/workflow.py`](aios_platform/workflow.py), [`aios_platform/assurance*.py`](aios_platform/assurance.py))**:
@@ -324,14 +391,21 @@ export AIOS_LLM_API_KEY="sk-your-server-only-key"
 
 Open **http://localhost:3000/** and sign in with Account + Password or expand the local demo persona helper across 11 controlled identities (`operator`, `manager`, `finance`, `access-admin`, `admin`, `other-manager`, `island-manager`, `viewer`, `quality`, `legal`, `executive`). For full Next.js BFF variables and MCP calendar/Zoom setup, see [`web/README.md`](web/README.md).
 
-### 2. Backend Migrations & Automated Verification Suites
+### 2. Backend Migrations, Nightly Memory Tidy & Automated Verification Suites
 
 ```bash
-# Apply Alembic database migrations through 0011_routing_telemetry_and_escalation
+# Apply Alembic database migrations through 0012_user_long_term_memory
 .venv/bin/python -m alembic upgrade head
+
+# Run nightly MEMORY.md tidy pass (deterministic 0-token by default; add --use-llm for gated T2)
+.venv/bin/python -m aios_platform.memory_tidy --dry-run
+.venv/bin/python -m aios_platform.memory_tidy --use-llm --stale-days 7
 
 # Run backend Python unit & integration suites
 .venv/bin/python -m unittest discover -s tests -v
+
+# Run per-user MEMORY.md, Zone 1.2 KV cache, anti-poisoning, and migration suites
+.venv/bin/python -m unittest tests.test_migrations tests.test_user_memory -v
 
 # Run routing, context, assistant, and migration unit suites
 .venv/bin/python -m unittest tests.test_routing_provider_context tests.test_assistant_and_sse tests.test_migrations -v

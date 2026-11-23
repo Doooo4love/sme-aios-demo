@@ -1272,3 +1272,43 @@ export interface QuotaPolicyUpdatePayload {
   daily_usd_limit?: number | null;
   daily_token_limit?: number | null;
 }
+
+export interface UserMemoryPendingItem {
+  id: string;
+  fact_text: string;
+  section_hint: string;
+  source_kind: string;
+  created_at: number;
+}
+
+export interface UserMemoryState {
+  filename: "MEMORY.md";
+  content: string;
+  version: number;
+  token_count: number;
+  max_tokens: number;
+  max_chars: number;
+  updated_by: string | null;
+  updated_at: number | null;
+  last_tidy_at: number | null;
+  has_previous: boolean;
+  pending_staged_count: number;
+  pending_staged_items: UserMemoryPendingItem[];
+}
+
+export interface UserMemoryUpdatePayload {
+  version: number;
+  content: string;
+}
+
+export interface UserMemoryTidyResponse {
+  memory: UserMemoryState;
+  merged_count: number;
+  used_llm: boolean;
+  removed_duplicates: number;
+}
+
+export interface UserMemoryForgetResponse {
+  memory: UserMemoryState;
+  removed_lines: number;
+}
