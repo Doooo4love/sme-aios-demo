@@ -483,6 +483,7 @@ class GovernanceServiceAndAPITests(unittest.TestCase):
         raw_listing_text = listing.text.lower()
         self.assertNotIn("you're not a chatbot", raw_listing_text)
         self.assertNotIn("becoming someone", raw_listing_text)
+        self.assertNotIn("soul.md", raw_listing_text)
         for item in items:
             self.assertEqual(
                 set(item.keys()),

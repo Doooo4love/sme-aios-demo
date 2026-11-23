@@ -75,7 +75,7 @@ _SCOPE_SPECS: tuple[PromptScopeSpec, ...] = (
         title_zh="通用助手与工作提醒",
         title_hk="通用助手與工作提醒",
         title_en="General Assistant & Proactive Brief",
-        description="Baseline conversational persona (SOUL.md), minimal-emoji GFM style, live work-pulse reminders, and sealed security boundary.",
+        description="Sealed baseline conversational persona, minimal-emoji GFM style, live work-pulse reminders, and hardened security boundary.",
         required_grants=(),
         default_directive=(
             "Act as Theodic's grounded, resourceful AI operations colleague in the user's active locale "
