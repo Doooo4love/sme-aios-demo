@@ -33,6 +33,11 @@ def digest_of(payload: dict) -> str:
     return sha256(canonical(payload).encode()).hexdigest()
 
 
+def matches_erp_draft(record: dict | None, command) -> bool:
+    return (record is not None and record["business_key"] == command["business_key"]
+            and record["status"] == "DRAFT" and digest_of(record["payload"]) == command["digest"])
+
+
 def business_key(payload: dict) -> str:
     return ":".join(payload[key] for key in ("legal_entity", "buyer", "po"))
 
@@ -271,10 +276,7 @@ class Ledger:
         with self.db.transaction() as run:
             self._live(run, job, "owner = owner")
             command = run("SELECT * FROM command WHERE id = ?", (cid,)).fetchone()
-            matches = (record is not None and record["business_key"] == command["business_key"]
-                       and record["status"] == "DRAFT"
-                       and digest_of(record["payload"]) == command["digest"])
-            if matches:
+            if matches_erp_draft(record, command):
                 state, note, erp_id = "COMMITTED", "Read-back matched the approved payload.", record["id"]
             elif record is not None or job["epoch"] >= 3:
                 state, note, erp_id = "NEEDS_OPERATOR", "ERP copy differs or remains unconfirmed.", None

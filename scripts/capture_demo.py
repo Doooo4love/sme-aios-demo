@@ -22,6 +22,7 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="Quantity conflict").click()
     expect(page.get_by_text("Human review", exact=True)).to_be_visible()
     expect(page.get_by_text("Vision B · scripted read 2", exact=False)).to_be_visible()
+    expect(page.get_by_text("8 × 240.00 = 1920.00. The source line total is HKD 480.00.")).to_be_visible()
     page.screenshot(path=OUT / "02-quantity-review.png", full_page=True)
     quantity = page.get_by_role("textbox", name="Line 1 · Quantity")
     quantity.fill("8")
