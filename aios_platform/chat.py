@@ -1,8 +1,10 @@
 """Tenant-local employee rooms. External connectors and model context are separate."""
 from collections.abc import Callable
 from contextlib import contextmanager
+import re
 from time import time
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
@@ -28,6 +30,10 @@ class MemberChange(Strict):
 class PostMessage(Strict):
     client_id: Identifier
     text: Annotated[str, Field(min_length=1, max_length=4000)]
+
+
+class ReadReceiptUpdate(Strict):
+    last_read_seq: Annotated[int, Field(strict=True, ge=0, lt=2**63 - 1)]
 
 
 class Chat:
@@ -98,6 +104,8 @@ class Chat:
                             (*key, room["next_seq"]))
             else:
                 delta = run("DELETE FROM aios_chat_member WHERE tenant = ? AND room_id = ? AND subject = ?", key)
+                if delta.rowcount:
+                    run("DELETE FROM aios_chat_read_receipt WHERE tenant = ? AND room_id = ? AND subject = ?", key)
             if delta.rowcount:
                 event = "CHAT_MEMBER_ADDED" if active else "CHAT_MEMBER_REMOVED"
                 self.workflow._audit(run, actor.tenant, actor.subject, room_id, event)
@@ -124,9 +132,98 @@ class Chat:
                           ) ORDER BY p.seq LIMIT ?""", (actor.tenant, room_id, after, actor.subject, limit)).fetchall()
         return [dict(row) for row in rows]
 
+    def receipts(self, actor: Actor, room_id: str) -> list[dict]:
+        with self.tx(actor, write=False) as run:
+            self._room(run, actor, room_id)
+            rows = run(
+                """SELECT r.subject, r.last_read_seq, r.read_at
+                   FROM aios_chat_read_receipt AS r
+                   JOIN aios_chat_member AS m
+                     ON m.tenant = r.tenant AND m.room_id = r.room_id AND m.subject = r.subject
+                   WHERE r.tenant = ? AND r.room_id = ?
+                   ORDER BY r.subject""",
+                (actor.tenant, room_id),
+            ).fetchall()
+        return [
+            {"subject": row["subject"], "last_read_seq": int(row["last_read_seq"]), "read_at": float(row["read_at"])}
+            for row in rows
+        ]
+
+    def mark_read(self, actor: Actor, room_id: str, last_read_seq: int) -> dict:
+        if isinstance(last_read_seq, bool) or not isinstance(last_read_seq, int) or last_read_seq < 0:
+            raise ValueError("last_read_seq must be a non-negative integer")
+        others: list[str] = []
+        with self.tx(actor) as run:
+            room = self._room(run, actor, room_id)
+            if self.workflow._suspended(run, actor.tenant, actor.subject):
+                raise PermissionError("This subject cannot update read receipts")
+            max_seq = max(0, int(room["next_seq"]) - 1)
+            clamped_seq = min(last_read_seq, max_seq)
+            now = time()
+            updated = run(
+                """INSERT INTO aios_chat_read_receipt (tenant, room_id, subject, last_read_seq, read_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (tenant, room_id, subject) DO UPDATE SET
+                       last_read_seq = excluded.last_read_seq,
+                       read_at = excluded.read_at
+                   WHERE excluded.last_read_seq > aios_chat_read_receipt.last_read_seq
+                   RETURNING last_read_seq, read_at""",
+                (actor.tenant, room_id, actor.subject, clamped_seq, now),
+            ).fetchone()
+            if updated is not None:
+                saved_seq = int(updated["last_read_seq"])
+                saved_at = float(updated["read_at"])
+                advanced = True
+            else:
+                existing = run(
+                    """SELECT last_read_seq, read_at FROM aios_chat_read_receipt
+                       WHERE tenant = ? AND room_id = ? AND subject = ?""",
+                    (actor.tenant, room_id, actor.subject),
+                ).fetchone()
+                saved_seq = int(existing["last_read_seq"])
+                saved_at = float(existing["read_at"])
+                advanced = False
+            if advanced:
+                others = [
+                    row["subject"]
+                    for row in run(
+                        "SELECT subject FROM aios_chat_member WHERE tenant = ? AND room_id = ? AND subject != ?",
+                        (actor.tenant, room_id, actor.subject),
+                    ).fetchall()
+                ]
+        hub = getattr(self.workflow, "event_hub", None)
+        if advanced and others and hub is not None:
+            hub.publish(
+                actor.tenant,
+                others,
+                {
+                    "id": uuid4().hex,
+                    "kind": "chat_read",
+                    "room_id": room_id,
+                    "subject": actor.subject,
+                    "last_read_seq": saved_seq,
+                    "read_at": saved_at,
+                    "title": "已读回执",
+                    "subtitle": f"{actor.subject} read #{saved_seq}",
+                    "reference": room_id,
+                    "href": f"/inbox/{room_id}",
+                    "severity": "info",
+                    "created_at": saved_at,
+                },
+                include_admins=False,
+            )
+        return {
+            "room_id": room_id,
+            "subject": actor.subject,
+            "last_read_seq": saved_seq,
+            "read_at": saved_at,
+        }
+
     def post(self, actor: Actor, room_id: str, request: PostMessage) -> dict:
         if not request.text.strip():
             raise ValueError("Message text is required")
+        others: list[str] = []
+        room_title = ""
         with self.tx(actor) as run:
             room = self._room(run, actor, room_id, lock=True)
             if self.workflow._suspended(run, actor.tenant, actor.subject):
@@ -149,6 +246,35 @@ class Chat:
                          (*key, seq, request.text, created))
             if stored.rowcount != 1:
                 raise Conflict("Message client ID is already in use")
+            room_title = str(room["title"])
+            others = [
+                row["subject"]
+                for row in run(
+                    "SELECT subject FROM aios_chat_member WHERE tenant = ? AND room_id = ? AND subject != ?",
+                    (actor.tenant, room_id, actor.subject),
+                ).fetchall()
+            ]
+        hub = getattr(self.workflow, "event_hub", None)
+        if others and hub is not None:
+            preview = re.sub(r"\s+", " ", request.text).strip()[:200]
+            hub.publish(
+                actor.tenant,
+                others,
+                {
+                    "id": uuid4().hex,
+                    "kind": "chat_message",
+                    "room_id": room_id,
+                    "seq": seq,
+                    "author": actor.subject,
+                    "title": room_title[:240] or "Team Chat",
+                    "subtitle": f"{actor.subject}: {preview}"[:500],
+                    "reference": room_id,
+                    "href": f"/inbox/{room_id}",
+                    "severity": "info",
+                    "created_at": created,
+                },
+                include_admins=False,
+            )
         return {"seq": seq, "author": actor.subject, "text": request.text, "created_at": created}
 
 
@@ -202,7 +328,19 @@ def chat_routes(workflow: Workflow, authenticate, *,
     def messages(room_id: Identifier, actor: Actor = Depends(participant),
                  limit: Annotated[int, Query(ge=1, le=100)] = 50,
                  after: Annotated[int, Query(ge=0, le=2**63 - 1)] = 0):
-        return page(call(chat.messages, actor, room_id, limit + 1, after), limit, lambda item: item["seq"])
+        rows = call(chat.messages, actor, room_id, limit + 1, after)
+        receipt_rows = call(chat.receipts, actor, room_id)
+        result = page(rows, limit, lambda item: item["seq"])
+        result["read_receipts"] = receipt_rows
+        return result
+
+    @router.get("/rooms/{room_id}/receipts")
+    def receipts(room_id: Identifier, actor: Actor = Depends(participant)):
+        return {"items": call(chat.receipts, actor, room_id)}
+
+    @router.put("/rooms/{room_id}/read")
+    def mark_read(room_id: Identifier, body: ReadReceiptUpdate, actor: Actor = Depends(participant)):
+        return call(chat.mark_read, actor, room_id, body.last_read_seq)
 
     @router.post("/rooms/{room_id}/messages", status_code=201)
     def post(room_id: Identifier, body: PostMessage, actor: Actor = Depends(participant)):

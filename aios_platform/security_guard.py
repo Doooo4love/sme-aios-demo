@@ -1,6 +1,7 @@
 """Deterministic input normalization, prompt/tool guardrails, and output leakage filtering."""
 from __future__ import annotations
 
+from pathlib import Path
 import re
 from typing import Literal
 import unicodedata
@@ -10,6 +11,7 @@ from .providers import action_sites, approval_sites, order_read_sites
 
 Category = Literal[
     "SKILL_TAMPER_ATTEMPT",
+    "PROMPT_TAMPER_ATTEMPT",
     "DESTRUCTIVE_ACTION_ATTEMPT",
     "FILESYSTEM_ESCAPE_ATTEMPT",
     "PROMPT_INJECTION_ATTEMPT",
@@ -124,19 +126,43 @@ _SKILL_TAMPER_PATTERNS = (
     ("skill_plugin_modify_en", re.compile(
         r"(?i)\b(?:add|create|install|edit|modify|update|write|overwrite|delete|remove|register|inject|patch|replace)\b"
         r".{0,45}\b(?:skill|skills|plugin|plugins|mcp\s+server|tool\s+schema|agent\s+config|"
-        r"agent\s+code|guardrail|system\s+prompt|prompt\s+policy|your\s+(?:code|prompts?|instructions?|rules?|tools?))\b"
+        r"agent\s+code|your\s+(?:code|tools?))\b"
     )),
     ("self_modify_en", re.compile(
-        r"(?i)\b(?:modify|change|update|edit|rewrite|override)\s+(?:yourself|your\s+own\s+(?:code|prompt|rules?|instructions?|skills?|tools?))\b"
+        r"(?i)\b(?:modify|change|update|edit|rewrite|override)\s+(?:yourself|your\s+own\s+(?:code|skills?|tools?))\b"
     )),
     ("skill_tamper_zh", re.compile(
         r"(?:新增|添加|创建|建立|安装|安裝|修改|编辑|編輯|更改|改动|改動|重写|重寫|删除|刪除|覆盖|覆蓋|注册|註冊|植入|注入)"
         r".{0,25}(?:技能|skill|插件|plugin|MCP|工具配置|工具定义|工具定義|智能体配置|智能體配置|Agent配置|"
-        r"系统提示词|系統提示詞|提示词规则|提示詞規則|防护规则|防護規則|护栏|護欄|自身代码|自身代碼|自我修改)"
+        r"自身代码|自身代碼|自我修改)"
     )),
     ("self_modify_zh", re.compile(
         r"(?:修改|改写|改寫|更新|关闭|關閉|禁用).{0,20}(?:你自己的|自己的|系统|系統|内置|內置)"
-        r"(?:提示词|提示詞|指令|规则|規則|代码|代碼|技能|工具)"
+        r"(?:代码|代碼|技能|工具)"
+    )),
+)
+
+_PROMPT_TAMPER_PATTERNS = (
+    ("soul_tamper_en", re.compile(
+        r"(?i)(?:\b(?:add|append|insert|edit|modify|update|write|overwrite|rewrite|delete|remove|erase|clear|reset|replace|patch|change|inject|save)\b"
+        r".{0,80}\b(?:soul\.md|soul\s+(?:file|doc|document|markdown|prompt|persona|rules?|truths?)|your\s+soul|persona\s+file)\b|"
+        r"\bsoul\.md\b.{0,50}\b(?:edit|modify|update|overwrite|rewrite|append|delete|remove|reset|replace|patch|change)\b)"
+    )),
+    ("directive_tamper_en", re.compile(
+        r"(?i)(?:\b(?:add|append|insert|edit|modify|update|write|overwrite|rewrite|delete|remove|erase|clear|reset|replace|patch|change|override|disable|relax)\b"
+        r".{0,80}\b(?:(?:general|module|system|sealed|internal|base|core|orders|dispatch|invoice-review|warehouse-insights|approvals|mail-outbox|calendar-meetings)\s+)?"
+        r"(?:directives?|guardrails?|guardrail\s+rules?|system\s+prompts?|prompt\s+polic(?:y|ies)|system\s+instructions?|sealed\s+polic(?:y|ies)|"
+        r"your\s+(?:prompts?|instructions?|rules?|directives?|persona))\b|"
+        r"\b(?:general|module|system|sealed)\s+(?:directives?|guardrails?|system\s+prompts?|prompt\s+polic(?:y|ies))\b"
+        r".{0,45}\b(?:edit|modify|update|overwrite|rewrite|append|delete|remove|reset|replace|patch|change)\b)"
+    )),
+    ("prompt_tamper_zh", re.compile(
+        r"(?:新增|添加|追加|插入|修改|编辑|編輯|更改|改动|改動|重写|重寫|覆盖|覆蓋|删除|刪除|清空|清除|重置|替换|替換|调整|調整|改写|改寫|更新|写入|寫入|关闭|關閉|禁用|放宽|放寬)"
+        r".{0,45}(?:SOUL\.md|soul\.md|灵魂文件|靈魂檔案|灵魂设定|靈魂設定|人格设定|人格設定|"
+        r"(?:通用|模块|模組|系统|系統|内置|內置|密封|核心)?(?:提示词|提示詞|指令|护栏|護欄|防护规则|防護規則|策略指令|提示词策略|提示詞策略)|"
+        r"(?:general|orders|dispatch|invoice-review|warehouse-insights|approvals|mail-outbox|calendar-meetings)\s*(?:指令|提示词|提示詞|规则|規則|策略))|"
+        r"(?:SOUL\.md|soul\.md|灵魂文件|靈魂檔案|灵魂设定|靈魂設定|系统提示词|系統提示詞|通用提示词|通用提示詞|模块提示词|模組提示詞|通用指令|模块指令|模組指令|系统指令|系統指令|防护规则|防護規則)"
+        r".{0,35}(?:添加|追加|写入|寫入|加入|覆盖|覆蓋|重写|重寫|改写|改寫|修改|更改|改动|改動|调整|調整|更新|改成|改为|改為|编辑|編輯|重置|替换|替換|删除|刪除|放宽|放寬)"
     )),
 )
 
@@ -248,17 +274,29 @@ _PROMPT_INJECTION_PATTERNS = (
         r"\b(?:bypass|circumvent|disable|turn\s+off)\s+(?:the\s+)?(?:guardrails?|safety|restrictions?|filters?|rules?|policy)\b)"
     )),
     ("reveal_prompt_en", re.compile(
-        r"(?i)\b(?:reveal|show|print|output|repeat|dump|leak|tell\s+me|what\s+(?:is|are))\b.{0,30}"
-        r"\b(?:your\s+)?(?:system\s+prompt|hidden\s+prompt|internal\s+(?:prompt|instructions?|directives?|rules?)|"
-        r"verbatim\s+instructions?|prompt\s+template|base\s+instructions?)\b"
+        r"(?i)(?:\bsoul\.md\b|"
+        r"\b(?:reveal|show|view|read|print|output|repeat|dump|leak|quote|paraphrase|summarize|summarise|"
+        r"export|inspect|display|list|recite|share|give\s+me|copy|extract|translate|describe|explain|"
+        r"tell\s+me|what\s+(?:is|are|does))\b.{0,55}"
+        r"\b(?:soul\s+(?:file|doc|document|markdown|prompt|persona|rules?|truths?)|your\s+soul|persona\s+file|"
+        r"(?:general|module|system|sealed|internal|hidden|base|core|compiled|orders|dispatch|invoice-review|warehouse-insights|approvals|mail-outbox|calendar-meetings)\s+"
+        r"(?:directives?|guardrails?|guardrail\s+rules?|system\s+prompts?|prompts?|instructions?|polic(?:y|ies)|rules?)|"
+        r"system\s+prompt|hidden\s+prompt|verbatim\s+instructions?|prompt\s+template|prompt\s+polic(?:y|ies)|"
+        r"your\s+(?:prompts?|instructions?|directives?|guardrails?|rules?|persona))\b|"
+        r"\b(?:general|module|system|sealed|internal|compiled)\s+(?:directives?|guardrails?|system\s+prompts?|instructions?|prompt\s+polic(?:y|ies))\b"
+        r".{0,45}\b(?:quote|paraphrase|summarize|summarise|export|dump|reveal|print|show|view|read|repeat)\b)"
     )),
     ("prompt_injection_zh", re.compile(
         r"(?:(?:忽略|无视|無視|忘记|忘記|覆盖|覆蓋|绕过|繞過|突破|取消|关闭|關閉|解除).{0,20}"
         r"(?:之前|以前|前面|上方|所有|全部|一切|系统|系統|内置|內置|安全).{0,15}"
         r"(?:指令|规则|規則|限制|提示词|提示詞|约束|約束|护栏|護欄|规定|規定|策略)|"
         r"绕过限制|繞過限制|越狱模式|越獄模式|开发者模式|開發者模式|无限制模式|無限制模式|"
-        r"(?:泄露|洩露|透露|输出|輸出|打印|展示|告诉我|告訴我|复述|複述|查看|显示|顯示).{0,20}"
-        r"(?:系统提示词|系統提示詞|内部提示词|內部提示詞|隐藏指令|隱藏指令|原始指令|底层指令|底層指令|系统设定|系統設定|安全规则原文|安全規則原文))"
+        r"(?:泄露|洩露|透露|输出|輸出|打印|展示|查看|读取|讀取|显示|顯示|导出|導出|引用|复述|複述|转述|轉述|概括|总结|總結|背诵|背誦|复制|複製|提取|翻译|翻譯|告诉我|告訴我|发给我|發給我)"
+        r".{0,40}(?:SOUL\.md|soul\.md|灵魂文件|靈魂檔案|灵魂设定|靈魂設定|人格设定|人格設定|"
+        r"(?:通用|模块|模組|系统|系統|内部|內部|隐藏|隱藏|原始|底层|底層|密封|核心|完整|全部)?(?:提示词|提示詞|指令|设定|設定|护栏|護欄|防护规则|防護規則|安全规则|安全規則|策略原文|提示词策略|提示詞策略)|"
+        r"(?:general|orders|dispatch|invoice-review|warehouse-insights|approvals|mail-outbox|calendar-meetings)\s*(?:指令|提示词|提示詞|护栏|護欄|规则|規則|策略))|"
+        r"(?:系统提示词|系統提示詞|通用提示词|通用提示詞|模块提示词|模組提示詞|通用指令|模块指令|模組指令|系统指令|系統指令|防护规则|防護規則|灵魂设定|靈魂設定|SOUL\.md|soul\.md)"
+        r".{0,35}(?:查看|读取|讀取|导出|導出|总结|總結|概括|复述|複述|转述|轉述|引用|打印|输出|輸出|写了什么|寫了什麼|原文|全文|内容|內容))"
     )),
 )
 
@@ -599,6 +637,19 @@ def evaluate_user_turn(actor: Actor, text: str, offered_tools: tuple[str, ...] =
                 refusal_en="Blocked by security policy: modifying, installing, or registering skills (SKILL.md), plugins, agent tools, or system configuration from chat is prohibited.",
             )
 
+    # 1b. Sealed SOUL.md / system & module directive modification attempts (applies to ALL roles including admin)
+    for rule_name, pattern in _PROMPT_TAMPER_PATTERNS:
+        if pattern.search(compact):
+            return _deny(
+                category="PROMPT_TAMPER_ATTEMPT",
+                severity="high",
+                decision="blocked",
+                matched_rule=rule_name,
+                refusal_zh="安全策略已拦截：SOUL.md 及通用/模块系统指令已密封锁定，任何用户或管理员均不可通过对话修改、覆盖、追加或重置。",
+                refusal_hk="安全策略已攔截：SOUL.md 及通用/模組系統指令已密封鎖定，任何用戶或管理員均不可透過對話修改、覆蓋、追加或重置。",
+                refusal_en="Blocked by security policy: SOUL.md and system/module directives are sealed by the Theodic core team and cannot be edited, overwritten, appended to, or reset.",
+            )
+
     # 2. Destructive SQL / shell / record-wipe attempts
     for rule_name, pattern in _DESTRUCTIVE_PATTERNS:
         if pattern.search(compact):
@@ -784,12 +835,53 @@ _FS_PATH_LEAK_RE = re.compile(
     r"(?<![A-Za-z0-9_-])\.env(?:\.[A-Za-z0-9_-]+)?\b)"
 )
 
+_SOUL_ANCHOR_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)you['’\u2019]re\s+not\s+a\s+chatbot\.?"),
+    re.compile(r"(?i)becoming\s+someone\.?"),
+    re.compile(r"(?i)this\s+is\s+your\s+persona,?\s+yours\s+to\s+grow\s+into(?:\s+and\s+edit\s+over\s+time)?\.?"),
+    re.compile(r"(?i)some\s+starting\s+truths\s*:?"),
+    re.compile(r"(?i)be\s+genuinely\s+helpful,?\s+not\s+performatively\s+helpful\.?"),
+    re.compile(r"(?i)performatively\s+helpful"),
+    re.compile(r"(?i)skip\s+[\"“']?great\s+question!?[\"”']?\s+and\s+[\"“']?i['’\u2019]d\s+be\s+happy\s+to\s+help!?[\"”']?"),
+    re.compile(r"(?i)personality\s+beats\s+a\s+search\s+engine(?:\s+with\s+extra\s+steps)?\.?"),
+    re.compile(r"(?i)be\s+resourceful\s+before\s+asking\.?"),
+    re.compile(r"(?i)come\s+back\s+with\s+answers,?\s+not\s+questions(?:,?\s+then\s+ask\s+if\s+you['’\u2019]re\s+truly\s+stuck)?\.?"),
+    re.compile(r"(?i)(?:you['’\u2019]re\s+a\s+)?guest\s+in\s+someone['’\u2019]s\s+life\.?"),
+    re.compile(r"(?i)treat\s+that\s+access\s+with\s+care,?\s+and\s+never\s+be\s+preachy\.?"),
+    re.compile(r"(?i)\[sealed\s+persona\s+soul\]"),
+    re.compile(r"(?i)\bsoul\.md\b"),
+    re.compile(r"(?i)denied\s+modules\s*\(strictly\s+inaccessible\)"),
+    re.compile(r"(?i)live\s+pendingworksnapshot"),
+)
+
+
+def _soul_line_patterns() -> tuple[re.Pattern[str], ...]:
+    soul_file = Path(__file__).with_name("SOUL.md")
+    if not soul_file.is_file():
+        return ()
+    patterns: list[re.Pattern[str]] = []
+    for raw_line in soul_file.read_text(encoding="utf-8").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if len(line) < 20:
+            continue
+        escaped = re.escape(line).replace(r"\ ", r"\s+").replace("'", r"['’\u2019]")
+        patterns.append(re.compile(escaped, re.IGNORECASE))
+    return tuple(patterns)
+
+
+def _compile_flexible_phrase_pattern(phrase: str) -> re.Pattern[str]:
+    escaped = re.escape(phrase).replace(r"\ ", r"\s+").replace("'", r"['’\u2019]")
+    return re.compile(escaped, re.IGNORECASE)
+
 
 def check_output_leakage(reply: str, directives: list[str]) -> str:
     if not reply:
         return ""
     sanitized = scrub_secrets(reply)
     sanitized = _FS_PATH_LEAK_RE.sub("[REDACTED_PATH]", sanitized)
+
+    for pattern in (*_SOUL_ANCHOR_PATTERNS, *_soul_line_patterns()):
+        sanitized = pattern.sub("[REDACTED_POLICY]", sanitized)
 
     for raw_directive in directives:
         if not raw_directive:
@@ -798,12 +890,15 @@ def check_output_leakage(reply: str, directives: list[str]) -> str:
         if len(candidate) >= 24 and candidate in sanitized:
             sanitized = sanitized.replace(candidate, "[REDACTED_POLICY]")
         compact_candidate = re.sub(r"\s+", " ", candidate)
-        if len(compact_candidate) >= 28:
-            pattern = re.compile(re.escape(compact_candidate).replace(r"\ ", r"\s+"))
-            sanitized = pattern.sub("[REDACTED_POLICY]", sanitized)
+        if len(compact_candidate) >= 24:
+            sanitized = _compile_flexible_phrase_pattern(compact_candidate).sub("[REDACTED_POLICY]", sanitized)
         for line in candidate.splitlines():
-            clean_line = line.strip()
-            if len(clean_line) >= 28 and clean_line in sanitized:
-                sanitized = sanitized.replace(clean_line, "[REDACTED_POLICY]")
+            clean_line = re.sub(r"\s+", " ", line).strip()
+            if len(clean_line) >= 24:
+                sanitized = _compile_flexible_phrase_pattern(clean_line).sub("[REDACTED_POLICY]", sanitized)
+            for clause in re.split(r"(?<=[.!?])\s+|;\s+", clean_line):
+                clean_clause = clause.strip()
+                if len(clean_clause) >= 28:
+                    sanitized = _compile_flexible_phrase_pattern(clean_clause).sub("[REDACTED_POLICY]", sanitized)
 
     return sanitized

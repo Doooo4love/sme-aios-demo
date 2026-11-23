@@ -295,14 +295,14 @@ export function EmailComposeCard({
               <dt className="aios-micro-label shrink-0">
                 {tx({ "zh-CN": "收件人", "zh-HK": "收件人", en: "Recipients" })}
               </dt>
-              <dd className="font-mono-code tabular-nums text-[var(--ink-primary)] text-right break-all">
+              <dd className="min-w-0 font-mono-code tabular-nums text-[var(--ink-primary)] text-right break-all">
                 {receipt.recipients.join(", ")}
               </dd>
             </div>
             {receipt.cc.length > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2">
                 <dt className="aios-micro-label shrink-0">CC</dt>
-                <dd className="font-mono-code tabular-nums text-[var(--ink-secondary)] text-right break-all">
+                <dd className="min-w-0 font-mono-code tabular-nums text-[var(--ink-secondary)] text-right break-all">
                   {receipt.cc.join(", ")}
                 </dd>
               </div>
@@ -321,7 +321,7 @@ export function EmailComposeCard({
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2">
               <dt className="aios-micro-label shrink-0">RFC Message-ID</dt>
-              <dd className="flex items-center gap-1.5 font-mono-code text-[11.5px] text-[var(--ink-primary)]">
+              <dd className="flex min-w-0 items-center gap-1.5 font-mono-code text-[11.5px] text-[var(--ink-primary)]">
                 <span className="max-w-[260px] truncate tabular-nums">
                   {sentResult.message_id}
                 </span>
@@ -329,7 +329,7 @@ export function EmailComposeCard({
                   type="button"
                   onClick={() => void handleCopyMessageId(sentResult.message_id)}
                   aria-label={t("common.copy")}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] cursor-pointer"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] cursor-pointer"
                 >
                   {copiedMsgId ? (
                     <Check className="h-3 w-3 text-[var(--status-emerald)]" />
@@ -347,7 +347,7 @@ export function EmailComposeCard({
                   en: "Audit Receipt ID",
                 })}
               </dt>
-              <dd className="font-mono-code text-[11.5px] text-[var(--ink-secondary)] tabular-nums">
+              <dd className="min-w-0 break-all font-mono-code text-[11.5px] text-[var(--ink-secondary)] tabular-nums">
                 {receipt.id} · {formatDateTime(receipt.created_at)}
               </dd>
             </div>
@@ -584,6 +584,7 @@ export function EmailComposeCard({
             type="submit"
             size="sm"
             variant="primary"
+            pill
             loading={submitting}
             data-testid="email-confirm-send-btn"
           >

@@ -4,6 +4,11 @@ import type {
   BriefResponse,
   CalendarSyncResponse,
   Capabilities,
+  ChannelBindingItem,
+  ChannelBindingsResponse,
+  ChannelOutboundPage,
+  ChannelOutboundReceipt,
+  ChannelsCatalogResponse,
   ChatRoom,
   CompanyContactsResponse,
   DemoPersonaId,
@@ -20,11 +25,13 @@ import type {
   NoticePage,
   Profile,
   Proposal,
+  SendChannelOutboundRequest,
   SlashSkillItem,
   SlashSkillsResponse,
   TaskLane,
   TaskPage,
   TurnResult,
+  UpsertChannelBindingRequest,
   WorkPulseResponse,
   WorkbenchToolCall,
   ZoomBookingConfirmResponse,
@@ -735,6 +742,7 @@ export const loginWithPassword = loginWithCredentials;
 export function fetchCompanyContacts(
   query?: string,
   options?: {
+    subject?: string;
     includeSelf?: boolean;
     warehouse?: string;
     limit?: number;
@@ -743,6 +751,9 @@ export function fetchCompanyContacts(
 ) {
   const sp = new URLSearchParams();
   if (query && query.trim()) sp.set("q", query.trim());
+  if (options?.subject && options.subject.trim()) {
+    sp.set("subject", options.subject.trim());
+  }
   if (options?.includeSelf) sp.set("include_self", "1");
   if (options?.warehouse) sp.set("warehouse", options.warehouse);
   if (options?.limit) sp.set("limit", String(options.limit));
@@ -1087,4 +1098,83 @@ export function callWorkbenchTool(
     idempotencyKey: options?.idempotencyKey,
     signal: options?.signal,
   });
+}
+
+// ============================================================================
+// Enterprise Messaging Channels (8 Mainstream Connectors, Never `provider`)
+// ============================================================================
+
+export function fetchChannelsCatalog(signal?: AbortSignal) {
+  return apiFetch<ChannelsCatalogResponse>("/v1/channels/catalog", { signal });
+}
+
+export function fetchChannelBindings(
+  signalOrParams?:
+    | AbortSignal
+    | { scope?: "mine" | "tenant"; subject?: string },
+  signalArg?: AbortSignal,
+) {
+  const signal = isAbortSignal(signalOrParams) ? signalOrParams : signalArg;
+  const params = isAbortSignal(signalOrParams) ? undefined : signalOrParams;
+  const sp = new URLSearchParams();
+  if (params?.scope) sp.set("scope", params.scope);
+  if (params?.subject) sp.set("subject", params.subject);
+  const qs = sp.toString();
+  return apiFetch<ChannelBindingsResponse>(
+    `/v1/channels/bindings${qs ? `?${qs}` : ""}`,
+    { signal },
+  );
+}
+
+export function upsertChannelBinding(
+  channelId: string,
+  body: UpsertChannelBindingRequest,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ChannelBindingItem>(
+    `/v1/channels/bindings/${encodeURIComponent(channelId)}`,
+    {
+      method: "PUT",
+      body,
+      signal,
+    },
+  );
+}
+
+export function sendChannelOutbound(
+  body: SendChannelOutboundRequest,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ChannelOutboundReceipt>("/v1/channels/outbound", {
+    method: "POST",
+    body: {
+      ...body,
+      client_id: body.client_id || generateClientId("ch"),
+    },
+    signal,
+  });
+}
+
+export async function fetchChannelOutbound(
+  signalOrParams?:
+    | AbortSignal
+    | { limit?: number; channel_id?: string; scope?: "mine" | "tenant" },
+  signalArg?: AbortSignal,
+): Promise<ChannelOutboundPage> {
+  const signal = isAbortSignal(signalOrParams) ? signalOrParams : signalArg;
+  const params = isAbortSignal(signalOrParams) ? undefined : signalOrParams;
+  const sp = new URLSearchParams();
+  if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+  if (params?.channel_id) sp.set("channel_id", params.channel_id);
+  if (params?.scope) sp.set("scope", params.scope);
+  const qs = sp.toString();
+
+  const res = await apiFetch<ChannelOutboundPage | ChannelOutboundReceipt[]>(
+    `/v1/channels/outbound${qs ? `?${qs}` : ""}`,
+    { signal },
+  );
+  if (Array.isArray(res)) {
+    return { items: res };
+  }
+  return { items: Array.isArray(res?.items) ? res.items : [] };
 }

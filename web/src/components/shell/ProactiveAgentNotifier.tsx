@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Bell, ShieldAlert, X } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { ArrowUpRight, Bell, MessageSquare, ShieldAlert, X } from "lucide-react";
 import {
   fetchWorkPulse,
   getAuthGeneration,
@@ -27,6 +28,58 @@ const DEFAULT_AGENT_NAMES = new Set([
   "Personal Agent",
 ]);
 
+export type ChatSseEvent =
+  | {
+      kind: "chat_read";
+      roomId: string;
+      subject: string;
+      lastReadSeq: number;
+      readAt: number;
+    }
+  | {
+      kind: "chat_message";
+      roomId: string;
+      seq?: number;
+      author?: string;
+      createdAt: number;
+    };
+
+interface ChatSseSubscription {
+  generation: number;
+  listener: (event: ChatSseEvent) => void;
+}
+
+const chatSseSubscriptions = new Set<ChatSseSubscription>();
+
+export function subscribeChatSseEvents(
+  expectedGeneration: number,
+  listener: (event: ChatSseEvent) => void,
+): () => void {
+  const entry: ChatSseSubscription = {
+    generation: expectedGeneration,
+    listener,
+  };
+  chatSseSubscriptions.add(entry);
+  return () => {
+    chatSseSubscriptions.delete(entry);
+  };
+}
+
+function broadcastChatSseEvent(
+  expectedGeneration: number,
+  event: ChatSseEvent,
+): void {
+  if (expectedGeneration !== getAuthGeneration()) return;
+  for (const sub of Array.from(chatSseSubscriptions)) {
+    if (sub.generation !== expectedGeneration) continue;
+    try {
+      sub.listener(event);
+    } catch {
+      // ignore subscriber failure
+    }
+  }
+}
+
 interface ToastEntry {
   alert: WorkAlertItem;
   paused: boolean;
@@ -43,6 +96,7 @@ onAuthReset((_reason, nextGen) => {
   seenGen = nextGen;
   seenAlertIds = new Set<string>();
   hydratedGens = new Set<number>();
+  chatSseSubscriptions.clear();
 });
 
 function ensureSeenStore(gen: number): Set<string> {
@@ -98,7 +152,25 @@ function normalizeAlertPayload(raw: unknown): WorkAlertItem | null {
   };
 }
 
+function isUserViewingRoom(pathname: string, roomId: string): boolean {
+  if (!roomId) return false;
+  if (
+    typeof document !== "undefined" &&
+    document.visibilityState !== "visible"
+  ) {
+    return false;
+  }
+  return (
+    pathname === `/inbox/${roomId}` ||
+    pathname === `/inbox/${encodeURIComponent(roomId)}`
+  );
+}
+
 export function ProactiveAgentNotifier() {
+  const pathname = usePathname() || "";
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+
   const { status, actor, agentProfile, authGeneration } = useSession();
   const { setAssignedCount, setUnreadNoticesCount } = useWorkbench();
   const { t, tx, formatShortTime } = useLocale();
@@ -197,8 +269,20 @@ export function ProactiveAgentNotifier() {
       for (const rawAlert of ordered) {
         const alert = normalizeAlertPayload(rawAlert);
         if (!alert) continue;
+        // Never treat read-receipt updates as notification banners or assistant alerts
+        if (alert.kind === "chat_read") continue;
         if (seen.has(alert.id)) continue;
         seen.add(alert.id);
+
+        if (alert.kind === "chat_message") {
+          const roomId = alert.reference || "";
+          const inSameRoom = isUserViewingRoom(pathnameRef.current, roomId);
+          const isFreshOnMount = nowSec - alert.created_at <= 20;
+          if (!inSameRoom && (alreadyHydrated || isFreshOnMount)) {
+            enqueueToast(alert);
+          }
+          continue;
+        }
 
         const isRecent = nowSec - alert.created_at <= 300;
         const isFreshOnMount = nowSec - alert.created_at <= 20;
@@ -289,24 +373,118 @@ export function ProactiveAgentNotifier() {
       }
     };
 
+    const dispatchParsedEvent = (
+      parsed: Record<string, unknown>,
+      fallbackKind?: string,
+    ) => {
+      if (disposed || expectedGen !== getAuthGeneration()) return;
+      const kind =
+        typeof parsed.kind === "string" && parsed.kind
+          ? parsed.kind
+          : (fallbackKind ?? "work_alert");
+
+      if (kind === "chat_read") {
+        const roomId =
+          typeof parsed.room_id === "string"
+            ? parsed.room_id
+            : typeof parsed.reference === "string"
+              ? parsed.reference
+              : "";
+        const subject = typeof parsed.subject === "string" ? parsed.subject : "";
+        const lastReadSeq =
+          typeof parsed.last_read_seq === "number" ? parsed.last_read_seq : -1;
+        const readAt =
+          typeof parsed.read_at === "number"
+            ? parsed.read_at
+            : typeof parsed.created_at === "number"
+              ? parsed.created_at
+              : Math.floor(Date.now() / 1000);
+        if (roomId && subject && lastReadSeq >= 0) {
+          broadcastChatSseEvent(expectedGen, {
+            kind: "chat_read",
+            roomId,
+            subject,
+            lastReadSeq,
+            readAt,
+          });
+        }
+        return;
+      }
+
+      if (kind === "chat_message") {
+        const roomId =
+          typeof parsed.room_id === "string"
+            ? parsed.room_id
+            : typeof parsed.reference === "string"
+              ? parsed.reference
+              : "";
+        const author =
+          typeof parsed.author === "string" ? parsed.author : undefined;
+        const seq = typeof parsed.seq === "number" ? parsed.seq : undefined;
+        const createdAt =
+          typeof parsed.created_at === "number"
+            ? parsed.created_at
+            : Math.floor(Date.now() / 1000);
+
+        if (roomId) {
+          broadcastChatSseEvent(expectedGen, {
+            kind: "chat_message",
+            roomId,
+            seq,
+            author,
+            createdAt,
+          });
+        }
+
+        // Only pop iMessage banner for incoming unread messages when user isn't inside that room
+        if (
+          author !== actor.subject &&
+          !isUserViewingRoom(pathnameRef.current, roomId)
+        ) {
+          const alert = normalizeAlertPayload({
+            ...parsed,
+            kind: "chat_message",
+            reference: roomId || parsed.reference,
+            href:
+              typeof parsed.href === "string" && parsed.href.startsWith("/")
+                ? parsed.href
+                : roomId
+                  ? `/inbox/${encodeURIComponent(roomId)}`
+                  : "/inbox",
+          });
+          if (alert) {
+            const seen = ensureSeenStore(expectedGen);
+            if (!seen.has(alert.id)) {
+              seen.add(alert.id);
+              enqueueToast(alert);
+            }
+          }
+        }
+        return;
+      }
+
+      const alert = normalizeAlertPayload(
+        fallbackKind && !parsed.kind
+          ? { ...parsed, kind: fallbackKind }
+          : parsed,
+      );
+      if (!alert) return;
+
+      const seen = ensureSeenStore(expectedGen);
+      if (seen.has(alert.id)) return;
+      seen.add(alert.id);
+
+      pushProactiveAlert(expectedGen, alert);
+      enqueueToast(alert);
+      void pollPulse(expectedGen, abortController.signal);
+    };
+
     const handleIncomingEvent = (rawData: string, fallbackKind?: string) => {
       if (disposed || expectedGen !== getAuthGeneration()) return;
       try {
         const parsed = JSON.parse(rawData) as Record<string, unknown>;
-        const alert = normalizeAlertPayload(
-          fallbackKind && !parsed.kind
-            ? { ...parsed, kind: fallbackKind }
-            : parsed,
-        );
-        if (!alert) return;
-
-        const seen = ensureSeenStore(expectedGen);
-        if (seen.has(alert.id)) return;
-        seen.add(alert.id);
-
-        pushProactiveAlert(expectedGen, alert);
-        enqueueToast(alert);
-        void pollPulse(expectedGen, abortController.signal);
+        if (!parsed || typeof parsed !== "object") return;
+        dispatchParsedEvent(parsed, fallbackKind);
       } catch {
         // Ignore malformed or heartbeat payloads
       }
@@ -343,6 +521,14 @@ export function ProactiveAgentNotifier() {
           (ev as MessageEvent<string>).data,
           "security_alert",
         );
+      });
+
+      es.addEventListener("chat_read", (ev) => {
+        handleIncomingEvent((ev as MessageEvent<string>).data, "chat_read");
+      });
+
+      es.addEventListener("chat_message", (ev) => {
+        handleIncomingEvent((ev as MessageEvent<string>).data, "chat_message");
       });
 
       es.onmessage = (ev) => {
@@ -404,6 +590,7 @@ export function ProactiveAgentNotifier() {
           alert.kind === "security_alert" ||
           alert.severity === "critical" ||
           alert.severity === "high";
+        const isChatMsg = alert.kind === "chat_message";
 
         return (
           <div
@@ -436,6 +623,8 @@ export function ProactiveAgentNotifier() {
                 >
                   {isSecurity ? (
                     <ShieldAlert className="h-3 w-3 shrink-0" strokeWidth={2} />
+                  ) : isChatMsg ? (
+                    <MessageSquare className="h-3 w-3 shrink-0" strokeWidth={2} />
                   ) : (
                     <Bell className="h-3 w-3 shrink-0" strokeWidth={2} />
                   )}
@@ -446,7 +635,13 @@ export function ProactiveAgentNotifier() {
                           "zh-HK": "安全即時告警",
                           en: "Security Alert",
                         })
-                      : agentDisplayName}
+                      : isChatMsg
+                        ? tx({
+                            "zh-CN": "同事协作消息",
+                            "zh-HK": "同事協作訊息",
+                            en: "Team Message",
+                          })
+                        : agentDisplayName}
                   </span>
                 </span>
               </div>
@@ -487,11 +682,17 @@ export function ProactiveAgentNotifier() {
                 className="inline-flex h-7 items-center gap-1 rounded-sm bg-[var(--accent-solid)] px-2.5 text-[11.5px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)] transition-colors shrink-0"
               >
                 <span>
-                  {tx({
-                    "zh-CN": "查看处理",
-                    "zh-HK": "檢視處理",
-                    en: "View & Handle",
-                  })}
+                  {isChatMsg
+                    ? tx({
+                        "zh-CN": "进入会话",
+                        "zh-HK": "進入對話",
+                        en: "Open Chat",
+                      })
+                    : tx({
+                        "zh-CN": "查看处理",
+                        "zh-HK": "檢視處理",
+                        en: "View & Handle",
+                      })}
                 </span>
                 <ArrowUpRight className="h-3 w-3" strokeWidth={2} />
               </Link>

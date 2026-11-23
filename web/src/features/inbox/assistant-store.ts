@@ -24,6 +24,7 @@ export interface AssistantTurnEntry {
   clientId: string;
   userText: string;
   createdAt: number;
+  answeredAt?: number;
   status: "pending" | "done" | "error";
   waitingRetryAfter?: number | null;
   result?: TurnResult;

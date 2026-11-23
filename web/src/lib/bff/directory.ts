@@ -13,10 +13,12 @@ import type {
   Actor,
   ChatRoom,
   CompanyContact,
+  ContactAvailability,
   DemoPersonaId,
   Profile,
   Role,
 } from "@/lib/types";
+import type { TrilingualText } from "@/lib/i18n/types";
 
 export interface DirectorySeedEntry {
   subject: DemoPersonaId;
@@ -27,9 +29,71 @@ export interface DirectorySeedEntry {
   email: string;
   department: string;
   job_title: string;
+  phone: string;
+  ext: string;
+  office: string;
+  availability: ContactAvailability;
   login_aliases: readonly string[];
   search_keywords: readonly string[];
 }
+
+const OFFICE_LOCALIZATIONS: Partial<Record<DemoPersonaId, TrilingualText>> = {
+  operator: {
+    "zh-CN": "HK01 葵涌物流中心 · 数码港 3 座",
+    "zh-HK": "HK01 葵涌物流中心 · 數碼港 3 座",
+    en: "HK01 Kwai Chung Hub · Cyberport 3",
+  },
+  manager: {
+    "zh-CN": "HK01 葵涌物流中心 · 数码港 3 座",
+    "zh-HK": "HK01 葵涌物流中心 · 數碼港 3 座",
+    en: "HK01 Kwai Chung Hub · Cyberport 3",
+  },
+  finance: {
+    "zh-CN": "香港数码港 3 座 9 楼 · 财务中心",
+    "zh-HK": "香港數碼港 3 座 9 樓 · 財務中心",
+    en: "Cyberport 3, Fl 9 · Finance Desk",
+  },
+  "access-admin": {
+    "zh-CN": "香港数码港 3 座 11 楼 · 安全治理中心",
+    "zh-HK": "香港數碼港 3 座 11 樓 · 安全治理中心",
+    en: "Cyberport 3, Fl 11 · IAM & Security",
+  },
+  admin: {
+    "zh-CN": "香港数码港 3 座 11 楼 · 平台运维中心",
+    "zh-HK": "香港數碼港 3 座 11 樓 · 平台維運中心",
+    en: "Cyberport 3, Fl 11 · Platform Ops",
+  },
+  quality: {
+    "zh-CN": "HK01 葵涌质检实验室 · B 座",
+    "zh-HK": "HK01 葵涌質檢實驗室 · B 座",
+    en: "HK01 Kwai Chung QA Lab · Block B",
+  },
+  legal: {
+    "zh-CN": "香港数码港 3 座 10 楼 · 法务合规部",
+    "zh-HK": "香港數碼港 3 座 10 樓 · 法務合規部",
+    en: "Cyberport 3, Fl 10 · Legal & Compliance",
+  },
+  executive: {
+    "zh-CN": "香港数码港 3 座 12 楼 · 经营管理层",
+    "zh-HK": "香港數碼港 3 座 12 樓 · 經營管理層",
+    en: "Cyberport 3, Fl 12 · Executive Suite",
+  },
+  viewer: {
+    "zh-CN": "香港数码港 3 座 8 楼 · 客户支持中心",
+    "zh-HK": "香港數碼港 3 座 8 樓 · 客戶支援中心",
+    en: "Cyberport 3, Fl 8 · Client Support",
+  },
+  "other-manager": {
+    "zh-CN": "HK02 荃湾二号保税仓 · 运营楼",
+    "zh-HK": "HK02 荃灣二號保稅倉 · 營運大樓",
+    en: "HK02 Tsuen Wan Bonded Warehouse · Ops",
+  },
+  "island-manager": {
+    "zh-CN": "Island 港岛运营中心 · 太古广场",
+    "zh-HK": "Island 港島營運中心 · 太古廣場",
+    en: "Island HK Operations Hub · Pacific Place",
+  },
+};
 
 export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
   {
@@ -41,6 +105,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "operator@harbour.demo",
     department: "HK01 仓储运营部",
     job_title: "接单 / 运单经办",
+    phone: "+852 3904 8011",
+    ext: "8011",
+    office: "HK01 葵涌物流中心 · 数码港 3 座",
+    availability: "online",
     login_aliases: [
       "operator",
       "operator@harbour.demo",
@@ -59,6 +127,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "manager@harbour.demo",
     department: "HK01 仓储运营部",
     job_title: "独立主管审批",
+    phone: "+852 3904 8012",
+    ext: "8012",
+    office: "HK01 葵涌物流中心 · 数码港 3 座",
+    availability: "online",
     login_aliases: [
       "manager",
       "manager@harbour.demo",
@@ -77,6 +149,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "finance@harbour.demo",
     department: "财务核算部",
     job_title: "财务审阅",
+    phone: "+852 3904 8013",
+    ext: "8013",
+    office: "香港数码港 3 座 9 楼 · 财务中心",
+    availability: "online",
     login_aliases: [
       "finance",
       "finance@harbour.demo",
@@ -95,6 +171,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "access-admin@harbour.demo",
     department: "身份与权限治理部",
     job_title: "全站点权限管理员",
+    phone: "+852 3904 8014",
+    ext: "8014",
+    office: "香港数码港 3 座 11 楼 · 安全治理中心",
+    availability: "online",
     login_aliases: [
       "access-admin",
       "access-admin@harbour.demo",
@@ -113,6 +193,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "admin@harbour.demo",
     department: "平台运维部",
     job_title: "运维管理员",
+    phone: "+852 3904 8015",
+    ext: "8015",
+    office: "香港数码港 3 座 11 楼 · 平台运维中心",
+    availability: "online",
     login_aliases: [
       "admin",
       "admin@harbour.demo",
@@ -132,6 +216,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "quality@harbour.demo",
     department: "品质保障部",
     job_title: "来料质检复核",
+    phone: "+852 3904 8016",
+    ext: "8016",
+    office: "HK01 葵涌质检实验室 · B 座",
+    availability: "busy",
     login_aliases: [
       "quality",
       "quality@harbour.demo",
@@ -150,6 +238,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "legal@harbour.demo",
     department: "法务合规部",
     job_title: "法务合同审阅",
+    phone: "+852 3904 8017",
+    ext: "8017",
+    office: "香港数码港 3 座 10 楼 · 法务合规部",
+    availability: "online",
     login_aliases: [
       "legal",
       "legal@harbour.demo",
@@ -168,6 +260,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "executive@harbour.demo",
     department: "经营管理层",
     job_title: "跨仓经营视图",
+    phone: "+852 3904 8018",
+    ext: "8018",
+    office: "香港数码港 3 座 12 楼 · 经营管理层",
+    availability: "busy",
     login_aliases: [
       "executive",
       "executive@harbour.demo",
@@ -186,6 +282,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "viewer@harbour.demo",
     department: "客户支持部",
     job_title: "只读运单查询",
+    phone: "+852 3904 8019",
+    ext: "8019",
+    office: "香港数码港 3 座 8 楼 · 客户支持中心",
+    availability: "online",
     login_aliases: [
       "viewer",
       "viewer@harbour.demo",
@@ -203,6 +303,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "other-manager@harbour.demo",
     department: "HK02 仓储运营部",
     job_title: "HK02 跨仓隔离主管",
+    phone: "+852 3904 8020",
+    ext: "8020",
+    office: "HK02 荃湾二号保税仓 · 运营楼",
+    availability: "online",
     login_aliases: [
       "other-manager",
       "other-manager@harbour.demo",
@@ -221,6 +325,10 @@ export const DEMO_DIRECTORY: readonly DirectorySeedEntry[] = [
     email: "island-manager@island.demo",
     department: "Island 运营部",
     job_title: "Island 跨租户主管",
+    phone: "+852 3904 8021",
+    ext: "8021",
+    office: "Island 港岛运营中心 · 太古广场",
+    availability: "online",
     login_aliases: [
       "island-manager",
       "island-manager@island.demo",
@@ -414,6 +522,10 @@ interface ContactAccumulator {
   job_title: string;
   role: string;
   warehouses: string[];
+  phone?: string;
+  ext?: string;
+  office?: string;
+  availability?: ContactAvailability;
   has_avatar: boolean;
   avatar_url: string | null;
   profile_version: number;
@@ -425,6 +537,7 @@ interface ContactAccumulator {
 
 export interface ResolveTenantContactsOptions {
   q?: string;
+  subject?: string;
   includeSelf?: boolean;
   warehouse?: string;
   limit?: number;
@@ -467,6 +580,12 @@ export async function resolveTenantContacts(
     const defaultDisplayName = trilingualPersona
       ? trilingualPersona[locale].displayName
       : (seed?.default_display_name ?? subject);
+    const localizedOffice = seed
+      ? (OFFICE_LOCALIZATIONS[seed.subject]?.[locale] ?? seed.office)
+      : undefined;
+    const officeTerms = seed
+      ? Object.values(OFFICE_LOCALIZATIONS[seed.subject] ?? {})
+      : [];
     const created: ContactAccumulator = {
       subject,
       tenant: actor.tenant,
@@ -485,6 +604,10 @@ export async function resolveTenantContacts(
       ),
       role: seed?.role ?? "member",
       warehouses: seed ? sortWarehouses(seed.warehouses) : [],
+      phone: seed?.phone,
+      ext: seed?.ext,
+      office: localizedOffice,
+      availability: seed?.availability,
       has_avatar: false,
       avatar_url: null,
       profile_version: 0,
@@ -492,7 +615,13 @@ export async function resolveTenantContacts(
       direct_room_preferred: false,
       shared_room_ids: [],
       search_keywords: seed
-        ? [...seed.search_keywords, ...extraSearchTerms]
+        ? [
+            ...seed.search_keywords,
+            ...extraSearchTerms,
+            ...officeTerms,
+            seed.phone,
+            seed.ext,
+          ]
         : extraSearchTerms,
     };
     accMap.set(subject, created);
@@ -633,13 +762,17 @@ export async function resolveTenantContacts(
 
   // Filter & rank deterministically
   const includeSelf = Boolean(options?.includeSelf);
+  const subjectFilter = options?.subject?.trim() || "";
   const warehouseFilter = options?.warehouse?.trim().toUpperCase() || "";
   const query = (options?.q || "").trim().toLowerCase();
   const limit = Math.max(1, Math.min(50, options?.limit ?? 30));
 
   let list = Array.from(accMap.values());
-  if (!includeSelf) {
+  if (!includeSelf && !subjectFilter) {
     list = list.filter((entry) => entry.subject !== actor.subject);
+  }
+  if (subjectFilter) {
+    list = list.filter((entry) => entry.subject === subjectFilter);
   }
   if (warehouseFilter) {
     list = list.filter((entry) =>
@@ -656,6 +789,9 @@ export async function resolveTenantContacts(
         entry.department,
         entry.job_title,
         entry.role,
+        ...(entry.phone ? [entry.phone] : []),
+        ...(entry.ext ? [entry.ext] : []),
+        ...(entry.office ? [entry.office] : []),
         ...entry.warehouses,
         ...entry.search_keywords,
       ];
@@ -698,6 +834,10 @@ export async function resolveTenantContacts(
     job_title: entry.job_title,
     role: entry.role,
     warehouses: entry.warehouses,
+    ...(entry.phone ? { phone: entry.phone } : {}),
+    ...(entry.ext ? { ext: entry.ext } : {}),
+    ...(entry.office ? { office: entry.office } : {}),
+    ...(entry.availability ? { availability: entry.availability } : {}),
     has_avatar: entry.has_avatar,
     avatar_url: entry.avatar_url,
     profile_version: entry.profile_version,

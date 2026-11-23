@@ -28,9 +28,11 @@ import {
 } from "@/lib/i18n";
 import { Interactive3DCard } from "@/components/kinetic";
 import { Button } from "@/components/ui/Button";
+import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { SourceTag } from "@/components/ui/SourceTag";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { EmailComposeCard } from "@/features/inbox/EmailComposeCard";
+import { IMessageBubbleTail } from "@/features/inbox/bubble-group";
 import type {
   Capabilities,
   DrawerObjectSelection,
@@ -217,6 +219,8 @@ export interface TurnResultCardProps {
   result: TurnResult;
   capabilities: Capabilities | null;
   timestamp?: number;
+  bubbleTail?: boolean;
+  bubbleRadiusClass?: string;
   initialEmailSent?: EmailSendResponse | null;
   onEmailSent?: (res: EmailSendResponse) => void;
   onSelectClarification?: (prompt: string) => void;
@@ -231,6 +235,8 @@ export function TurnResultCard({
   result,
   capabilities,
   timestamp,
+  bubbleTail = false,
+  bubbleRadiusClass,
   initialEmailSent,
   onEmailSent,
   onSelectClarification,
@@ -340,7 +346,7 @@ export function TurnResultCard({
         hoverLiftPx={-1}
         sheenIntensity="subtle"
         data-testid="turn-card-clarification"
-        className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]"
+        className="rounded-[var(--radius-chat-card)] border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]"
       >
         <div className="flex items-center gap-2">
           <HelpCircle
@@ -355,9 +361,11 @@ export function TurnResultCard({
             })}
           </span>
         </div>
-        <p className="mt-2 text-[14px] leading-relaxed text-[var(--ink-primary)] break-words">
-          {result.question}
-        </p>
+        <MarkdownMessage
+          tone="surface"
+          content={result.question}
+          className="mt-2"
+        />
 
         {options.length > 0 && onSelectClarification && (
           <div className="mt-3.5 border-t border-[var(--hairline-subtle)] pt-3">
@@ -848,10 +856,31 @@ export function TurnResultCard({
           pw.meetings_today > 0 ||
           (pw.open_exceptions ?? 0) > 0),
     );
+    const isPureChatBubble =
+      result.mode === "chat" &&
+      !hasPendingWork &&
+      result.suggested_actions.length === 0 &&
+      !result.email_draft;
+
+    if (isPureChatBubble) {
+      return (
+        <div data-testid="turn-card-message" className="space-y-3">
+          <div
+            className={[
+              "relative inline-block max-w-full bg-[var(--bubble-received-bg)] px-4 py-[9px] text-[var(--bubble-received-ink)]",
+              bubbleRadiusClass || "rounded-[var(--radius-chat-card)]",
+            ].join(" ")}
+          >
+            <MarkdownMessage tone="received" content={result.reply} />
+            {bubbleTail && <IMessageBubbleTail side="received" />}
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div data-testid="turn-card-message" className="space-y-3">
-        <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]">
+        <div className="rounded-[var(--radius-chat-card)] border border-[var(--hairline)] bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--hairline-subtle)]">
             <div className="flex items-center gap-1.5">
               <Sparkles
@@ -891,9 +920,11 @@ export function TurnResultCard({
             )}
           </div>
 
-          <p className="mt-2.5 text-[14.5px] leading-[1.6] text-[var(--ink-primary)] whitespace-pre-wrap break-words">
-            {result.reply}
-          </p>
+          <MarkdownMessage
+            tone="surface"
+            content={result.reply}
+            className="mt-2.5"
+          />
 
           {/* Unfinished Work Reminder Strip */}
           {hasPendingWork && pw && (
@@ -1109,7 +1140,7 @@ export function TurnResultCard({
         role="alert"
         data-testid="turn-card-refusal"
         className={[
-          "overflow-hidden rounded-card border bg-[var(--bg-surface)] shadow-[var(--shadow-card)]",
+          "overflow-hidden rounded-[var(--radius-chat-card)] border bg-[var(--bg-surface)] shadow-[var(--shadow-card)]",
           isSevere
             ? "border-[var(--status-crimson-border)]"
             : "border-[var(--status-amber-border)]",

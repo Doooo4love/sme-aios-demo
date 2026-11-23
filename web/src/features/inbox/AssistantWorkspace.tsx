@@ -43,6 +43,8 @@ import { LOCALE_META, useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
 import { BriefProgressChain, Interactive3DCard } from "@/components/kinetic";
+import { ContactProfileDialog } from "@/components/chat/ContactProfileDialog";
+import { ConversationHeader } from "@/components/chat/ConversationHeader";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
@@ -68,7 +70,11 @@ import {
 } from "@/features/inbox/AssistantDrawerPanels";
 import {
   IMessageBubbleTail,
+  computeBubbleGroupPos,
+  formatBurstTimestamp,
   getBubbleRadiusClass,
+  shouldShowBubbleTail,
+  shouldShowBurstTimestamp,
 } from "@/features/inbox/bubble-group";
 import {
   TurnResultCard,
@@ -231,6 +237,7 @@ export function AssistantWorkspace() {
     tp,
     tx,
     formatDateTime,
+    formatTimeOnly,
     localizeAction,
     localizeTool,
     localizeError,
@@ -290,6 +297,7 @@ export function AssistantWorkspace() {
   const [structuredModalOpen, setStructuredModalOpen] = useState(false);
   const [zoomBarOpen, setZoomBarOpen] = useState(false);
   const [zoomNlText, setZoomNlText] = useState("");
+  const [agentProfileDialogOpen, setAgentProfileDialogOpen] = useState(false);
 
   // Paginated Agent History
   const [historyItems, setHistoryItems] = useState<HistoryListItem[]>([]);
@@ -322,6 +330,7 @@ export function AssistantWorkspace() {
     setStructuredModalOpen(false);
     setZoomBarOpen(false);
     setZoomNlText("");
+    setAgentProfileDialogOpen(false);
     setHistoryItems([]);
     setHistoryNext(null);
     setHistoryError(null);
@@ -435,6 +444,7 @@ export function AssistantWorkspace() {
             { target: proposal.plan.target, wh: proposal.warehouse },
           ),
           createdAt: Math.floor(Date.now() / 1000),
+          answeredAt: Math.floor(Date.now() / 1000),
           status: "done",
           result: {
             kind: "proposal",
@@ -516,12 +526,14 @@ export function AssistantWorkspace() {
         try {
           const result = await fetchHistoryEntry(clientId);
           if (startGen !== getAuthGeneration()) return;
+          const nowSec = Math.floor(Date.now() / 1000);
           setAssistantTurns(startGen, (prev) =>
             prev.map((item) =>
               item.id === entryId
                 ? {
                     ...item,
                     status: "done",
+                    answeredAt: nowSec,
                     result,
                     error: undefined,
                     waitingRetryAfter: null,
@@ -602,12 +614,14 @@ export function AssistantWorkspace() {
           tz_offset_minutes: tzOffsetMinutes,
         });
         if (startGen !== getAuthGeneration()) return;
+        const nowSec = Math.floor(Date.now() / 1000);
         setAssistantTurns(startGen, (prev) =>
           prev.map((item) =>
             item.id === entryId
               ? {
                   ...item,
                   status: "done",
+                  answeredAt: nowSec,
                   zoomBooking: { phase: "preview", preview },
                 }
               : item,
@@ -700,12 +714,14 @@ export function AssistantWorkspace() {
           conversationContext,
         });
         if (startGen !== getAuthGeneration()) return;
+        const nowSec = Math.floor(Date.now() / 1000);
         setAssistantTurns(startGen, (prev) =>
           prev.map((item) =>
             item.id === entryId
               ? {
                   ...item,
                   status: "done",
+                  answeredAt: nowSec,
                   result,
                   error: undefined,
                   waitingRetryAfter: null,
@@ -829,9 +845,12 @@ export function AssistantWorkspace() {
     try {
       const data = await fetchWorkbenchBriefForRange(1);
       if (startGen !== getAuthGeneration()) return;
+      const nowSec = Math.floor(Date.now() / 1000);
       setAssistantTurns(startGen, (prev) =>
         prev.map((item) =>
-          item.id === entryId ? { ...item, status: "done", brief: data } : item,
+          item.id === entryId
+            ? { ...item, status: "done", answeredAt: nowSec, brief: data }
+            : item,
         ),
       );
     } catch (err) {
@@ -1088,9 +1107,12 @@ export function AssistantWorkspace() {
     try {
       const result = await callWorkbenchTool(payload, { idempotencyKey });
       if (startGen !== getAuthGeneration()) return;
+      const nowSec = Math.floor(Date.now() / 1000);
       setAssistantTurns(startGen, (prev) =>
         prev.map((item) =>
-          item.id === entryId ? { ...item, status: "done", result } : item,
+          item.id === entryId
+            ? { ...item, status: "done", answeredAt: nowSec, result }
+            : item,
         ),
       );
     } catch (err) {
@@ -1140,14 +1162,58 @@ export function AssistantWorkspace() {
     en: "Book a Zoom meeting with manager tomorrow at 3pm for HK01 order review",
   });
 
+  const streamItems = useMemo(() => {
+    const items: Array<{
+      kind: "user" | "agent";
+      key: string;
+      sender: "user" | "agent";
+      createdAt: number;
+      turn: AssistantTurnEntry;
+    }> = [];
+    for (const turn of turns) {
+      if (turn.sourceKind !== "proactive_alert" && turn.userText) {
+        items.push({
+          kind: "user",
+          key: `${turn.id}:user`,
+          sender: "user",
+          createdAt: turn.createdAt,
+          turn,
+        });
+      }
+      items.push({
+        kind: "agent",
+        key: `${turn.id}:agent`,
+        sender: "agent",
+        createdAt: turn.answeredAt ?? turn.createdAt,
+        turn,
+      });
+    }
+    return items;
+  }, [turns]);
+
+  const lastUserItemIdx = useMemo(() => {
+    for (let i = streamItems.length - 1; i >= 0; i -= 1) {
+      if (streamItems[i]!.kind === "user") return i;
+    }
+    return -1;
+  }, [streamItems]);
+
+  const agentSubtitle = actor?.warehouses.length
+    ? sortWarehouses(actor.warehouses).join(" / ")
+    : tx({
+        "zh-CN": "智能业务助手",
+        "zh-HK": "智能業務助手",
+        en: "Business Agent",
+      });
+
   return (
     <div
       data-testid="assistant-workspace"
       className="flex h-full min-h-0 flex-col bg-[var(--bg-sheet)]"
     >
-      {/* Pure 60px Frosted Top Header: Agent Avatar + Name (left) & ONLY "工作台" / "Workbench" pill (right) */}
-      <header className="aios-topbar-glass sticky top-0 z-20 flex h-[var(--header-h)] shrink-0 items-center justify-between gap-3 border-b border-[var(--hairline)] px-4 sm:px-6">
-        <div className="flex min-w-0 items-center gap-2.5">
+      {/* Centered Frosted macOS Sequoia Messages Header */}
+      <ConversationHeader
+        leftSlot={
           <Link
             href="/inbox"
             aria-label={tx({
@@ -1163,82 +1229,59 @@ export function AssistantWorkspace() {
               {tx({ "zh-CN": "返回", "zh-HK": "返回", en: "Back" })}
             </span>
           </Link>
-
+        }
+        avatarSrc={agentAvatarSrc}
+        avatarName={agentDisplayName}
+        avatarFallbackText="AG"
+        avatarKind="agent"
+        avatarStatus="online"
+        title={agentDisplayName}
+        titleTestId="assistant-header-name"
+        subtitle={agentSubtitle}
+        onOpenProfile={() => setAgentProfileDialogOpen(true)}
+        profileAriaLabel={tx(
+          {
+            "zh-CN": "查看 {name} 详情",
+            "zh-HK": "檢視 {name} 詳情",
+            en: "View {name} profile",
+          },
+          { name: agentDisplayName },
+        )}
+        rightSlot={
           <Link
-            href="/settings/agent"
-            title={tx(
-              {
-                "zh-CN": "配置 {name}",
-                "zh-HK": "設定 {name}",
-                en: "Configure {name}",
-              },
-              { name: agentDisplayName },
-            )}
-            className="group flex min-w-0 items-center gap-2.5 rounded-full py-1 pr-2 hover:bg-[var(--bg-hover)] transition-colors"
+            href="/work"
+            data-testid="agent-open-workbench-btn"
+            className="inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 sm:gap-2 rounded-full bg-[var(--bg-surface)] px-2.5 sm:px-3.5 text-[12px] sm:text-[13px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:-translate-y-[0.5px] active:scale-[0.98] transition-all duration-[150ms]"
           >
-            <Avatar
-              src={agentAvatarSrc}
-              name={agentDisplayName}
-              fallbackText="AG"
-              size="md"
-              kind="agent"
-              status="online"
+            <LayoutGrid
+              className="h-3.5 w-3.5 text-[var(--accent)]"
+              strokeWidth={1.9}
             />
-            <div className="min-w-0">
-              <h2
-                data-testid="assistant-header-name"
-                className="truncate text-[15px] font-semibold tracking-[-0.015em] text-[var(--ink-primary)] group-hover:text-[var(--accent)] transition-colors"
-              >
-                {agentDisplayName}
-              </h2>
-              <p className="truncate text-[11.5px] text-[var(--ink-muted)]">
-                {tx({
-                  "zh-CN": "随时为你查询与起草",
-                  "zh-HK": "隨時為你查詢與起草",
-                  en: "Lookups, drafts & scheduling",
-                })}
-                {actor?.warehouses.length
-                  ? ` · ${sortWarehouses(actor.warehouses).join(" / ")}`
-                  : ""}
-              </p>
-            </div>
-          </Link>
-        </div>
-
-        {/* Top-Right ONLY: Sleek "工作台" / "Workbench" Pill */}
-        <Link
-          href="/work"
-          data-testid="agent-open-workbench-btn"
-          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-[var(--bg-surface)] px-4 text-[13px] font-medium text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:shadow-[var(--shadow-card)] hover:-translate-y-[0.5px] active:scale-[0.98] transition-all duration-[150ms]"
-        >
-          <LayoutGrid
-            className="h-3.5 w-3.5 text-[var(--accent)]"
-            strokeWidth={1.9}
-          />
-          <span>
-            {tx({
-              "zh-CN": "工作台",
-              "zh-HK": "工作台",
-              en: "Workbench",
-            })}
-          </span>
-          {assignedCount > 0 && (
-            <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 font-mono-code text-[10.5px] font-semibold text-[var(--accent-fg)]">
-              {assignedCount > 99 ? "99+" : assignedCount}
+            <span>
+              {tx({
+                "zh-CN": "工作台",
+                "zh-HK": "工作台",
+                en: "Workbench",
+              })}
             </span>
-          )}
-        </Link>
-      </header>
+            {assignedCount > 0 && (
+              <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-solid)] px-1.5 font-mono-code text-[10.5px] font-semibold text-[var(--accent-fg)]">
+                {assignedCount > 99 ? "99+" : assignedCount}
+              </span>
+            )}
+          </Link>
+        }
+      />
 
       {/* Main Breathable Conversation Stream */}
       <div
         data-testid="assistant-feed"
         className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)] px-4 py-6 sm:px-8"
       >
-        <div className="mx-auto max-w-[740px] space-y-5">
+        <div className="mx-auto max-w-[740px]">
           {/* Whisper-Quiet Centered History Pill */}
           {historyItems.length > 0 && (
-            <div className="flex justify-center">
+            <div className="mb-4 flex justify-center">
               <button
                 type="button"
                 data-testid="assistant-history-toggle"
@@ -1286,7 +1329,7 @@ export function AssistantWorkspace() {
                 kind="agent"
                 className="shadow-[var(--shadow-card)]"
               />
-              <h3 className="mt-5 font-[family-name:var(--font-display)] text-[22px] font-semibold tracking-[-0.025em] text-[var(--ink-primary)] text-balance">
+              <h3 className="aios-display mt-5 text-[22px] font-semibold text-[var(--ink-primary)] text-balance">
                 {tx({
                   "zh-CN": "你好，今天想推进哪项业务？",
                   "zh-HK": "你好，今天想推進哪項業務？",
@@ -1339,406 +1382,512 @@ export function AssistantWorkspace() {
             </div>
           )}
 
-          {/* Active Conversation Stream */}
-          {turns.map((turn) => (
-            <div
-              key={turn.id}
-              data-testid={`assistant-turn-${turn.clientId}`}
-              className="space-y-3"
-            >
-              {/* Outgoing User Bubble — omitted for proactive Agent alerts */}
-              {turn.sourceKind !== "proactive_alert" && turn.userText && (
-                <div className="flex justify-end pr-1.5">
+          {/* Active Conversation Stream (Burst-Grouped 5m Window + Centered Timestamp + Bottom-Most Delivery Receipt) */}
+          {streamItems.map((item, idx) => {
+            const { turn } = item;
+            const pos = computeBubbleGroupPos(streamItems, idx, 300);
+            const isGroupStart = pos === "single" || pos === "first";
+            const showTail = shouldShowBubbleTail(pos);
+            const prevCreatedAt =
+              idx > 0 ? streamItems[idx - 1]!.createdAt : null;
+            const showBurstTs = shouldShowBurstTimestamp(
+              prevCreatedAt,
+              item.createdAt,
+            );
+
+            const burstBanner = showBurstTs ? (
+              <div
+                className={[
+                  "mb-3 flex justify-center",
+                  idx === 0 ? "mt-0" : "mt-5",
+                ].join(" ")}
+              >
+                <span className="rounded-full bg-[var(--bg-surface-subtle)]/80 px-2.5 py-0.5 text-[11px] font-medium text-[var(--ink-muted)] tabular-nums">
+                  {formatBurstTimestamp(item.createdAt, locale)}
+                </span>
+              </div>
+            ) : null;
+
+            if (item.kind === "user") {
+              const isBottomMostUser =
+                idx === lastUserItemIdx && turn.status !== "error";
+              let deliveryLabel: string | null = null;
+              if (isBottomMostUser) {
+                if (turn.status === "pending" && turn.waitingRetryAfter == null) {
+                  deliveryLabel = tx({
+                    "zh-CN": "发送中…",
+                    "zh-HK": "傳送中…",
+                    en: "Sending…",
+                  });
+                } else if (turn.status === "done" && turn.answeredAt) {
+                  deliveryLabel = tx(
+                    {
+                      "zh-CN": "{time} 已读",
+                      "zh-HK": "{time} 已讀",
+                      en: "Read {time}",
+                    },
+                    { time: formatTimeOnly(turn.answeredAt) },
+                  );
+                } else {
+                  deliveryLabel = tx({
+                    "zh-CN": "已送达",
+                    "zh-HK": "已送達",
+                    en: "Delivered",
+                  });
+                }
+              }
+
+              return (
+                <React.Fragment key={item.key}>
+                  {burstBanner}
                   <div
                     className={[
-                      "imessage-bubble-sent relative max-w-[82%] bg-[var(--bubble-sent-bg)] px-4 py-2.5 text-[14.5px] leading-[1.45] text-[var(--bubble-sent-ink)] whitespace-pre-wrap break-words",
-                      getBubbleRadiusClass("sent", "single"),
+                      "flex flex-col items-end pr-1.5",
+                      idx === 0 || showBurstTs
+                        ? ""
+                        : isGroupStart
+                          ? "mt-3.5"
+                          : "mt-[3px]",
                     ].join(" ")}
                   >
-                    {turn.userText}
-                    <IMessageBubbleTail side="sent" />
-                  </div>
-                </div>
-              )}
-
-              {/* Incoming Agent Turn Row — translate-only .aios-row-in */}
-              <div className="aios-row-in flex items-start gap-2.5 max-w-[96%]">
-                <Avatar
-                  src={agentAvatarSrc}
-                  name={agentDisplayName}
-                  fallbackText="AG"
-                  size="sm"
-                  kind="agent"
-                  className="mt-0.5 shrink-0"
-                />
-
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  {turn.sourceKind === "proactive_alert" && turn.proactiveAlert && (
                     <div
-                      data-testid={`proactive-alert-${turn.proactiveAlert.id}`}
                       className={[
-                        "rounded-card border bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]",
-                        turn.proactiveAlert.severity === "critical" ||
-                        turn.proactiveAlert.severity === "high"
-                          ? "border-[var(--status-crimson-border)]"
-                          : "border-[var(--hairline)]",
+                        "imessage-bubble-sent relative max-w-[82%] bg-[var(--bubble-sent-bg)] px-4 py-[9px] text-[14.5px] leading-[1.5] text-[var(--bubble-sent-ink)] whitespace-pre-wrap break-words",
+                        getBubbleRadiusClass("sent", pos),
                       ].join(" ")}
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--hairline-subtle)]">
-                        <div className="flex items-center gap-2">
-                          {turn.proactiveAlert.kind === "security_alert" ||
-                          turn.proactiveAlert.severity === "critical" ||
-                          turn.proactiveAlert.severity === "high" ? (
-                            <ShieldAlert
-                              className="h-3.5 w-3.5 text-[var(--status-crimson)]"
-                              strokeWidth={1.9}
-                            />
-                          ) : (
-                            <Bell
-                              className="h-3.5 w-3.5 text-[var(--accent)]"
-                              strokeWidth={1.9}
-                            />
-                          )}
-                          <span
-                            className={[
-                              "inline-flex items-center rounded-xs border px-2 py-0.5 text-[10.5px] font-semibold tracking-[0.02em]",
-                              turn.proactiveAlert.kind === "security_alert" ||
-                              turn.proactiveAlert.severity === "critical" ||
-                              turn.proactiveAlert.severity === "high"
-                                ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
-                                : "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]",
-                            ].join(" ")}
-                          >
-                            {turn.proactiveAlert.kind === "security_alert"
-                              ? tx({
-                                  "zh-CN": "安全实时告警",
-                                  "zh-HK": "安全即時告警",
-                                  en: "Security Alert",
-                                })
-                              : tx({
-                                  "zh-CN": "主动协同提醒",
-                                  "zh-HK": "主動協同提醒",
-                                  en: "Proactive Work Alert",
-                                })}
-                          </span>
-                        </div>
-                        <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                          {formatDateTime(turn.proactiveAlert.created_at)}
-                        </span>
-                      </div>
-
-                      <div className="mt-2.5 text-[14px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
-                        {turn.proactiveAlert.title}
-                      </div>
-                      {turn.proactiveAlert.subtitle && (
-                        <p className="mt-1 text-[13px] leading-relaxed text-[var(--ink-secondary)]">
-                          {turn.proactiveAlert.subtitle}
-                        </p>
-                      )}
-
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
-                        {turn.proactiveAlert.reference ? (
-                          <span className="font-mono-code text-[11px] tabular-nums text-[var(--ink-muted)]">
-                            {turn.proactiveAlert.reference}
-                          </span>
-                        ) : (
-                          <span />
-                        )}
-                        <Link
-                          href={turn.proactiveAlert.href || "/work"}
-                          className="inline-flex h-8 items-center gap-1 rounded-sm bg-[var(--accent-solid)] px-3 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)] transition-colors"
-                        >
-                          <span>
-                            {tx({
-                              "zh-CN": "查看处理",
-                              "zh-HK": "檢視處理",
-                              en: "View & Handle",
-                            })}
-                          </span>
-                          <ArrowUpRight className="h-3.5 w-3.5" />
-                        </Link>
-                      </div>
+                      {turn.userText}
+                      {showTail && <IMessageBubbleTail side="sent" />}
                     </div>
-                  )}
-                  {turn.sourceKind === "zoom_booking" && turn.zoomBooking && (
-                    <ZoomBookingCard
-                      parsing={turn.zoomBooking.phase === "parsing"}
-                      parseError={turn.zoomBooking.errorMessage}
-                      preview={turn.zoomBooking.preview}
-                      confirmed={turn.zoomBooking.confirmed}
-                      onConfirmed={(confirmed) => {
-                        const gen = getAuthGeneration();
-                        setAssistantTurns(gen, (prev) =>
-                          prev.map((item) =>
-                            item.id === turn.id
-                              ? {
-                                  ...item,
-                                  status: "done",
-                                  zoomBooking: {
-                                    ...item.zoomBooking,
-                                    phase: "confirmed",
-                                    confirmed,
-                                  },
-                                }
-                              : item,
-                          ),
-                        );
-                      }}
-                      onDismiss={() => {
-                        const gen = getAuthGeneration();
-                        setAssistantTurns(gen, (prev) =>
-                          prev.filter((item) => item.id !== turn.id),
-                        );
-                      }}
-                    />
-                  )}
 
-                  {turn.sourceKind === "brief_card" && (
-                    <>
-                      {turn.status === "pending" && (
-                        <BriefProgressChain phase="pending" />
-                      )}
-                      {turn.status === "done" && turn.brief && (
-                        <div className="space-y-1.5">
-                          <BriefProgressChain
-                            phase="done"
-                            summaryLabel={tx({
-                              "zh-CN": "已汇总今日工作简报 · 2 步核验",
-                              "zh-HK": "已彙整今日工作簡報 · 2 步核驗",
-                              en: "Today's brief ready · 2 steps verified",
-                            })}
-                            steps={[
-                              {
-                                id: "brief-scope",
-                                label: tx(
-                                  {
-                                    "zh-CN": "已按当前账号权限统计待审单据与会议（{tenant}）",
-                                    "zh-HK": "已按目前帳號權限統計待審單據與會議（{tenant}）",
-                                    en: "Aggregated approvals & meetings within scope ({tenant})",
-                                  },
-                                  {
-                                    tenant:
-                                      actor?.tenant ||
-                                      t("kinetic.currentTenant"),
-                                  },
-                                ),
-                                status: "done",
-                              },
-                              {
-                                id: "brief-ts",
-                                label: tx({
-                                  "zh-CN": "已生成本地时区实时快照",
-                                  "zh-HK": "已產生本地時區即時快照",
-                                  en: "Live local-timezone snapshot captured",
-                                }),
-                                status: "done",
-                                meta: formatDateTime(turn.brief.as_of),
-                              },
-                            ]}
-                          />
-                          <Interactive3DCard
-                            maxTilt={2.5}
-                            hoverLiftPx={-1}
-                            sheenIntensity="subtle"
-                            data-testid="assistant-inline-brief"
-                            className="overflow-hidden rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
-                          >
-                            <div className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline)]">
-                              <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ink-primary)]">
-                                <CalendarDays className="h-4 w-4 text-[var(--accent)]" />
-                                <span>
-                                  {tx({
-                                    "zh-CN": "今日工作简报",
-                                    "zh-HK": "今日工作簡報",
-                                    en: "Today's Brief",
-                                  })}
-                                </span>
-                              </span>
-                              <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                                {formatDateTime(turn.brief.as_of)}
-                              </span>
-                            </div>
-                            <div className="p-4 space-y-3">
-                              <div className="grid grid-cols-2 gap-2.5">
-                                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
-                                  <div className="aios-micro-label">
-                                    {t("assistant.brief.pendingApprovals")}
-                                  </div>
-                                  <div className="aios-kpi mt-1 text-[22px] font-semibold text-[var(--ink-primary)]">
-                                    {turn.brief.pending_approvals}
-                                    {turn.brief.pending_approvals_capped ? "+" : ""}
-                                  </div>
-                                </div>
-                                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
-                                  <div className="aios-micro-label">
-                                    {tx({
-                                      "zh-CN": "今日会议",
-                                      "zh-HK": "今日會議",
-                                      en: "Meetings Today",
-                                    })}
-                                  </div>
-                                  <div className="aios-kpi mt-1 text-[22px] font-semibold text-[var(--ink-primary)]">
-                                    {turn.brief.meetings}
-                                  </div>
-                                </div>
-                              </div>
+                    {deliveryLabel && (
+                      <span
+                        data-testid="assistant-delivery-status"
+                        className="mt-1 mr-1 text-[11px] font-medium text-[var(--ink-muted)] tabular-nums"
+                      >
+                        {deliveryLabel}
+                      </span>
+                    )}
+                  </div>
+                </React.Fragment>
+              );
+            }
 
-                              {Object.keys(turn.brief.submitted_current_states)
-                                .length > 0 && (
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  {Object.entries(
-                                    turn.brief.submitted_current_states,
-                                  ).map(([k, count]) => (
-                                    <span
-                                      key={k}
-                                      className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-tint)] px-2.5 py-1 text-[11.5px]"
-                                    >
-                                      <StatusBadge status={k} compact />
-                                      <span className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
-                                        {count}
-                                      </span>
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-
-                              <div className="flex items-center justify-end gap-2 border-t border-[var(--hairline-subtle)] pt-3">
-                                <Link
-                                  href="/calendar"
-                                  className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]"
-                                >
-                                  <Calendar className="h-3.5 w-3.5 text-[var(--accent)]" />
-                                  <span>
-                                    {tx({
-                                      "zh-CN": "打开日历",
-                                      "zh-HK": "開啟日曆",
-                                      en: "Calendar",
-                                    })}
-                                  </span>
-                                </Link>
-                                <Link
-                                  href="/work"
-                                  className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent-solid)] px-3.5 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)]"
-                                >
-                                  <span>{t("inbox.enterWorkbench")}</span>
-                                  <ArrowUpRight className="h-3.5 w-3.5" />
-                                </Link>
-                              </div>
-                            </div>
-                          </Interactive3DCard>
-                        </div>
-                      )}
-                      {turn.status === "error" && turn.error && (
-                        <AccessNoticeCard error={turn.error} />
-                      )}
-                    </>
-                  )}
-
-                  {(turn.sourceKind === "turn" ||
-                    turn.sourceKind === "tool_call") && (
-                    <>
-                      {turn.status === "pending" && (
-                        <BriefProgressChain
-                          phase="pending"
-                          retryAfter={turn.waitingRetryAfter}
+            return (
+              <React.Fragment key={item.key}>
+                {burstBanner}
+                <div
+                  data-testid={`assistant-turn-${turn.clientId}`}
+                  className={[
+                    "aios-row-in flex items-end gap-2.5 max-w-[96%]",
+                    idx === 0 || showBurstTs
+                      ? ""
+                      : isGroupStart
+                        ? "mt-3.5"
+                        : "mt-[3px]",
+                  ].join(" ")}
+                >
+                  <div className="w-8 shrink-0">
+                    {showTail && (
+                      <button
+                        type="button"
+                        onClick={() => setAgentProfileDialogOpen(true)}
+                        aria-label={tx(
+                          {
+                            "zh-CN": "查看 {name} 详情",
+                            "zh-HK": "檢視 {name} 詳情",
+                            en: "View {name} profile",
+                          },
+                          { name: agentDisplayName },
+                        )}
+                        className="block rounded-full cursor-pointer transition-transform duration-[140ms] hover:scale-[1.05]"
+                      >
+                        <Avatar
+                          src={agentAvatarSrc}
+                          name={agentDisplayName}
+                          fallbackText="AG"
+                          size="sm"
+                          kind="agent"
                         />
-                      )}
+                      </button>
+                    )}
+                  </div>
 
-                      {turn.status === "done" && turn.result && (
-                        <>
-                          {turn.result.kind !== "message" &&
-                            turn.result.kind !== "refusal" && (
-                              <BriefProgressChain
-                                phase="done"
-                                actor={actor}
-                                result={turn.result}
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    {turn.sourceKind === "proactive_alert" && turn.proactiveAlert && (
+                      <div
+                        data-testid={`proactive-alert-${turn.proactiveAlert.id}`}
+                        className={[
+                          "rounded-[var(--radius-chat-card)] border bg-[var(--bg-surface)] px-4 py-3.5 shadow-[var(--shadow-card)]",
+                          turn.proactiveAlert.severity === "critical" ||
+                          turn.proactiveAlert.severity === "high"
+                            ? "border-[var(--status-crimson-border)]"
+                            : "border-[var(--hairline)]",
+                        ].join(" ")}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--hairline-subtle)]">
+                          <div className="flex items-center gap-2">
+                            {turn.proactiveAlert.kind === "security_alert" ||
+                            turn.proactiveAlert.severity === "critical" ||
+                            turn.proactiveAlert.severity === "high" ? (
+                              <ShieldAlert
+                                className="h-3.5 w-3.5 text-[var(--status-crimson)]"
+                                strokeWidth={1.9}
+                              />
+                            ) : (
+                              <Bell
+                                className="h-3.5 w-3.5 text-[var(--accent)]"
+                                strokeWidth={1.9}
                               />
                             )}
-                          <TurnResultCard
-                            result={turn.result}
-                            capabilities={capabilities}
-                            timestamp={turn.createdAt}
-                            initialEmailSent={turn.emailSent}
-                            onEmailSent={(sentRes) => {
-                              const gen = getAuthGeneration();
-                              setAssistantTurns(gen, (prev) =>
-                                prev.map((item) =>
-                                  item.id === turn.id
-                                    ? { ...item, emailSent: sentRes }
-                                    : item,
-                                ),
-                              );
-                            }}
-                            onSelectClarification={(prompt) =>
-                              void executeTurn(prompt)
-                            }
-                            onSelectSuggestedAction={handleSelectSuggestedAction}
-                            onInspectObject={handleInspectObject}
-                          />
-                        </>
-                      )}
-
-                      {turn.status === "error" && turn.error && (
-                        <div
-                          data-testid="assistant-turn-error"
-                          className="space-y-1.5"
-                        >
-                          <BriefProgressChain
-                            phase="error"
-                            actor={actor}
-                            error={turn.error}
-                          />
-                          <AccessNoticeCard
-                            error={turn.error}
-                            authorizedWarehouses={
-                              turn.error.status === 403 && actor
-                                ? sortWarehouses(actor.warehouses)
-                                : undefined
-                            }
-                          />
-                          {turn.sourceKind === "turn" &&
-                            (turn.error.status >= 429 ||
-                              turn.error.status === 409 ||
-                              turn.error.code === "TURN_IN_PROGRESS") && (
-                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11.5px] text-[var(--ink-muted)]">
-                                <span>
-                                  {tx({
-                                    "zh-CN": "重试将复用幂等键 ",
-                                    "zh-HK": "重試將沿用冪等鍵 ",
-                                    en: "Retry reuses idempotency key ",
+                            <span
+                              className={[
+                                "inline-flex items-center rounded-xs border px-2 py-0.5 text-[10.5px] font-semibold tracking-[0.02em]",
+                                turn.proactiveAlert.kind === "security_alert" ||
+                                turn.proactiveAlert.severity === "critical" ||
+                                turn.proactiveAlert.severity === "high"
+                                  ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]"
+                                  : "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]",
+                              ].join(" ")}
+                            >
+                              {turn.proactiveAlert.kind === "security_alert"
+                                ? tx({
+                                    "zh-CN": "安全实时告警",
+                                    "zh-HK": "安全即時告警",
+                                    en: "Security Alert",
+                                  })
+                                : tx({
+                                    "zh-CN": "主动协同提醒",
+                                    "zh-HK": "主動協同提醒",
+                                    en: "Proactive Work Alert",
                                   })}
-                                  <span className="font-mono-code">
-                                    {turn.clientId}
+                            </span>
+                          </div>
+                          <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+                            {formatDateTime(turn.proactiveAlert.created_at)}
+                          </span>
+                        </div>
+
+                        <div className="mt-2.5 text-[14px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                          {turn.proactiveAlert.title}
+                        </div>
+                        {turn.proactiveAlert.subtitle && (
+                          <p className="mt-1 text-[13px] leading-relaxed text-[var(--ink-secondary)]">
+                            {turn.proactiveAlert.subtitle}
+                          </p>
+                        )}
+
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-2.5">
+                          {turn.proactiveAlert.reference ? (
+                            <span className="font-mono-code text-[11px] tabular-nums text-[var(--ink-muted)]">
+                              {turn.proactiveAlert.reference}
+                            </span>
+                          ) : (
+                            <span />
+                          )}
+                          <Link
+                            href={turn.proactiveAlert.href || "/work"}
+                            className="inline-flex h-8 items-center gap-1 rounded-sm bg-[var(--accent-solid)] px-3 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)] transition-colors"
+                          >
+                            <span>
+                              {tx({
+                                "zh-CN": "查看处理",
+                                "zh-HK": "檢視處理",
+                                en: "View & Handle",
+                              })}
+                            </span>
+                            <ArrowUpRight className="h-3.5 w-3.5" />
+                          </Link>
+                        </div>
+                      </div>
+                    )}
+                    {turn.sourceKind === "zoom_booking" && turn.zoomBooking && (
+                      <ZoomBookingCard
+                        parsing={turn.zoomBooking.phase === "parsing"}
+                        parseError={turn.zoomBooking.errorMessage}
+                        preview={turn.zoomBooking.preview}
+                        confirmed={turn.zoomBooking.confirmed}
+                        onConfirmed={(confirmed) => {
+                          const gen = getAuthGeneration();
+                          const nowSec = Math.floor(Date.now() / 1000);
+                          setAssistantTurns(gen, (prev) =>
+                            prev.map((itemEntry) =>
+                              itemEntry.id === turn.id
+                                ? {
+                                    ...itemEntry,
+                                    status: "done",
+                                    answeredAt: nowSec,
+                                    zoomBooking: {
+                                      ...itemEntry.zoomBooking,
+                                      phase: "confirmed",
+                                      confirmed,
+                                    },
+                                  }
+                                : itemEntry,
+                            ),
+                          );
+                        }}
+                        onDismiss={() => {
+                          const gen = getAuthGeneration();
+                          setAssistantTurns(gen, (prev) =>
+                            prev.filter((itemEntry) => itemEntry.id !== turn.id),
+                          );
+                        }}
+                      />
+                    )}
+
+                    {turn.sourceKind === "brief_card" && (
+                      <>
+                        {turn.status === "pending" && (
+                          <BriefProgressChain phase="pending" />
+                        )}
+                        {turn.status === "done" && turn.brief && (
+                          <div className="space-y-1.5">
+                            <BriefProgressChain
+                              phase="done"
+                              summaryLabel={tx({
+                                "zh-CN": "已汇总今日工作简报 · 2 步核验",
+                                "zh-HK": "已彙整今日工作簡報 · 2 步核驗",
+                                en: "Today's brief ready · 2 steps verified",
+                              })}
+                              steps={[
+                                {
+                                  id: "brief-scope",
+                                  label: tx(
+                                    {
+                                      "zh-CN": "已按当前账号权限统计待审单据与会议（{tenant}）",
+                                      "zh-HK": "已按目前帳號權限統計待審單據與會議（{tenant}）",
+                                      en: "Aggregated approvals & meetings within scope ({tenant})",
+                                    },
+                                    {
+                                      tenant:
+                                        actor?.tenant ||
+                                        t("kinetic.currentTenant"),
+                                    },
+                                  ),
+                                  status: "done",
+                                },
+                                {
+                                  id: "brief-ts",
+                                  label: tx({
+                                    "zh-CN": "已生成本地时区实时快照",
+                                    "zh-HK": "已產生本地時區即時快照",
+                                    en: "Live local-timezone snapshot captured",
+                                  }),
+                                  status: "done",
+                                  meta: formatDateTime(turn.brief.as_of),
+                                },
+                              ]}
+                            />
+                            <Interactive3DCard
+                              maxTilt={2.5}
+                              hoverLiftPx={-1}
+                              sheenIntensity="subtle"
+                              data-testid="assistant-inline-brief"
+                              className="overflow-hidden rounded-[var(--radius-chat-card)] border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
+                            >
+                              <div className="flex items-center justify-between bg-[var(--bg-surface-tint)] px-4 py-2.5 border-b border-[var(--hairline)]">
+                                <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ink-primary)]">
+                                  <CalendarDays className="h-4 w-4 text-[var(--accent)]" />
+                                  <span>
+                                    {tx({
+                                      "zh-CN": "今日工作简报",
+                                      "zh-HK": "今日工作簡報",
+                                      en: "Today's Brief",
+                                    })}
                                   </span>
                                 </span>
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  pill
-                                  data-testid="turn-retry-btn"
-                                  onClick={() =>
-                                    void executeTurn(turn.userText, {
-                                      id: turn.id,
-                                      clientId: turn.clientId,
-                                    })
-                                  }
-                                >
-                                  {tx({
-                                    "zh-CN": "重新提交",
-                                    "zh-HK": "重新提交",
-                                    en: "Resubmit",
-                                  })}
-                                </Button>
+                                <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+                                  {formatDateTime(turn.brief.as_of)}
+                                </span>
                               </div>
-                            )}
-                        </div>
-                      )}
-                    </>
-                  )}
+                              <div className="p-4 space-y-3">
+                                <div className="grid grid-cols-2 gap-2.5">
+                                  <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                                    <div className="aios-micro-label">
+                                      {t("assistant.brief.pendingApprovals")}
+                                    </div>
+                                    <div className="aios-kpi mt-1 text-[22px] font-semibold text-[var(--ink-primary)]">
+                                      {turn.brief.pending_approvals}
+                                      {turn.brief.pending_approvals_capped ? "+" : ""}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                                    <div className="aios-micro-label">
+                                      {tx({
+                                        "zh-CN": "今日会议",
+                                        "zh-HK": "今日會議",
+                                        en: "Meetings Today",
+                                      })}
+                                    </div>
+                                    <div className="aios-kpi mt-1 text-[22px] font-semibold text-[var(--ink-primary)]">
+                                      {turn.brief.meetings}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {Object.keys(turn.brief.submitted_current_states)
+                                  .length > 0 && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {Object.entries(
+                                      turn.brief.submitted_current_states,
+                                    ).map(([k, count]) => (
+                                      <span
+                                        key={k}
+                                        className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface-tint)] px-2.5 py-1 text-[11.5px]"
+                                      >
+                                        <StatusBadge status={k} compact />
+                                        <span className="font-mono-code font-semibold text-[var(--ink-primary)] tabular-nums">
+                                          {count}
+                                        </span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+
+                                <div className="flex items-center justify-end gap-2 border-t border-[var(--hairline-subtle)] pt-3">
+                                  <Link
+                                    href="/calendar"
+                                    className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--bg-surface-subtle)] px-3 text-[12px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]"
+                                  >
+                                    <Calendar className="h-3.5 w-3.5 text-[var(--accent)]" />
+                                    <span>
+                                      {tx({
+                                        "zh-CN": "打开日历",
+                                        "zh-HK": "開啟日曆",
+                                        en: "Calendar",
+                                      })}
+                                    </span>
+                                  </Link>
+                                  <Link
+                                    href="/work"
+                                    className="inline-flex h-8 items-center gap-1 rounded-full bg-[var(--accent-solid)] px-3.5 text-[12px] font-medium text-[var(--accent-fg)] hover:bg-[var(--accent-solid-hover)]"
+                                  >
+                                    <span>{t("inbox.enterWorkbench")}</span>
+                                    <ArrowUpRight className="h-3.5 w-3.5" />
+                                  </Link>
+                                </div>
+                              </div>
+                            </Interactive3DCard>
+                          </div>
+                        )}
+                        {turn.status === "error" && turn.error && (
+                          <AccessNoticeCard error={turn.error} />
+                        )}
+                      </>
+                    )}
+
+                    {(turn.sourceKind === "turn" ||
+                      turn.sourceKind === "tool_call") && (
+                      <>
+                        {turn.status === "pending" && (
+                          <BriefProgressChain
+                            phase="pending"
+                            retryAfter={turn.waitingRetryAfter}
+                          />
+                        )}
+
+                        {turn.status === "done" && turn.result && (
+                          <>
+                            {turn.result.kind !== "message" &&
+                              turn.result.kind !== "refusal" && (
+                                <BriefProgressChain
+                                  phase="done"
+                                  actor={actor}
+                                  result={turn.result}
+                                />
+                              )}
+                            <TurnResultCard
+                              result={turn.result}
+                              capabilities={capabilities}
+                              timestamp={turn.createdAt}
+                              bubbleTail={showTail}
+                              bubbleRadiusClass={getBubbleRadiusClass(
+                                "received",
+                                pos,
+                              )}
+                              initialEmailSent={turn.emailSent}
+                              onEmailSent={(sentRes) => {
+                                const gen = getAuthGeneration();
+                                setAssistantTurns(gen, (prev) =>
+                                  prev.map((itemEntry) =>
+                                    itemEntry.id === turn.id
+                                      ? { ...itemEntry, emailSent: sentRes }
+                                      : itemEntry,
+                                  ),
+                                );
+                              }}
+                              onSelectClarification={(prompt) =>
+                                void executeTurn(prompt)
+                              }
+                              onSelectSuggestedAction={handleSelectSuggestedAction}
+                              onInspectObject={handleInspectObject}
+                            />
+                          </>
+                        )}
+
+                        {turn.status === "error" && turn.error && (
+                          <div
+                            data-testid="assistant-turn-error"
+                            className="space-y-1.5"
+                          >
+                            <BriefProgressChain
+                              phase="error"
+                              actor={actor}
+                              error={turn.error}
+                            />
+                            <AccessNoticeCard
+                              error={turn.error}
+                              authorizedWarehouses={
+                                turn.error.status === 403 && actor
+                                  ? sortWarehouses(actor.warehouses)
+                                  : undefined
+                              }
+                            />
+                            {turn.sourceKind === "turn" &&
+                              (turn.error.status >= 429 ||
+                                turn.error.status === 409 ||
+                                turn.error.code === "TURN_IN_PROGRESS") && (
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11.5px] text-[var(--ink-muted)]">
+                                  <span>
+                                    {tx({
+                                      "zh-CN": "重试将复用幂等键 ",
+                                      "zh-HK": "重試將沿用冪等鍵 ",
+                                      en: "Retry reuses idempotency key ",
+                                    })}
+                                    <span className="font-mono-code">
+                                      {turn.clientId}
+                                    </span>
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    pill
+                                    data-testid="turn-retry-btn"
+                                    onClick={() =>
+                                      void executeTurn(turn.userText, {
+                                        id: turn.id,
+                                        clientId: turn.clientId,
+                                      })
+                                    }
+                                  >
+                                    {tx({
+                                      "zh-CN": "重新提交",
+                                      "zh-HK": "重新提交",
+                                      en: "Resubmit",
+                                    })}
+                                  </Button>
+                                </div>
+                              )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </div>
-          ))}
+              </React.Fragment>
+            );
+          })}
 
           <div ref={feedEndRef} />
         </div>
@@ -1757,7 +1906,7 @@ export function AssistantWorkspace() {
                 setZoomNlText("");
                 void executeZoomBookingParse(q);
               }}
-              className="flex flex-wrap items-center gap-2 rounded-card bg-[var(--bg-surface)] p-2.5 pl-3.5 shadow-[var(--shadow-card)] ring-1 ring-[var(--accent-border)]"
+              className="flex flex-wrap items-center gap-2 rounded-[var(--radius-chat-card)] bg-[var(--bg-surface)] p-2.5 pl-3.5 shadow-[var(--shadow-card)] ring-1 ring-[var(--accent-border)]"
             >
               <Video
                 className="h-4 w-4 shrink-0 text-[var(--accent)]"
@@ -1814,8 +1963,8 @@ export function AssistantWorkspace() {
             onDismiss={() => setDismissedSlashQuery(composerText)}
           />
 
-          {/* Muse Floating Capsule Composer (STRICTLY TWO CONTROLS: + 添加上下文 & ↑ Send) */}
-          <div className="rounded-xl border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
+          {/* Muse Floating Capsule Composer (24px Organic Pill Radius — STRICTLY TWO CONTROLS: + 添加上下文 & ↑ Send) */}
+          <div className="rounded-[var(--radius-composer)] border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
             <div className="px-4 pt-3.5 pb-1.5">
               <textarea
                 ref={textareaRef}
@@ -2381,6 +2530,17 @@ export function AssistantWorkspace() {
           )}
         </form>
       </Modal>
+
+      {/* Personal Agent Profile & Sealed Policy Integrity Dialog */}
+      <ContactProfileDialog
+        open={agentProfileDialogOpen}
+        onOpenChange={setAgentProfileDialogOpen}
+        target={{
+          kind: "agent",
+          displayName: agentDisplayName,
+          avatarSrc: agentAvatarSrc,
+        }}
+      />
     </div>
   );
 }

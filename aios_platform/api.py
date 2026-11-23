@@ -28,6 +28,7 @@ from .assurance_gateway import ReviewGateway
 from .assurance_policy import DemoCaseSource
 from .browser import BrowserConfig, BrowserOIDC, BrowserSessions, browser_routes
 from .calendar import calendar_routes
+from .channels import channel_routes
 from .chat import DirectoryLookup, chat_routes
 from .collaboration import InvalidCollaborationRequest, MissingResource
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
@@ -570,6 +571,8 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                                        planner=workbench_planner, planner_limit=planner_limit,
                                        assistant=active_assistant, event_hub=hub))
     app.include_router(governance_routes(governance_service, workflow, authenticate, refresh_actor))
+    app.include_router(channel_routes(workflow, authenticate, refresh_actor, governance=governance_service,
+                                      known_subject=chat_directory, allowed_tenants=frozenset(runtime.profiles)))
     app.include_router(chat_routes(workflow, authenticate, known_subject=chat_directory))
     app.include_router(assurance_routes(authenticate, assurance, concurrency=assurance_concurrency))
     app.include_router(profile_routes(workflow, authenticate, chat_available=chat_directory is not None))

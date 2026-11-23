@@ -536,9 +536,24 @@ export interface ChatMessage {
   created_at: number;
 }
 
+export interface ChatReadReceipt {
+  subject: string;
+  last_read_seq: number;
+  read_at: number;
+}
+
+export interface ChatReadReceiptUpdateResponse extends ChatReadReceipt {
+  room_id: string;
+}
+
+export interface ChatReadReceiptPage {
+  items: ChatReadReceipt[];
+}
+
 export interface ChatMessagePage {
   items: ChatMessage[];
   next: number | null;
+  read_receipts?: ChatReadReceipt[];
 }
 
 export interface CalendarEvent {
@@ -727,6 +742,8 @@ export interface DemoPersonasResponse {
   personas: DemoPersonaMeta[];
 }
 
+export type ContactAvailability = "online" | "busy" | "away" | "offline";
+
 export interface CompanyContact {
   subject: string;
   tenant: string;
@@ -737,6 +754,10 @@ export interface CompanyContact {
   job_title: string;
   role: Role | string;
   warehouses: string[];
+  phone?: string;
+  ext?: string;
+  office?: string;
+  availability?: ContactAvailability | (string & {});
   has_avatar: boolean;
   avatar_url: string | null;
   profile_version: number;
@@ -982,17 +1003,19 @@ export type PromptScopeKey =
 export interface PromptPolicyEntry {
   scope_key: PromptScopeKey;
   title: string;
-  directive: string;
-  guardrail_rules: string[];
-  default_directive: string;
-  default_guardrail_rules: string[];
-  version: number;
-  updated_by: string | null;
-  updated_at: number | null;
-  is_custom: boolean;
+  title_zh: string;
+  title_hk: string;
+  title_en: string;
+  description: string;
+  status: "sealed";
+  managed_by: "theodic_core_team" | (string & {});
+  policy_digest: string;
+  rule_count: number;
 }
 
 export interface PromptPoliciesResponse {
+  sealed: boolean;
+  managed_by: "theodic_core_team" | (string & {});
   items: PromptPolicyEntry[];
 }
 
@@ -1000,13 +1023,8 @@ export interface PromptSimulateResponse {
   role: string;
   active_scopes: PromptScopeKey[];
   denied_scopes: PromptScopeKey[];
-  compiled_char_count: number;
-  sections: Array<{
-    scope_key: PromptScopeKey;
-    title: string;
-    directive: string;
-    guardrail_rules: string[];
-  }>;
+  sealed: boolean;
+  managed_by: "theodic_core_team" | (string & {});
 }
 
 export type SecurityEventStatus = "open" | "acknowledged" | "resolved";
@@ -1084,4 +1102,84 @@ export interface EmailSendResponse {
   accepted: string[];
   rejected: string[];
   warnings: string[];
+}
+
+export type EnterpriseChannelId =
+  | "whatsapp"
+  | "wecom"
+  | "feishu"
+  | "dingtalk"
+  | "slack"
+  | "teams"
+  | "telegram"
+  | "line";
+
+export type ChannelTransportMode =
+  | "connected_mcp"
+  | "connected_api"
+  | "ready_to_bind"
+  | "governed_relay";
+
+export interface EnterpriseChannelItem {
+  channel_id: EnterpriseChannelId | (string & {});
+  name: string;
+  name_zh: string;
+  name_hk: string;
+  region: string;
+  protocol: string;
+  signature_scheme: string;
+  transport_mode: ChannelTransportMode | (string & {});
+  configured: boolean;
+  webhook_path: string;
+  capabilities: string[];
+  setup_env_keys: string[];
+}
+
+export interface ChannelsCatalogResponse {
+  items: EnterpriseChannelItem[];
+}
+
+export interface ChannelBindingItem {
+  channel_id: EnterpriseChannelId | (string & {});
+  subject: string;
+  external_user_id: string;
+  display_handle: string;
+  verified: boolean;
+  updated_at: number;
+}
+
+export interface ChannelBindingsResponse {
+  items: ChannelBindingItem[];
+}
+
+export interface UpsertChannelBindingRequest {
+  external_user_id: string;
+  display_handle: string;
+  subject?: string;
+  verified?: boolean;
+}
+
+export interface ChannelOutboundReceipt {
+  id: string;
+  client_id: string;
+  channel_id: EnterpriseChannelId | (string & {});
+  sender_subject?: string;
+  target_handle: string;
+  body_preview: string;
+  body_sha256?: string;
+  transport_mode: ChannelTransportMode | (string & {});
+  delivery_status: string;
+  external_message_id: string;
+  created_at: number;
+}
+
+export interface ChannelOutboundPage {
+  items: ChannelOutboundReceipt[];
+}
+
+export interface SendChannelOutboundRequest {
+  channel_id: EnterpriseChannelId | (string & {});
+  target_handle: string;
+  text: string;
+  client_id?: string;
 }

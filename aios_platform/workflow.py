@@ -28,7 +28,8 @@ class Workflow:
     def initialize(self):
         with self.db.transaction() as run:
             sources = ("schema.sql", "hardening.sql", "operations.sql", "chat.sql", "assurance.sql",
-                       "assurance_runtime.sql", "module_access.sql", "collaboration.sql", "governance.sql")
+                       "assurance_runtime.sql", "module_access.sql", "collaboration.sql", "governance.sql",
+                       "channels_and_receipts.sql")
             for name in sources:
                 for statement in Path(__file__).with_name(name).read_text().split(";"):
                     if statement.strip():

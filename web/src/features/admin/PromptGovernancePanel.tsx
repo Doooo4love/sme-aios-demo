@@ -2,27 +2,19 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
-  CheckCircle2,
+  Lock,
   Play,
-  Plus,
   RefreshCw,
-  RotateCcw,
-  Save,
   ShieldCheck,
   Sliders,
-  Trash2,
 } from "lucide-react";
 import { isApiError, isStaleAuthError, type ApiError } from "@/lib/api-client";
 import { useLocale, type TrilingualText } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
-import { AccessNoticeCard, Button, StatusBadge } from "@/components/ui";
-import { ActionConfirmDialog } from "@/features/admin/ActionConfirmDialog";
+import { AccessNoticeCard, Button } from "@/components/ui";
 import {
   fetchPromptPolicies,
-  resetPromptPolicy,
   simulatePromptPolicy,
-  updatePromptPolicy,
 } from "@/features/admin/api";
 import type {
   PromptPolicyEntry,
@@ -137,28 +129,19 @@ const ROLE_DEFAULT_MODULES: Record<
 
 export function PromptGovernancePanel() {
   const { actor, authGeneration, handleAccessChanged } = useSession();
-  const { tx, formatDateTime, localizeError, localizeRole } = useLocale();
+  const { locale, tx, localizeError, localizeRole } = useLocale();
 
   const isAdmin = actor?.role === "admin";
 
   const [policies, setPolicies] = useState<PromptPolicyEntry[]>([]);
-  const [selectedScope, setSelectedScope] = useState<PromptScopeKey>("general");
+  const [sealedBanner, setSealedBanner] = useState<{
+    sealed: boolean;
+    managedBy: string;
+  }>({ sealed: true, managedBy: "theodic_core_team" });
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
 
-  // Active editor buffer
-  const [draftDirective, setDraftDirective] = useState("");
-  const [draftRules, setDraftRules] = useState<string[]>([]);
-  const [newRuleInput, setNewRuleInput] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [editorFeedback, setEditorFeedback] = useState<{
-    kind: "success" | "error";
-    text: string;
-  } | null>(null);
-
-  // Simulator state
+  // Role / Scope Simulator state
   const [simRole, setSimRole] = useState<SimRole>("operator");
   const [simModules, setSimModules] = useState<
     Array<Exclude<PromptScopeKey, "general">>
@@ -177,11 +160,15 @@ export function PromptGovernancePanel() {
       try {
         const res = await fetchPromptPolicies(signal);
         if (signal?.aborted) return;
-        const sorted = [...res.items].sort(
+        const sorted = [...(res.items ?? [])].sort(
           (a, b) =>
             SCOPE_ORDER.indexOf(a.scope_key) - SCOPE_ORDER.indexOf(b.scope_key),
         );
         setPolicies(sorted);
+        setSealedBanner({
+          sealed: res.sealed ?? true,
+          managedBy: res.managed_by ?? "theodic_core_team",
+        });
       } catch (err) {
         if (isStaleAuthError(err)) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -201,7 +188,6 @@ export function PromptGovernancePanel() {
   useEffect(() => {
     setPolicies([]);
     setLoadError(null);
-    setEditorFeedback(null);
     setSimResult(null);
     setSimError(null);
     if (!isAdmin) return;
@@ -212,144 +198,6 @@ export function PromptGovernancePanel() {
       controller.abort();
     };
   }, [authGeneration, isAdmin, loadPolicies]);
-
-  const activePolicy = useMemo(
-    () =>
-      policies.find((p) => p.scope_key === selectedScope) ?? policies[0] ?? null,
-    [policies, selectedScope],
-  );
-
-  // Sync editor buffer whenever selected scope or saved policy changes
-  useEffect(() => {
-    if (!activePolicy) return;
-    setDraftDirective(activePolicy.directive);
-    setDraftRules(activePolicy.guardrail_rules);
-    setNewRuleInput("");
-  }, [activePolicy]);
-
-  const isDirty = useMemo(() => {
-    if (!activePolicy) return false;
-    if (draftDirective.trim() !== activePolicy.directive.trim()) return true;
-    if (draftRules.length !== activePolicy.guardrail_rules.length) return true;
-    return draftRules.some(
-      (rule, idx) =>
-        rule.trim() !== (activePolicy.guardrail_rules[idx] ?? "").trim(),
-    );
-  }, [activePolicy, draftDirective, draftRules]);
-
-  const handleAddRule = () => {
-    const trimmed = newRuleInput.trim();
-    if (!trimmed || draftRules.length >= 25) return;
-    setDraftRules((prev) => [...prev, trimmed.slice(0, 400)]);
-    setNewRuleInput("");
-    setEditorFeedback(null);
-  };
-
-  const handleUpdateRule = (index: number, value: string) => {
-    setDraftRules((prev) => prev.map((r, i) => (i === index ? value : r)));
-    setEditorFeedback(null);
-  };
-
-  const handleRemoveRule = (index: number) => {
-    setDraftRules((prev) => prev.filter((_, i) => i !== index));
-    setEditorFeedback(null);
-  };
-
-  const handleSave = async () => {
-    if (!activePolicy || saving) return;
-    const cleanedDirective = draftDirective.trim();
-    const cleanedRules = draftRules.map((r) => r.trim()).filter(Boolean);
-    if (!cleanedDirective) {
-      setEditorFeedback({
-        kind: "error",
-        text: tx({
-          "zh-CN": "指令内容不能为空。",
-          "zh-HK": "指令內容不能為空。",
-          en: "Policy directive cannot be empty.",
-        }),
-      });
-      return;
-    }
-
-    setSaving(true);
-    setEditorFeedback(null);
-    try {
-      const updated = await updatePromptPolicy(activePolicy.scope_key, {
-        directive: cleanedDirective,
-        guardrail_rules: cleanedRules,
-        version: activePolicy.version,
-      });
-      setPolicies((prev) =>
-        prev.map((item) =>
-          item.scope_key === updated.scope_key ? updated : item,
-        ),
-      );
-      setEditorFeedback({
-        kind: "success",
-        text: tx(
-          {
-            "zh-CN": "已保存策略「{scope}」至版本 v{ver}。",
-            "zh-HK": "已儲存策略「{scope}」至版本 v{ver}。",
-            en: "Saved policy “{scope}” at version v{ver}.",
-          },
-          {
-            scope: tx(SCOPE_LABELS[updated.scope_key]),
-            ver: updated.version,
-          },
-        ),
-      });
-    } catch (err) {
-      if (isStaleAuthError(err)) return;
-      if (isApiError(err)) {
-        if (err.status === 409) {
-          void loadPolicies();
-        }
-        setEditorFeedback({
-          kind: "error",
-          text: localizeError(err),
-        });
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleConfirmReset = async () => {
-    if (!activePolicy || resetting) return;
-    setResetting(true);
-    setEditorFeedback(null);
-    try {
-      const reset = await resetPromptPolicy(activePolicy.scope_key);
-      setPolicies((prev) =>
-        prev.map((item) =>
-          item.scope_key === reset.scope_key ? reset : item,
-        ),
-      );
-      setResetConfirmOpen(false);
-      setEditorFeedback({
-        kind: "success",
-        text: tx(
-          {
-            "zh-CN": "已将「{scope}」恢复为平台默认策略。",
-            "zh-HK": "已將「{scope}」恢復為平台預設策略。",
-            en: "Restored “{scope}” to platform defaults.",
-          },
-          { scope: tx(SCOPE_LABELS[reset.scope_key]) },
-        ),
-      });
-    } catch (err) {
-      if (isStaleAuthError(err)) return;
-      setResetConfirmOpen(false);
-      if (isApiError(err)) {
-        setEditorFeedback({
-          kind: "error",
-          text: localizeError(err),
-        });
-      }
-    } finally {
-      setResetting(false);
-    }
-  };
 
   const handleToggleSimModule = (mod: Exclude<PromptScopeKey, "general">) => {
     setSimModules((prev) =>
@@ -381,6 +229,21 @@ export function PromptGovernancePanel() {
     }
   };
 
+  const resolveScopeTitle = useCallback(
+    (entry: PromptPolicyEntry): string => {
+      if (locale === "en" && entry.title_en) return entry.title_en;
+      if (locale === "zh-HK" && entry.title_hk) return entry.title_hk;
+      if (locale === "zh-CN" && entry.title_zh) return entry.title_zh;
+      return tx(SCOPE_LABELS[entry.scope_key]) || entry.title;
+    },
+    [locale, tx],
+  );
+
+  const totalSealedRules = useMemo(
+    () => policies.reduce((acc, item) => acc + (item.rule_count ?? 0), 0),
+    [policies],
+  );
+
   if (!isAdmin) {
     return (
       <AccessNoticeCard
@@ -392,10 +255,10 @@ export function PromptGovernancePanel() {
         })}
         message={tx({
           "zh-CN":
-            "分层提示词治理与权限组合模拟器仅限租户管理员配置与校验。",
+            "密封策略摘要与权限作用域组合模拟器仅限租户管理员查看与核验。",
           "zh-HK":
-            "分層提示詞治理與權限組合模擬器僅限租戶管理員設定與校驗。",
-          en: "Tiered policy directives and the permission-policy simulator are restricted to tenant administrators.",
+            "密封策略摘要與權限作用域組合模擬器僅限租戶管理員檢視與核驗。",
+          en: "Sealed policy posture and the permission-scope simulator are restricted to tenant administrators.",
         })}
       />
     );
@@ -410,330 +273,171 @@ export function PromptGovernancePanel() {
         />
       )}
 
-      {/* Main Split Editor: Left Tier Rail + Right Directive & Guardrail Editor */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[296px_minmax(0,1fr)]">
-        {/* Left Scope Rail */}
-        <aside className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-4 space-y-3">
-          <div className="flex items-center justify-between gap-2 px-1">
-            <div>
-              <h2 className="aios-micro-label">
+      {/* Read-Only Sealed Policy Posture Banner */}
+      <section className="rounded-card border border-[var(--status-emerald-border)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 space-y-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3.5 min-w-0">
+            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-sm border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]">
+              <ShieldCheck className="h-5 w-5" strokeWidth={1.9} />
+            </span>
+
+            <div className="min-w-0 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="aios-display text-[16.5px] font-semibold text-[var(--ink-primary)]">
+                  {tx({
+                    "zh-CN": "核心战略提示词已密封保护",
+                    "zh-HK": "核心策略提示詞已密封保護",
+                    en: "Sealed Policy Posture",
+                  })}
+                </h2>
+                <span
+                  data-testid="policy-sealed-badge"
+                  className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--status-emerald)]"
+                >
+                  <Lock className="h-3 w-3" strokeWidth={2.1} />
+                  <span>Managed by Theodic Core Team</span>
+                </span>
+                {policies.length > 0 && (
+                  <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] tabular-nums">
+                    {tx(
+                      {
+                        "zh-CN": "{scopes} 个作用域 · {rules} 条密封守则",
+                        "zh-HK": "{scopes} 個作用域 · {rules} 條密封守則",
+                        en: "{scopes} scopes · {rules} sealed rules",
+                      },
+                      { scopes: policies.length, rules: totalSealedRules },
+                    )}
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[13px] leading-relaxed text-[var(--ink-secondary)]">
                 {tx({
-                  "zh-CN": "分层治理作用域",
-                  "zh-HK": "分層治理作用域",
-                  en: "Policy Scope Tiers",
-                })}
-              </h2>
-              <p className="mt-0.5 text-[11.5px] font-mono-code tabular-nums text-[var(--ink-muted)]">
-                {tx({
-                  "zh-CN": "1 个通用基线 + 7 个业务模块层",
-                  "zh-HK": "1 個通用基線 + 7 個業務模組層",
-                  en: "1 baseline + 7 module tiers",
+                  "zh-CN":
+                    "为防止策略外泄、越权篡改与提示词注入攻击，助手核心人格基线、通用策略与全部 7 个业务模块指令已由 Theodic 核心团队在服务端代码层硬性密封。租户管理员与运行中的 AI 模型均无法读取、导出、覆写或重置任何原始提示词正文，所有越权修改请求均会自动阻断并记入安全审计。",
+                  "zh-HK":
+                    "為防止策略外洩、越權篡改與提示詞注入攻擊，助手核心人格基線、通用策略與全部 7 個業務模組指令已由 Theodic 核心團隊於伺服器端程式碼層硬性密封。租戶管理員與運行中的 AI 模型均無法讀取、匯出、覆寫或重設任何原始提示詞正文，所有越權修改請求均會自動阻斷並記入安全稽核。",
+                  en: "To prevent policy leakage, tampering, and prompt-injection bypasses, core persona baselines, general directives, and all 7 module scopes are cryptographically sealed in code by the Theodic Core Team. Neither tenant administrators nor AI models can view, export, edit, or reset raw prompt text; mutation attempts fail closed and log security audit incidents.",
                 })}
               </p>
+
+              <p className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+                posture={sealedBanner.sealed ? "sealed_read_only" : "sealed"} ·
+                custodian={sealedBanner.managedBy}
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void loadPolicies()}
-              disabled={loading}
-              aria-label={tx({ "zh-CN": "刷新", "zh-HK": "重新整理", en: "Refresh" })}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-[var(--hairline)] text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
-            >
-              <RefreshCw
-                className={["h-3.5 w-3.5", loading ? "animate-spin" : ""].join(
-                  " ",
-                )}
-              />
-            </button>
           </div>
 
-          <div className="space-y-1">
-            {SCOPE_ORDER.map((scopeKey) => {
-              const policy = policies.find((p) => p.scope_key === scopeKey);
-              const isSelected = selectedScope === scopeKey;
-              return (
-                <button
-                  key={scopeKey}
-                  type="button"
-                  data-testid={`prompt-scope-tab-${scopeKey}`}
-                  onClick={() => {
-                    setSelectedScope(scopeKey);
-                    setEditorFeedback(null);
-                  }}
-                  className={[
-                    "flex w-full items-center justify-between gap-2 rounded-sm border px-3 py-2.5 text-left transition-all duration-[140ms] cursor-pointer",
-                    isSelected
-                      ? "border-[var(--accent-border)] bg-[var(--accent-wash)] text-[var(--accent-ink)]"
-                      : "border-transparent hover:bg-[var(--bg-hover)] text-[var(--ink-primary)]",
-                  ].join(" ")}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium">
-                      {tx(SCOPE_LABELS[scopeKey])}
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--ink-muted)]">
-                      <span className="font-mono-code truncate">{scopeKey}</span>
-                      <span>·</span>
-                      <span className="font-mono-code tabular-nums shrink-0">
-                        v{policy?.version ?? 0}
-                      </span>
-                    </div>
-                  </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={loading}
+            onClick={() => void loadPolicies()}
+            className="shrink-0"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>
+              {tx({
+                "zh-CN": "核验密封摘要",
+                "zh-HK": "核驗密封摘要",
+                en: "Verify Digests",
+              })}
+            </span>
+          </Button>
+        </div>
+      </section>
 
-                  {policy?.is_custom ? (
-                    <span className="shrink-0 rounded-xs border border-[var(--accent-border)] bg-[var(--accent-wash)] px-1.5 py-0.5 font-mono-code text-[10px] font-semibold text-[var(--accent-ink)]">
-                      {tx({ "zh-CN": "自定义", "zh-HK": "自訂", en: "Custom" })}
-                    </span>
-                  ) : (
-                    <span className="shrink-0 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-1.5 py-0.5 font-mono-code text-[10px] font-medium text-[var(--ink-muted)]">
-                      {tx({ "zh-CN": "默认", "zh-HK": "預設", en: "Default" })}
-                    </span>
-                  )}
-                </button>
-              );
+      {/* 8 Read-Only Sealed Scope Cards */}
+      <section className="space-y-2.5">
+        <div className="flex items-center justify-between px-1">
+          <h3 className="aios-micro-label">
+            {tx({
+              "zh-CN": "已密封策略作用域清单（只读元数据摘要）",
+              "zh-HK": "已密封策略作用域清單（唯讀中繼資料摘要）",
+              en: "Sealed Policy Scopes (Read-Only Integrity Metadata)",
+            })}
+          </h3>
+          <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+            {tx({
+              "zh-CN": "1 个通用基线 + 7 个业务模块层",
+              "zh-HK": "1 個通用基線 + 7 個業務模組層",
+              en: "1 baseline + 7 module tiers",
+            })}
+          </span>
+        </div>
+
+        {loading && policies.length === 0 ? (
+          <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-10 text-center text-[13px] text-[var(--ink-muted)] shadow-[var(--shadow-card)]">
+            {tx({
+              "zh-CN": "正在核验服务端密封策略摘要…",
+              "zh-HK": "正在核驗伺服器端密封策略摘要…",
+              en: "Verifying sealed policy digests…",
             })}
           </div>
-        </aside>
-
-        {/* Right Policy Editor */}
-        <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 space-y-4">
-          {!activePolicy ? (
-            <div className="py-12 text-center text-[13px] text-[var(--ink-muted)]">
-              {loading
-                ? tx({
-                    "zh-CN": "正在加载租户策略配置…",
-                    "zh-HK": "正在載入租戶策略設定…",
-                    en: "Loading tenant policy configuration…",
-                  })
-                : tx({
-                    "zh-CN": "暂无可用策略配置。",
-                    "zh-HK": "暫無可用策略設定。",
-                    en: "No policy scopes loaded.",
-                  })}
-            </div>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--hairline)] pb-4">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="aios-display text-[16px] font-semibold text-[var(--ink-primary)]">
-                      {tx(SCOPE_LABELS[activePolicy.scope_key])}
-                    </h3>
-                    <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)]">
-                      {activePolicy.scope_key}
-                    </span>
-                    <StatusBadge
-                      status={activePolicy.is_custom ? "active" : "inherited"}
-                      label={
-                        activePolicy.is_custom
-                          ? tx({
-                              "zh-CN": "租户已定制 v{ver}",
-                              "zh-HK": "租戶已自訂 v{ver}",
-                              en: "Custom v{ver}",
-                            }, { ver: activePolicy.version })
-                          : tx({
-                              "zh-CN": "平台默认 v0",
-                              "zh-HK": "平台預設 v0",
-                              en: "Default v0",
-                            })
-                      }
-                      compact
-                    />
-                  </div>
-                  {activePolicy.updated_by && activePolicy.updated_at && (
-                    <p className="mt-1 font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                      {tx(
-                        {
-                          "zh-CN": "最近由 {user} 于 {time} 更新",
-                          "zh-HK": "最近由 {user} 於 {time} 更新",
-                          en: "Last updated by {user} on {time}",
-                        },
-                        {
-                          user: activePolicy.updated_by,
-                          time: formatDateTime(activePolicy.updated_at),
-                        },
-                      )}
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  {activePolicy.is_custom && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={saving || resetting}
-                      data-testid="prompt-reset-btn"
-                      onClick={() => setResetConfirmOpen(true)}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>
-                        {tx({
-                          "zh-CN": "恢复默认",
-                          "zh-HK": "恢復預設",
-                          en: "Reset to Default",
-                        })}
-                      </span>
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    loading={saving}
-                    disabled={!isDirty || resetting}
-                    data-testid="prompt-save-btn"
-                    onClick={() => void handleSave()}
-                  >
-                    <Save className="h-3.5 w-3.5" />
-                    <span>
-                      {tx({
-                        "zh-CN": "保存策略",
-                        "zh-HK": "儲存策略",
-                        en: "Save Policy",
-                      })}
-                    </span>
-                  </Button>
-                </div>
-              </div>
-
-              {editorFeedback && (
-                <div
-                  role="status"
-                  data-testid="prompt-editor-feedback"
-                  className={[
-                    "flex items-center gap-2 rounded-tile border px-3.5 py-2.5 text-[12.5px]",
-                    editorFeedback.kind === "success"
-                      ? "border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
-                      : "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] text-[var(--status-crimson)]",
-                  ].join(" ")}
-                >
-                  {editorFeedback.kind === "success" ? (
-                    <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  ) : (
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                  )}
-                  <span>{editorFeedback.text}</span>
-                </div>
-              )}
-
-              {/* Directive Textarea */}
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <label
-                    htmlFor="policy-directive-input"
-                    className="aios-micro-label"
-                  >
-                    {tx({
-                      "zh-CN": "核心行为指令 (Directive)",
-                      "zh-HK": "核心行為指令 (Directive)",
-                      en: "Core Behavior Directive",
-                    })}
-                  </label>
-                  <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                    {draftDirective.length}/4000
-                  </span>
-                </div>
-                <textarea
-                  id="policy-directive-input"
-                  rows={5}
-                  maxLength={4000}
-                  value={draftDirective}
-                  onChange={(e) => {
-                    setDraftDirective(e.target.value);
-                    setEditorFeedback(null);
-                  }}
-                  data-testid="prompt-directive-input"
-                  className="mt-1.5 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] p-3 text-[13px] leading-relaxed text-[var(--ink-primary)] focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-colors"
-                />
-              </div>
-
-              {/* Guardrail Rules List */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="aios-micro-label">
-                    {tx({
-                      "zh-CN": "强约束安全守则 (Guardrail Rules)",
-                      "zh-HK": "強約束安全守則 (Guardrail Rules)",
-                      en: "Enforced Guardrail Rules",
-                    })}
-                  </label>
-                  <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                    {draftRules.length}/25
-                  </span>
-                </div>
-
+        ) : policies.length === 0 ? (
+          <div className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-10 text-center text-[13px] text-[var(--ink-muted)] shadow-[var(--shadow-card)]">
+            {tx({
+              "zh-CN": "暂无已加载的策略作用域元数据。",
+              "zh-HK": "暫無已載入的策略作用域中繼資料。",
+              en: "No sealed policy scope metadata available.",
+            })}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-4">
+            {policies.map((policy) => (
+              <article
+                key={policy.scope_key}
+                data-testid={`sealed-policy-card-${policy.scope_key}`}
+                className="flex flex-col justify-between rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]"
+              >
                 <div className="space-y-2">
-                  {draftRules.map((rule, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <span className="w-5 shrink-0 text-right font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
-                        {idx + 1}.
-                      </span>
-                      <input
-                        type="text"
-                        maxLength={400}
-                        value={rule}
-                        onChange={(e) => handleUpdateRule(idx, e.target.value)}
-                        className="h-9 flex-1 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 text-[12.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none transition-colors"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRule(idx)}
-                        aria-label={tx({
-                          "zh-CN": "移除规则",
-                          "zh-HK": "移除規則",
-                          en: "Remove rule",
-                        })}
-                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-[var(--hairline)] text-[var(--ink-muted)] hover:border-[var(--status-crimson-border)] hover:bg-[var(--status-crimson-wash)] hover:text-[var(--status-crimson)] transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {draftRules.length < 25 && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <input
-                      type="text"
-                      maxLength={400}
-                      value={newRuleInput}
-                      onChange={(e) => setNewRuleInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          handleAddRule();
-                        }
-                      }}
-                      placeholder={tx({
-                        "zh-CN": "输入一条新的安全护栏规则后点击添加…",
-                        "zh-HK": "輸入一條新的安全護欄規則後點擊加入…",
-                        en: "Add a new guardrail constraint rule…",
-                      })}
-                      className="h-9 flex-1 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-3 text-[12.5px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none"
-                    />
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={!newRuleInput.trim()}
-                      onClick={handleAddRule}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--ink-secondary)]">
+                      {policy.scope_key}
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-xs border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-1.5 py-0.5 text-[10.5px] font-semibold text-[var(--status-emerald)]">
+                      <Lock className="h-2.5 w-2.5" strokeWidth={2.2} />
                       <span>
                         {tx({
-                          "zh-CN": "添加规则",
-                          "zh-HK": "加入規則",
-                          en: "Add Rule",
+                          "zh-CN": "已密封",
+                          "zh-HK": "已密封",
+                          en: "Sealed",
                         })}
                       </span>
-                    </Button>
+                    </span>
                   </div>
-                )}
-              </div>
-            </>
-          )}
-        </section>
-      </div>
 
-      {/* Interactive Permission-Policy Simulator */}
+                  <h4 className="text-[14px] font-semibold tracking-[-0.01em] text-[var(--ink-primary)]">
+                    {resolveScopeTitle(policy)}
+                  </h4>
+
+                  <p className="text-[12px] leading-relaxed text-[var(--ink-secondary)]">
+                    {policy.description}
+                  </p>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-2 border-t border-[var(--hairline-subtle)] pt-2.5 font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+                  <span title={policy.policy_digest} className="min-w-0 truncate">
+                    sha256:{policy.policy_digest}
+                  </span>
+                  <span className="shrink-0">
+                    {tx(
+                      {
+                        "zh-CN": "{count} 条守则",
+                        "zh-HK": "{count} 條守則",
+                        en: "{count} rules",
+                      },
+                      { count: policy.rule_count },
+                    )}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Interactive Role / Scope Simulator (Active vs Denied Scopes ONLY — Zero Prompt Content) */}
       <section
         data-testid="prompt-policy-simulator"
         className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 sm:p-6 space-y-4"
@@ -746,18 +450,18 @@ export function PromptGovernancePanel() {
             <div>
               <h3 className="aios-display text-[15.5px] font-semibold text-[var(--ink-primary)]">
                 {tx({
-                  "zh-CN": "权限提示词组合模拟器",
-                  "zh-HK": "權限提示詞組合模擬器",
-                  en: "Effective Policy & Permission Simulator",
+                  "zh-CN": "角色 / 作用域生效境界模拟器",
+                  "zh-HK": "角色 / 作用域生效邊界模擬器",
+                  en: "Role & Scope Boundary Simulator",
                 })}
               </h3>
               <p className="mt-0.5 text-[12.5px] text-[var(--ink-secondary)]">
                 {tx({
                   "zh-CN":
-                    "按目标员工角色与已分配业务模块，实时预览服务端编译的生效策略段与被拒绝作用域。",
+                    "按目标员工角色与已分配模块权限，实时核验哪些密封作用域会激活（Active）以及哪些边界被强制隔离（Denied），全程不暴露任何内部指令正文。",
                   "zh-HK":
-                    "按目標員工角色與已指派業務模組，即時預覽伺服器端編譯的生效策略段與被拒絕作用域。",
-                  en: "Preview which policy tiers compile for a given role and module grant combination versus denied boundaries.",
+                    "按目標員工角色與已指派模組權限，即時核驗哪些密封作用域會啟用（Active）以及哪些邊界被強制隔離（Denied），全程不暴露任何內部指令正文。",
+                  en: "Preview which sealed scopes activate versus which boundaries are denied for a role and module grant set, with zero directive disclosure.",
                 })}
               </p>
             </div>
@@ -773,9 +477,9 @@ export function PromptGovernancePanel() {
             <Play className="h-3.5 w-3.5" />
             <span>
               {tx({
-                "zh-CN": "运行组合模拟",
-                "zh-HK": "執行組合模擬",
-                en: "Simulate Policy",
+                "zh-CN": "运行作用域模拟",
+                "zh-HK": "執行作用域模擬",
+                en: "Simulate Scopes",
               })}
             </span>
           </Button>
@@ -822,7 +526,7 @@ export function PromptGovernancePanel() {
               {tx({
                 "zh-CN": "2. 勾选模拟账号已获授权的业务模块",
                 "zh-HK": "2. 勾選模擬帳號已獲授權的業務模組",
-                en: "2. Active Module Permissions for Simulation",
+                en: "2. Active Module Grants for Simulation",
               })}
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -856,117 +560,93 @@ export function PromptGovernancePanel() {
         {simResult && (
           <div
             data-testid="prompt-simulate-output"
-            className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4 space-y-3.5"
+            className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-4 space-y-3"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <ShieldCheck className="h-4 w-4 text-[var(--status-emerald)]" />
-                <span className="aios-micro-label">
-                  {tx({
-                    "zh-CN": "生效作用域",
-                    "zh-HK": "生效作用域",
-                    en: "Active Scopes",
-                  })}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline-subtle)] pb-2.5">
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="font-semibold text-[var(--ink-primary)]">
+                  {localizeRole(simResult.role)}
                 </span>
-                {simResult.active_scopes.map((s) => (
-                  <span
-                    key={s}
-                    className="rounded-xs border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-2 py-0.5 font-mono-code text-[11px] font-medium text-[var(--status-emerald)]"
-                  >
-                    {s}
-                  </span>
-                ))}
+                <span className="font-mono-code text-[11px] text-[var(--ink-muted)]">
+                  ({simResult.role})
+                </span>
               </div>
-              <span className="font-mono-code text-[11.5px] text-[var(--ink-muted)] tabular-nums">
-                {tx(
-                  {
-                    "zh-CN": "编译总字符 {count}",
-                    "zh-HK": "編譯總字元 {count}",
-                    en: "{count} compiled chars",
-                  },
-                  { count: simResult.compiled_char_count },
-                )}
+              <span className="inline-flex items-center gap-1 rounded-xs border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-2 py-0.5 font-mono-code text-[10.5px] font-semibold text-[var(--status-emerald)]">
+                <Lock className="h-3 w-3" />
+                <span>{simResult.managed_by}</span>
               </span>
             </div>
 
-            {simResult.denied_scopes.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
-                <span className="aios-micro-label">
-                  {tx({
-                    "zh-CN": "未授权隔离作用域",
-                    "zh-HK": "未授權隔離作用域",
-                    en: "Denied Boundaries",
-                  })}
-                </span>
-                {simResult.denied_scopes.map((s) => (
-                  <span
-                    key={s}
-                    className="rounded-xs border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--status-crimson)]"
-                  >
-                    {s}
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="rounded-sm border border-[var(--status-emerald-border)] bg-[var(--bg-surface)] p-3.5 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-[var(--status-emerald)]" />
+                  <span className="aios-micro-label">
+                    {tx({
+                      "zh-CN": "生效作用域 (Active Scopes)",
+                      "zh-HK": "生效作用域 (Active Scopes)",
+                      en: "Active Scopes",
+                    })}
                   </span>
-                ))}
-              </div>
-            )}
-
-            <div className="space-y-2.5">
-              {simResult.sections.map((sec) => (
-                <div
-                  key={sec.scope_key}
-                  className="rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface)] p-3.5 space-y-1.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
-                      {tx(SCOPE_LABELS[sec.scope_key]) || sec.title}
-                    </span>
-                    <span className="aios-micro-label font-mono-code">
-                      {sec.scope_key}
-                    </span>
-                  </div>
-                  <p className="text-[12px] leading-relaxed text-[var(--ink-secondary)]">
-                    {sec.directive}
-                  </p>
-                  {sec.guardrail_rules.length > 0 && (
-                    <ul className="mt-1 list-disc pl-4 space-y-0.5 text-[11.5px] text-[var(--ink-muted)]">
-                      {sec.guardrail_rules.map((rule, rIdx) => (
-                        <li key={rIdx}>{rule}</li>
-                      ))}
-                    </ul>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {simResult.active_scopes.length > 0 ? (
+                    simResult.active_scopes.map((s) => (
+                      <span
+                        key={s}
+                        className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] px-2 py-1 text-[11.5px] font-medium text-[var(--status-emerald)]"
+                      >
+                        <span>{tx(SCOPE_LABELS[s]) || s}</span>
+                        <span className="font-mono-code text-[10.5px] opacity-85">
+                          {s}
+                        </span>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[12px] text-[var(--ink-muted)]">—</span>
                   )}
                 </div>
-              ))}
+              </div>
+
+              <div className="rounded-sm border border-[var(--status-crimson-border)] bg-[var(--bg-surface)] p-3.5 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Lock className="h-4 w-4 text-[var(--status-crimson)]" />
+                  <span className="aios-micro-label">
+                    {tx({
+                      "zh-CN": "未授权隔离作用域 (Denied Scopes)",
+                      "zh-HK": "未授權隔離作用域 (Denied Scopes)",
+                      en: "Denied Scopes",
+                    })}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {simResult.denied_scopes.length > 0 ? (
+                    simResult.denied_scopes.map((s) => (
+                      <span
+                        key={s}
+                        className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2 py-1 text-[11.5px] font-medium text-[var(--status-crimson)]"
+                      >
+                        <span>{tx(SCOPE_LABELS[s]) || s}</span>
+                        <span className="font-mono-code text-[10.5px] opacity-85">
+                          {s}
+                        </span>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[12px] text-[var(--ink-muted)]">
+                      {tx({
+                        "zh-CN": "全部作用域已获授权",
+                        "zh-HK": "全部作用域已獲授權",
+                        en: "None — all scopes active",
+                      })}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
       </section>
-
-      <ActionConfirmDialog
-        open={resetConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open && !resetting) setResetConfirmOpen(false);
-        }}
-        destructive
-        loading={resetting}
-        title={tx({
-          "zh-CN": "确认恢复平台默认策略",
-          "zh-HK": "確認恢復平台預設策略",
-          en: "Confirm Policy Reset",
-        })}
-        description={tx({
-          "zh-CN":
-            "此操作将清除当前租户对该作用域的自定义指令与安全守则，并立即回退到平台出厂基线版本。",
-          "zh-HK":
-            "此操作將清除目前租戶對該作用域的自訂指令與安全守則，並立即回退至平台出廠基線版本。",
-          en: "This removes tenant customizations for this scope and restores the platform baseline immediately.",
-        })}
-        confirmLabel={tx({
-          "zh-CN": "确认恢复默认",
-          "zh-HK": "確認恢復預設",
-          en: "Reset Policy",
-        })}
-        cancelLabel={tx({ "zh-CN": "取消", "zh-HK": "取消", en: "Cancel" })}
-        onConfirm={handleConfirmReset}
-      />
     </div>
   );
 }

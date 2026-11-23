@@ -26,3 +26,9 @@ export {
   type ThemeToggleProps,
   type PreferencesBarProps,
 } from "./PreferencesControls";
+export {
+  MarkdownMessage,
+  safeUrlTransform,
+  type MarkdownMessageProps,
+  type MarkdownMessageTone,
+} from "./MarkdownMessage";

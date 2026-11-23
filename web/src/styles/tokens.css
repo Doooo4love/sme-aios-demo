@@ -123,6 +123,13 @@
   --radius-modal: var(--radius-xl);         /* Semantic alias for modals & dialogs (12px) */
   --radius-pill: 9999px;                    /* Pill badges, circular avatars, send button, search bar */
 
+  /* Dedicated Conversation Radii (Authentic iMessage / WhatsApp Geometry) */
+  --radius-bubble: 20px;                    /* Generous outer message bubble R-corner */
+  --radius-bubble-tight: 6px;               /* Tight shared seam corner for stacked bursts */
+  --radius-bubble-tail: 10px;               /* Bottom corner meeting SVG tail with C1 continuity */
+  --radius-composer: 24px;                  /* Organic pill-capsule chat composer shell */
+  --radius-chat-card: 18px;                 /* Conversational agent reply / palette / email cards */
+
   /* === 7. Layered Ambient Shadows (Tight Architectural Framing; Ambient Depth for Overlays) === */
   --shadow-none: none;
   --shadow-subtle:
@@ -624,6 +631,18 @@ html[data-theme="dark"] .aios-3d-sheen {
   user-select: none;
   position: absolute;
   bottom: 0;
+}
+
+/* Organic 18px radius for conversational floating cards inside AssistantWorkspace (keeps /work, /calendar & /admin sharp) */
+[data-testid="assistant-workspace"] [data-testid="slash-command-palette"],
+[data-testid="assistant-workspace"] [data-testid="email-compose-card"],
+[data-testid="assistant-workspace"] [data-testid="email-sent-receipt-card"],
+[data-testid="assistant-workspace"] [data-testid="turn-card-result"],
+[data-testid="assistant-workspace"] [data-testid="turn-card-proposal"],
+[data-testid="assistant-workspace"] [data-testid="turn-card-approval-preview"],
+[data-testid="assistant-workspace"] [data-testid="zoom-booking-preview-card"],
+[data-testid="assistant-workspace"] [data-testid="zoom-booking-confirmed-card"] {
+  border-radius: var(--radius-chat-card);
 }
 
 .aios-thread-pane {

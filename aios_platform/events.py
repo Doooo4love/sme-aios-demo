@@ -27,6 +27,12 @@ class WorkEvent(Strict):
     href: Annotated[str, Field(max_length=256)] = ""
     severity: Literal["info", "medium", "high", "critical"] = "info"
     created_at: float = Field(default_factory=time.time)
+    room_id: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+    seq: Annotated[int, Field(ge=0)] | None = None
+    author: Annotated[str, Field(min_length=1, max_length=150)] | None = None
+    subject: Annotated[str, Field(min_length=1, max_length=150)] | None = None
+    last_read_seq: Annotated[int, Field(ge=0)] | None = None
+    read_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -147,7 +153,7 @@ class EventHub:
         include_admins: bool = False,
     ) -> dict:
         validated = event if isinstance(event, WorkEvent) else WorkEvent.model_validate(event)
-        payload = validated.model_dump(mode="json")
+        payload = validated.model_dump(mode="json", exclude_none=True)
         target_subjects = frozenset(subjects)
         record = _BufferedEvent(subjects=target_subjects, include_admins=include_admins, payload=payload)
 

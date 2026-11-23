@@ -4,8 +4,6 @@ import type {
   ExceptionPage,
   OperationsSummary,
   PromptPoliciesResponse,
-  PromptPolicyEntry,
-  PromptScopeKey,
   PromptSimulateResponse,
   Proposal,
   SecurityEventItem,
@@ -178,38 +176,6 @@ export function fetchPromptPolicies(signal?: AbortSignal) {
   });
 }
 
-export function updatePromptPolicy(
-  scopeKey: PromptScopeKey,
-  body: {
-    directive: string;
-    guardrail_rules: string[];
-    version: number;
-  },
-  signal?: AbortSignal,
-) {
-  return apiFetch<PromptPolicyEntry>(
-    `/v1/operations/prompt-policies/${encodeURIComponent(scopeKey)}`,
-    {
-      method: "PUT",
-      body,
-      signal,
-    },
-  );
-}
-
-export function resetPromptPolicy(
-  scopeKey: PromptScopeKey,
-  signal?: AbortSignal,
-) {
-  return apiFetch<PromptPolicyEntry>(
-    `/v1/operations/prompt-policies/${encodeURIComponent(scopeKey)}/reset`,
-    {
-      method: "POST",
-      signal,
-    },
-  );
-}
-
 export async function simulatePromptPolicy(
   body: {
     role: string;
@@ -239,8 +205,8 @@ export async function simulatePromptPolicy(
     role: res.role ?? body.role,
     active_scopes: res.active_scopes ?? [],
     denied_scopes: res.denied_scopes ?? [],
-    compiled_char_count: res.compiled_char_count ?? 0,
-    sections: res.sections ?? [],
+    sealed: res.sealed ?? true,
+    managed_by: res.managed_by ?? "theodic_core_team",
   };
 }
 

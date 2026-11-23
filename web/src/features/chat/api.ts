@@ -3,6 +3,8 @@ import type {
   ChatMemberPage,
   ChatMessage,
   ChatMessagePage,
+  ChatReadReceiptPage,
+  ChatReadReceiptUpdateResponse,
   Profile,
 } from "@/lib/types";
 
@@ -81,4 +83,26 @@ export function getRoomMemberAvatarUrl(
   authGeneration: number,
 ): string {
   return `/v1/chat/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(subject)}/profile/avatar?v=${profileVersion}&g=${authGeneration}`;
+}
+
+export function markRoomRead(
+  roomId: string,
+  lastReadSeq: number,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ChatReadReceiptUpdateResponse>(
+    `/v1/chat/rooms/${encodeURIComponent(roomId)}/read`,
+    {
+      method: "PUT",
+      body: { last_read_seq: Math.max(0, Math.floor(lastReadSeq)) },
+      signal,
+    },
+  );
+}
+
+export function fetchRoomReceipts(roomId: string, signal?: AbortSignal) {
+  return apiFetch<ChatReadReceiptPage>(
+    `/v1/chat/rooms/${encodeURIComponent(roomId)}/receipts`,
+    { signal },
+  );
 }

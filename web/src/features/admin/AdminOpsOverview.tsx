@@ -18,6 +18,7 @@ import {
   Copy,
   Database,
   Layers,
+  MessageSquareShare,
   PauseCircle,
   Play,
   PlayCircle,
@@ -61,6 +62,7 @@ import {
   updateWriteControl,
   type HealthProbeResult,
 } from "@/features/admin/api";
+import { ChannelsHubPanel } from "@/features/admin/ChannelsHubPanel";
 import { PromptGovernancePanel } from "@/features/admin/PromptGovernancePanel";
 import { SecurityMonitorPanel } from "@/features/admin/SecurityMonitorPanel";
 import type {
@@ -70,7 +72,7 @@ import type {
   ProposalState,
 } from "@/lib/types";
 
-type AdminTabId = "operations" | "prompts" | "security";
+type AdminTabId = "operations" | "prompts" | "channels" | "security";
 
 function AdminQuerySync({
   onSync,
@@ -83,7 +85,10 @@ function AdminQuerySync({
 
   useEffect(() => {
     const parsedTab: AdminTabId | null =
-      rawTab === "operations" || rawTab === "prompts" || rawTab === "security"
+      rawTab === "operations" ||
+      rawTab === "prompts" ||
+      rawTab === "channels" ||
+      rawTab === "security"
         ? rawTab
         : null;
     onSync(parsedTab, rawSuspend);
@@ -830,7 +835,7 @@ export function AdminOpsOverview() {
             "zh-HK": "管理主控台模組切換",
             en: "Admin console sections",
           })}
-          className="inline-flex flex-wrap items-center gap-1 rounded-full bg-[var(--bg-inset)] p-1 ring-1 ring-[var(--hairline)]"
+          className="inline-flex flex-wrap items-center gap-1 rounded-tile md:rounded-full bg-[var(--bg-inset)] p-1 ring-1 ring-[var(--hairline)]"
         >
           <button
             type="button"
@@ -839,7 +844,7 @@ export function AdminOpsOverview() {
             data-testid="admin-tab-operations"
             onClick={() => handleSelectTab("operations")}
             className={[
-              "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
+              "inline-flex h-8 items-center gap-1.5 rounded-sm md:rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
               activeTab === "operations"
                 ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
                 : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
@@ -863,7 +868,7 @@ export function AdminOpsOverview() {
               data-testid="admin-tab-prompts"
               onClick={() => handleSelectTab("prompts")}
               className={[
-                "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
+                "inline-flex h-8 items-center gap-1.5 rounded-sm md:rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
                 activeTab === "prompts"
                   ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
                   : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
@@ -872,9 +877,9 @@ export function AdminOpsOverview() {
               <Sliders className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>
                 {tx({
-                  "zh-CN": "提示词治理",
-                  "zh-HK": "提示詞治理",
-                  en: "Policy Directives",
+                  "zh-CN": "策略密封状态",
+                  "zh-HK": "策略密封狀態",
+                  en: "Sealed Policy",
                 })}
               </span>
             </button>
@@ -883,11 +888,34 @@ export function AdminOpsOverview() {
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === "channels"}
+            data-testid="admin-tab-channels"
+            onClick={() => handleSelectTab("channels")}
+            className={[
+              "inline-flex h-8 items-center gap-1.5 rounded-sm md:rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
+              activeTab === "channels"
+                ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
+                : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
+            ].join(" ")}
+          >
+            <MessageSquareShare className="h-3.5 w-3.5" strokeWidth={1.85} />
+            <span>
+              {tx({
+                "zh-CN": "企业消息通道",
+                "zh-HK": "企業訊息通道",
+                en: "Channels Hub",
+              })}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === "security"}
             data-testid="admin-tab-security"
             onClick={() => handleSelectTab("security")}
             className={[
-              "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
+              "inline-flex h-8 items-center gap-1.5 rounded-sm md:rounded-full px-3.5 text-[12.5px] font-medium transition-all duration-[150ms] cursor-pointer",
               activeTab === "security"
                 ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
                 : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]",
@@ -912,6 +940,8 @@ export function AdminOpsOverview() {
 
       {activeTab === "prompts" ? (
         <PromptGovernancePanel />
+      ) : activeTab === "channels" ? (
+        <ChannelsHubPanel />
       ) : activeTab === "security" ? (
         <SecurityMonitorPanel onSuspendSubject={handleJumpToSuspend} />
       ) : (
@@ -1413,7 +1443,7 @@ export function AdminOpsOverview() {
                 className={[
                   "group block rounded-tile border p-4 transition-all duration-[160ms]",
                   exceptionCount > 0
-                    ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] hover:brightness-[1.03]"
+                    ? "border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] hover:border-[var(--status-crimson)]"
                     : "border-[var(--hairline)] bg-[var(--bg-surface-tint)] hover:bg-[var(--bg-surface-hover)] hover:shadow-[var(--shadow-subtle)]",
                 ].join(" ")}
               >
