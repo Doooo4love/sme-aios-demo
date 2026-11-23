@@ -22,7 +22,14 @@ class APIJourneyTests(TestCase):
                 self.assertEqual(client.get("/").status_code, 200)
                 intake = client.post("/api/intake", json={"sample": "review"})
                 self.assertEqual(intake.status_code, 200)
-                inputs = {"run_id": intake.json()["run_id"], "overrides": {"line.1.quantity": "8"}}
+                evidence = intake.json()
+                conflict = evidence["fields"]["line.1.quantity"]
+                self.assertEqual(conflict["reason_code"], "ROW_AMOUNT_MISMATCH")
+                self.assertEqual(conflict["initial_reading"], "8")
+                self.assertEqual(conflict["unit_price"], "240.00")
+                self.assertEqual(conflict["calculated_amount"], "1920.00")
+                self.assertEqual(conflict["printed_amount"], "480.00")
+                inputs = {"run_id": evidence["run_id"], "overrides": {"line.1.quantity": "8"}}
                 self.assertEqual(client.post("/api/preview", json=inputs).status_code, 422)
                 inputs["overrides"]["line.1.quantity"] = "2"
                 preview = client.post("/api/preview", json=inputs)
@@ -35,13 +42,26 @@ class APIJourneyTests(TestCase):
                 })
                 self.assertEqual(approved.status_code, 202)
                 path = "/api/commands/" + approved.json()["command_id"]
-                self.assertEqual(client.get(path).json()["status"], "QUEUED")
+                queued = client.get(path).json()
+                self.assertEqual(queued["status"], "QUEUED")
+                self.assertIsNone(queued["verified_payload"])
                 client.post("/api/worker/tick", json={})
-                self.assertEqual(client.get(path).json()["status"], "OUTCOME_UNKNOWN")
+                unknown = client.get(path).json()
+                self.assertEqual(unknown["status"], "OUTCOME_UNKNOWN")
+                self.assertIsNone(unknown["verified_payload"])
                 client.post("/api/worker/tick", json={})
                 done = client.get(path).json()
                 self.assertEqual(done["status"], "COMMITTED")
                 self.assertEqual(done["matching_erp_drafts"], 1)
+                self.assertEqual(done["verified_payload"], preview.json()["payload"])
+
+                draft = api.erp.lookup(done["business_key"])
+                for observed in (None, {**draft, "id": "other-draft"}, {**draft, "status": "CANCELLED"},
+                                 {**draft, "payload": {**draft["payload"], "total": "1.00"}}):
+                    with self.subTest(observed=observed), mock.patch.object(api.erp, "lookup", return_value=observed):
+                        changed = client.get(path).json()
+                        self.assertEqual(changed["matching_erp_drafts"], 0)
+                        self.assertIsNone(changed["verified_payload"])
 
     def test_upload_can_be_reopened_and_reconciled(self):
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "harbour-po.png"
