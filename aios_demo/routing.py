@@ -125,6 +125,24 @@ def _visual(parsed: Parsed, key: str, ocr: Observation, reader: VisionReader) ->
     return value, "read"
 
 
+def _quantity_conflict(parsed: Parsed, key: str, reading: str) -> dict:
+    line = key.rsplit(".", 1)[0]
+    price = parsed.fields.get(line + ".unit_price")
+    total = parsed.fields.get(line + ".amount")
+    if not (price and total and valid("unit_price", price.value) and valid("amount", total.value)):
+        return {}
+    extended = amount(reading) * amount(price.value)
+    if extended == amount(total.value):
+        return {}
+    return {
+        "reason_code": "ROW_AMOUNT_MISMATCH",
+        "initial_reading": reading,
+        "unit_price": price.value,
+        "calculated_amount": str(extended),
+        "printed_amount": total.value,
+    }
+
+
 def route(parsed: Parsed, primary: VisionReader, secondary: VisionReader | None) -> dict:
     # A bounded fixture demo. A production router can batch targeted crops by page.
     fields = {}
@@ -137,7 +155,10 @@ def route(parsed: Parsed, primary: VisionReader, secondary: VisionReader | None)
             continue
         a, state = _visual(parsed, key, ocr, primary)
         outcome["vision"].append({"reader": primary.label, "value": a, "state": state})
-        if a == ocr.value and valid(key, ocr.value) and ocr.score is not None and ocr.score >= 80:
+        if a is not None and key.endswith(".quantity"):
+            outcome.update(_quantity_conflict(parsed, key, a))
+        if ("reason_code" not in outcome and a == ocr.value and valid(key, ocr.value)
+                and ocr.score is not None and ocr.score >= 80):
             outcome["confirmed"] = a
             outcome["reason"] = "OCR and vision agree at the source"
             continue

@@ -15,7 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .extract_po import analyze_upload, extraction_result
 from .parsing import MAX_UPLOAD_BYTES, parse_page, read_image
 from .routing import configured_vision, order_payload, readers, route
-from .storage import Conflict, digest_of
+from .storage import Conflict, digest_of, matches_erp_draft
 from .worker import Worker, services
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -181,8 +181,14 @@ def command(command_id: str):
         result = ledger.snapshot(command_id)
     except KeyError as exc:
         raise HTTPException(404, "Command not found") from exc
-    key = result["business_key"]
-    return {**result, "matching_erp_drafts": int(erp.lookup(key) is not None)}
+    record = erp.lookup(result["business_key"])
+    committed = result["status"] == "COMMITTED"
+    matches = matches_erp_draft(record, result) and (not committed or record["id"] == result["erp_id"])
+    return {
+        **result,
+        "matching_erp_drafts": int(matches),
+        "verified_payload": record["payload"] if committed and matches else None,
+    }
 
 
 @app.post("/api/worker/tick")
