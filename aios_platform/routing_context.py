@@ -4,10 +4,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import json
+import math
+from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Callable, Literal
 from uuid import uuid4
+import weakref
 
 from pydantic import Field
 
@@ -225,9 +229,33 @@ class EffortRouter:
         )
 
 
+_ROUTING_TABLES_LOCK = threading.Lock()
+_ROUTING_TABLES_READY: weakref.WeakKeyDictionary[Any, tuple[Any, ...]] = weakref.WeakKeyDictionary()
+
+
+def _sqlite_workflow_sig(workflow) -> tuple[Any, ...]:
+    db = getattr(workflow, "db", None)
+    sqlite_path = getattr(db, "sqlite_path", None)
+    if sqlite_path is not None and str(sqlite_path) != ":memory:":
+        p = Path(sqlite_path)
+        try:
+            st = p.stat()
+            return ("file", str(p.resolve()), int(st.st_dev), int(st.st_ino))
+        except OSError:
+            return ("missing", str(p))
+    return ("mem", id(db) if db is not None else id(workflow))
+
+
 def _ensure_routing_tables_sqlite(workflow, run) -> None:
     if getattr(workflow.db, "dsn", None):
         return
+    sig = _sqlite_workflow_sig(workflow)
+    with _ROUTING_TABLES_LOCK:
+        try:
+            if _ROUTING_TABLES_READY.get(workflow) == sig:
+                return
+        except TypeError:
+            pass
     run(
         """CREATE TABLE IF NOT EXISTS aios_llm_telemetry (
                tenant TEXT NOT NULL, id TEXT NOT NULL, subject TEXT NOT NULL, role TEXT NOT NULL,
@@ -257,6 +285,12 @@ def _ensure_routing_tables_sqlite(workflow, run) -> None:
                PRIMARY KEY (tenant, subject, session_id)
            )"""
     )
+    sig_after = _sqlite_workflow_sig(workflow)
+    with _ROUTING_TABLES_LOCK:
+        try:
+            _ROUTING_TABLES_READY[workflow] = sig_after
+        except TypeError:
+            pass
 
 
 class ActiveDocumentInput(Strict):
@@ -998,14 +1032,29 @@ class RoutingTelemetryStore:
             "created_at": ts,
         }
 
+    @staticmethod
+    def _percentile(sorted_vals: list[float], q: float) -> float:
+        if not sorted_vals:
+            return 0.0
+        if len(sorted_vals) == 1:
+            return round(sorted_vals[0], 2)
+        pos = q * (len(sorted_vals) - 1)
+        lo = int(math.floor(pos))
+        hi = int(math.ceil(pos))
+        if lo == hi:
+            return round(sorted_vals[lo], 2)
+        frac = pos - lo
+        return round(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac, 2)
+
     def summary(self, tenant: str, hours: int = 24) -> dict[str, Any]:
         window_hours = max(1, min(int(hours), 720))
         since = time.time() - window_hours * 3600.0
         with self.workflow.tx(tenant, write=False, bounded=True) as run:
             _ensure_routing_tables_sqlite(self.workflow, run)
             rows = run(
-                """SELECT subject, provider, tier, prompt_tokens, cache_hit_tokens,
-                          reasoning_tokens, completion_tokens, estimated_usd, latency_ms
+                """SELECT subject, provider, model, tier, prompt_tokens, cache_hit_tokens,
+                          reasoning_tokens, completion_tokens, estimated_usd, latency_ms,
+                          success, error_code
                    FROM aios_llm_telemetry
                    WHERE tenant = ? AND created_at >= ?""",
                 (tenant, since),
@@ -1018,6 +1067,10 @@ class RoutingTelemetryStore:
         total_completion = 0
         total_usd = 0.0
         total_latency = 0.0
+        total_cache_savings_usd = 0.0
+        error_calls = 0
+        failover_count = 0
+        latencies: list[float] = []
         by_tier: dict[str, int] = {"T0": 0, "T1": 0, "T2": 0, "T3": 0}
         provider_buckets: dict[str, dict[str, Any]] = {}
         subject_buckets: dict[str, dict[str, Any]] = {}
@@ -1057,11 +1110,26 @@ class RoutingTelemetryStore:
             total_completion += ct
             total_usd += usd
             total_latency += lat
+            latencies.append(lat)
+            if int(rd["success"] if rd.get("success") is not None else 1) == 0:
+                error_calls += 1
+            err_code = str(rd.get("error_code") or "")
+            if err_code == "FAILOVER" or err_code.startswith("FAILOVER:"):
+                failover_count += 1
+            if ch > 0:
+                prof = resolve_model_profile(
+                    str(rd.get("model") or ""),
+                    provider=str(rd.get("provider") or "") or None,
+                )
+                savings_rate = max(0.0, prof.input_per_1m - prof.cached_input_per_1m) / 1_000_000.0
+                total_cache_savings_usd += ch * savings_rate
             tier = str(rd["tier"])
             if tier in by_tier:
                 by_tier[tier] += 1
             _acc(provider_buckets, str(rd["provider"]), rd)
             _acc(subject_buckets, str(rd["subject"]), rd)
+
+        latencies.sort()
 
         def _finalize(buckets: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             out: dict[str, dict[str, Any]] = {}
@@ -1091,6 +1159,11 @@ class RoutingTelemetryStore:
             "total_completion_tokens": total_completion,
             "total_estimated_usd": round(total_usd, 6),
             "avg_latency_ms": round(total_latency / total_calls, 2) if total_calls > 0 else 0.0,
+            "p50_latency_ms": self._percentile(latencies, 0.50),
+            "p95_latency_ms": self._percentile(latencies, 0.95),
+            "error_rate": round(error_calls / total_calls, 4) if total_calls > 0 else 0.0,
+            "failover_count": failover_count,
+            "estimated_cache_savings_usd": round(total_cache_savings_usd, 6),
             "by_tier": by_tier,
             "by_provider": _finalize(provider_buckets),
             "by_subject": _finalize(subject_buckets),
@@ -1103,6 +1176,9 @@ class QuotaCheckResult(Strict):
     limit_kind: Literal["usd", "tokens"] | None = None
     used: float = 0.0
     limit: float | None = None
+    soft_cap_active: bool = False
+    utilization_ratio: float = 0.0
+    recommended_max_tier: RoutingTier | None = None
 
 
 class QuotaManager:
@@ -1209,54 +1285,63 @@ class QuotaManager:
             if not policies:
                 return QuotaCheckResult(allowed=True)
 
-            usage_by_scope: dict[tuple[str, str], tuple[float, int]] = {}
-            for pol in policies:
-                stype, skey = pol["scope_type"], pol["scope_key"]
-                if stype == "tenant":
-                    agg = run(
-                        """SELECT COALESCE(SUM(estimated_usd), 0) AS usd,
-                                  COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS toks
-                           FROM aios_llm_telemetry
-                           WHERE tenant = ? AND created_at >= ?""",
-                        (actor.tenant, day_start),
-                    ).fetchone()
-                elif stype == "role":
-                    agg = run(
-                        """SELECT COALESCE(SUM(estimated_usd), 0) AS usd,
-                                  COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS toks
-                           FROM aios_llm_telemetry
-                           WHERE tenant = ? AND role = ? AND created_at >= ?""",
-                        (actor.tenant, skey, day_start),
-                    ).fetchone()
-                else:
-                    agg = run(
-                        """SELECT COALESCE(SUM(estimated_usd), 0) AS usd,
-                                  COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS toks
-                           FROM aios_llm_telemetry
-                           WHERE tenant = ? AND subject = ? AND created_at >= ?""",
-                        (actor.tenant, skey, day_start),
-                    ).fetchone()
-                usage_by_scope[(stype, skey)] = (float(agg["usd"] or 0.0), int(agg["toks"] or 0))
+            agg = run(
+                """SELECT COALESCE(SUM(estimated_usd), 0) AS tenant_usd,
+                          COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tenant_toks,
+                          COALESCE(SUM(CASE WHEN role = ? THEN estimated_usd ELSE 0 END), 0) AS role_usd,
+                          COALESCE(SUM(CASE WHEN role = ? THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS role_toks,
+                          COALESCE(SUM(CASE WHEN subject = ? THEN estimated_usd ELSE 0 END), 0) AS subject_usd,
+                          COALESCE(SUM(CASE WHEN subject = ? THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS subject_toks
+                   FROM aios_llm_telemetry
+                   WHERE tenant = ? AND created_at >= ?""",
+                (actor.role, actor.role, actor.subject, actor.subject, actor.tenant, day_start),
+            ).fetchone()
 
+        usage_by_scope: dict[str, tuple[float, int]] = {
+            "tenant": (float(agg["tenant_usd"] or 0.0), int(agg["tenant_toks"] or 0)),
+            "role": (float(agg["role_usd"] or 0.0), int(agg["role_toks"] or 0)),
+            "subject": (float(agg["subject_usd"] or 0.0), int(agg["subject_toks"] or 0)),
+        }
+
+        max_ratio = 0.0
         for pol in policies:
-            stype, skey = pol["scope_type"], pol["scope_key"]
-            usd_used, toks_used = usage_by_scope[(stype, skey)]
+            stype, skey = str(pol["scope_type"]), str(pol["scope_key"])
+            usd_used, toks_used = usage_by_scope[stype]
             usd_limit = pol["daily_usd_limit"]
             tok_limit = pol["daily_token_limit"]
-            if usd_limit is not None and usd_used >= float(usd_limit):
-                return QuotaCheckResult(
-                    allowed=False,
-                    exceeded_scope=f"{stype}:{skey}",
-                    limit_kind="usd",
-                    used=round(usd_used, 6),
-                    limit=float(usd_limit),
-                )
-            if tok_limit is not None and toks_used >= int(tok_limit):
-                return QuotaCheckResult(
-                    allowed=False,
-                    exceeded_scope=f"{stype}:{skey}",
-                    limit_kind="tokens",
-                    used=float(toks_used),
-                    limit=float(tok_limit),
-                )
-        return QuotaCheckResult(allowed=True)
+            if usd_limit is not None:
+                lim_usd = float(usd_limit)
+                if usd_used >= lim_usd:
+                    ratio = round(usd_used / lim_usd, 4) if lim_usd > 0 else 1.0
+                    return QuotaCheckResult(
+                        allowed=False,
+                        exceeded_scope=f"{stype}:{skey}",
+                        limit_kind="usd",
+                        used=round(usd_used, 6),
+                        limit=lim_usd,
+                        utilization_ratio=ratio,
+                    )
+                if lim_usd > 0:
+                    max_ratio = max(max_ratio, usd_used / lim_usd)
+            if tok_limit is not None:
+                lim_tok = int(tok_limit)
+                if toks_used >= lim_tok:
+                    ratio = round(toks_used / lim_tok, 4) if lim_tok > 0 else 1.0
+                    return QuotaCheckResult(
+                        allowed=False,
+                        exceeded_scope=f"{stype}:{skey}",
+                        limit_kind="tokens",
+                        used=float(toks_used),
+                        limit=float(lim_tok),
+                        utilization_ratio=ratio,
+                    )
+                if lim_tok > 0:
+                    max_ratio = max(max_ratio, toks_used / lim_tok)
+
+        soft_cap = max_ratio >= 0.80
+        return QuotaCheckResult(
+            allowed=True,
+            soft_cap_active=soft_cap,
+            utilization_ratio=round(max_ratio, 4),
+            recommended_max_tier="T1" if soft_cap else None,
+        )

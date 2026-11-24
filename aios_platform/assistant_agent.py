@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+import importlib
 import json
 import os
 from pathlib import Path
@@ -17,14 +19,22 @@ from pydantic import Field, ValidationError
 from .collaboration import subject_tx
 from .contracts import Actor, Identifier, Strict
 from .llm_provider import (
+    EFFORT_MAX_TOKENS,
+    EFFORT_TIMEOUT_SECONDS,
     ChatResult,
     LLMProvider,
     LLMProviderError,
     MAX_LLM_RESPONSE_BYTES,
     OpenAICompatAdapter,
+    resolve_fallback_llm_configs,
     resolve_model_profile,
 )
 from .providers import approval_sites, https_base, order_read_sites
+from .response_cache import (
+    BoundedResponseCache,
+    compact_tool_observation,
+    normalize_query_for_cache,
+)
 from .routing_context import (
     ZONE1_5_HARD_MAX_TOKENS,
     ActiveDocumentInput,
@@ -57,6 +67,57 @@ _LAST_CHAT_RESULT: ContextVar[ChatResult | None] = ContextVar("_LAST_CHAT_RESULT
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 _REF_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MUTATING_QUERY_RE = re.compile(
+    r"\b(?:reschedule|approve|reject|create|submit|draft|send|compose|email|update|delete|cancel|modify|save|write|forget|remember|tidy)\b|"
+    r"(?:改期|批准|驳回|駁回|拒绝|拒絕|创建|創建|提交|起草|发邮件|發郵件|写邮件|寫郵件|发送|發送|修改|删除|刪除|取消|保存|记住|記住|忘掉|忘记|忘記)",
+    re.IGNORECASE,
+)
+
+
+def _is_l1_cacheable_query(text: str) -> bool:
+    compact = (text or "").strip()
+    if not compact or compact.startswith("/"):
+        return False
+    return _MUTATING_QUERY_RE.search(compact) is None
+
+
+def _emit_llm_metric(
+    *,
+    provider: str,
+    model: str,
+    tier: str,
+    status: str,
+    prompt_tokens: int = 0,
+    cache_hit_tokens: int = 0,
+    completion_tokens: int = 0,
+    estimated_usd: float = 0.0,
+) -> None:
+    try:
+        obs_mod = importlib.import_module("aios_platform.observability")
+        fn = getattr(obs_mod, "record_llm_metric", None)
+        if callable(fn):
+            fn(
+                provider=provider,
+                model=model,
+                tier=tier,
+                status=status,
+                prompt_tokens=prompt_tokens,
+                cache_hit_tokens=cache_hit_tokens,
+                completion_tokens=completion_tokens,
+                estimated_usd=estimated_usd,
+            )
+    except Exception:
+        pass
+
+
+def _emit_cache_metric(*, cache_layer: str, outcome: str) -> None:
+    try:
+        obs_mod = importlib.import_module("aios_platform.observability")
+        fn = getattr(obs_mod, "record_cache_metric", None)
+        if callable(fn):
+            fn(cache_layer=cache_layer, outcome=outcome)
+    except Exception:
+        pass
 
 _DEMO_DIRECTORY_DIRECTORY: dict[str, list[dict[str, Any]]] = {
     "harbour": [
@@ -547,12 +608,47 @@ class AssistantAgent:
             base_url=self.base_url,
             provider=resolved_provider,
         )
+        if self.llm_provider.enabled and not self.llm_provider.fallback_providers:
+            env_fallbacks: list[LLMProvider] = []
+            for cfg in resolve_fallback_llm_configs():
+                if cfg.get("api_key"):
+                    env_fallbacks.append(
+                        LLMProvider(
+                            api_key=cfg["api_key"],
+                            model=cfg["model"] or self.model,
+                            base_url=cfg.get("base_url"),
+                            provider=cfg.get("provider"),
+                        )
+                    )
+            if env_fallbacks:
+                self.llm_provider.with_fallbacks(env_fallbacks)
+        self.response_cache = BoundedResponseCache()
         self.effort_router = EffortRouter()
         self.context_manager = ContextManager(workflow)
         self.telemetry = RoutingTelemetryStore(workflow)
         self.quota_manager = QuotaManager(workflow)
         self.mapreduce = MapReduceDocumentAnalyzer(self.llm_provider)
         self.memory_store = UserMemoryStore(workflow)
+
+    def close(self) -> None:
+        """Close primary and fallback LLM provider HTTP clients cleanly."""
+        close_fn = getattr(self.llm_provider, "close", None)
+        if callable(close_fn):
+            close_fn()
+        for fb in getattr(self.llm_provider, "fallback_providers", ()) or ():
+            fb_close = getattr(fb, "close", None)
+            if callable(fb_close):
+                fb_close()
+
+    def resilience_snapshot(self) -> dict[str, Any]:
+        """Return provider circuit-breaker, L1 cache, and fallback readiness snapshot."""
+        circuits_fn = getattr(self.llm_provider, "circuit_snapshots", None)
+        circuits = circuits_fn() if callable(circuits_fn) else []
+        return {
+            "provider_circuits": circuits,
+            "l1_cache": self.response_cache.stats(),
+            "fallback_configured": bool(getattr(self.llm_provider, "fallback_providers", None)),
+        }
 
     @property
     def llm_enabled(self) -> bool:
@@ -1405,6 +1501,7 @@ class AssistantAgent:
     ) -> AssistantMessage | PolicyRefusal:
         try:
             state, added, clean_fact = self.memory_store.add_fact(actor, fact)
+            self.response_cache.invalidate_subject(actor.tenant, actor.subject)
         except MemoryPolicyError as err:
             if record_telemetry:
                 self._record_telemetry_safe(
@@ -1501,6 +1598,7 @@ class AssistantAgent:
         record_telemetry: bool = True,
     ) -> AssistantMessage:
         result = self.memory_store.forget(actor, query=query)
+        self.response_cache.invalidate_subject(actor.tenant, actor.subject)
         if record_telemetry:
             self._record_telemetry_safe(
                 actor,
@@ -1604,6 +1702,7 @@ class AssistantAgent:
 
         if lowered == "tidy":
             res = self.memory_store.tidy(actor, use_llm=False)
+            self.response_cache.invalidate_subject(actor.tenant, actor.subject)
             return AssistantMessage(
                 kind="message",
                 reply=_localize(
@@ -2505,6 +2604,12 @@ class AssistantAgent:
             try:
                 mr_res = self.mapreduce.analyze(doc_input.content, question=text)
             except (LLMProviderError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as err:
+                _emit_llm_metric(
+                    provider=self.llm_provider.profile.provider,
+                    model=self.llm_provider.profile.model_id,
+                    tier="T3",
+                    status="error",
+                )
                 self._record_telemetry_safe(
                     actor,
                     provider=self.llm_provider.profile.provider,
@@ -2516,6 +2621,20 @@ class AssistantAgent:
                 )
                 return self._offline_fallback(actor, text, locale, snapshot)
 
+            _emit_llm_metric(
+                provider=self.llm_provider.profile.provider,
+                model=self.llm_provider.profile.model_id,
+                tier="T3",
+                status="ok",
+                prompt_tokens=mr_res.usage.prompt_tokens,
+                cache_hit_tokens=mr_res.usage.cache_hit_tokens,
+                completion_tokens=mr_res.usage.completion_tokens,
+                estimated_usd=mr_res.usage.estimated_usd,
+            )
+            _emit_cache_metric(
+                cache_layer="provider_kv",
+                outcome="hit" if mr_res.usage.cache_hit_tokens > 0 else "miss",
+            )
             self._record_telemetry_safe(
                 actor,
                 provider=self.llm_provider.profile.provider,
@@ -2546,9 +2665,76 @@ class AssistantAgent:
         history_turns = [{"role": t.role, "content": t.text} for t in (conversation_context or [])]
         effective_session_id = session_id or (f"doc:{actor.subject}" if doc_input is not None else None)
         try:
-            user_memory_content = self.memory_store.get_content(actor)
+            mem_state = self.memory_store.get(actor)
+            user_memory_content = mem_state.content
+            memory_version = mem_state.version
         except Exception:
-            user_memory_content = ""
+            try:
+                user_memory_content = self.memory_store.get_content(actor)
+            except Exception:
+                user_memory_content = ""
+            memory_version = 0
+
+        active_doc_sha = (
+            sha256(doc_input.content.encode("utf-8")).hexdigest()
+            if doc_input is not None
+            else ""
+        )
+        has_session_history_state = False
+        if session_id and doc_input is None:
+            try:
+                prior_sess = self.context_manager.get_session_state(actor, session_id)
+                if prior_sess and (prior_sess.get("active_doc_id") or prior_sess.get("rolling_summary")):
+                    has_session_history_state = True
+            except Exception:
+                pass
+        l1_eligible = (
+            not task_switched
+            and not conversation_context
+            and not has_session_history_state
+            and _is_l1_cacheable_query(text)
+        )
+        l1_key = ""
+        if l1_eligible:
+            l1_key = self.response_cache.make_key(
+                tenant=actor.tenant,
+                subject=actor.subject,
+                role=actor.role,
+                locale=locale,
+                memory_version=memory_version,
+                active_doc_sha=active_doc_sha,
+                normalized_query_hash=normalize_query_for_cache(text),
+            )
+            t_cache_start = time.monotonic()
+            cached_entry = self.response_cache.get(l1_key)
+            if cached_entry is not None:
+                cache_elapsed_ms = round((time.monotonic() - t_cache_start) * 1000.0, 2)
+                _emit_cache_metric(cache_layer="l1", outcome="hit")
+                self._record_telemetry_safe(
+                    actor,
+                    provider="cache-l1",
+                    model=self.llm_provider.profile.model_id,
+                    tier="T0",
+                    reasoning_effort="none",
+                    estimated_usd=0.0,
+                    latency_ms=cache_elapsed_ms,
+                    success=True,
+                )
+                has_actionable = (
+                    snapshot.pending_approvals > 0
+                    or snapshot.returned_proposals > 0
+                    or snapshot.unread_notices > 0
+                    or (snapshot.open_exceptions or 0) > 0
+                )
+                return AssistantMessage(
+                    kind="message",
+                    reply=str(cached_entry.get("reply") or "")[:4000],
+                    mode="proactive_reminder" if has_actionable else str(cached_entry.get("mode") or "chat"),
+                    pending_work=snapshot,
+                    suggested_actions=self._suggested_actions(actor, snapshot, locale),
+                    email_draft=None,
+                )
+            _emit_cache_metric(cache_layer="l1", outcome="miss")
 
         assembly = self.context_manager.assemble(
             actor,
@@ -2571,17 +2757,35 @@ class AssistantAgent:
             conversation_turns=len(history_turns),
             session_active=bool(effective_session_id or history_turns),
         )
+        soft_cap_active = bool(quota is not None and getattr(quota, "soft_cap_active", False))
+        if soft_cap_active and decision.tier in {"T2", "T3"}:
+            decision = RoutingDecision(
+                tier="T1",
+                effort="none",
+                max_tokens=EFFORT_MAX_TOKENS["none"],
+                timeout_s=EFFORT_TIMEOUT_SECONDS["none"],
+                reason=f"{decision.reason}|soft_budget_downgrade_from_{decision.tier}",
+                escalated_from_tier=decision.escalated_from_tier,
+                keep_warm_same_model=decision.keep_warm_same_model,
+            )
 
         messages = list(assembly.messages)
         sorted_tools = assembly.sorted_tool_schemas
         current_decision = decision
         escalated_from: RoutingTier | None = None
         seen_malformed: set[tuple[str, str]] = set()
+        saw_tool_calls = False
 
         for step in range(MAX_HARNESS_STEPS):
             try:
                 chat_res = self._call_model(actor, messages, sorted_tools, current_decision)
             except (LLMProviderError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as err:
+                _emit_llm_metric(
+                    provider=self.llm_provider.profile.provider,
+                    model=self.llm_provider.profile.model_id,
+                    tier=current_decision.tier,
+                    status="error",
+                )
                 self._record_telemetry_safe(
                     actor,
                     provider=self.llm_provider.profile.provider,
@@ -2594,6 +2798,21 @@ class AssistantAgent:
                 )
                 return self._offline_fallback(actor, text, locale, snapshot)
 
+            failover_from = getattr(chat_res, "failover_from", None)
+            _emit_llm_metric(
+                provider=chat_res.provider,
+                model=chat_res.model,
+                tier=current_decision.tier,
+                status="ok",
+                prompt_tokens=chat_res.usage.prompt_tokens,
+                cache_hit_tokens=chat_res.usage.cache_hit_tokens,
+                completion_tokens=chat_res.usage.completion_tokens,
+                estimated_usd=chat_res.usage.estimated_usd,
+            )
+            _emit_cache_metric(
+                cache_layer="provider_kv",
+                outcome="hit" if chat_res.usage.cache_hit_tokens > 0 else "miss",
+            )
             self._record_telemetry_safe(
                 actor,
                 provider=chat_res.provider,
@@ -2608,9 +2827,11 @@ class AssistantAgent:
                 latency_ms=chat_res.latency_ms,
                 escalated_from_tier=escalated_from,
                 success=True,
+                error_code=f"FAILOVER:{failover_from}"[:64] if failover_from else None,
             )
 
             if chat_res.tool_calls:
+                saw_tool_calls = True
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": chat_res.text or "",
@@ -2636,7 +2857,8 @@ class AssistantAgent:
                 if malformed_tc is not None:
                     sig = (malformed_tc.name, malformed_tc.raw_arguments)
                     if (
-                        current_decision.tier in {"T1", "T2"}
+                        not soft_cap_active
+                        and current_decision.tier in {"T1", "T2"}
                         and escalated_from is None
                         and step + 1 < MAX_HARNESS_STEPS
                         and sig not in seen_malformed
@@ -2699,7 +2921,8 @@ class AssistantAgent:
                             return outcome
                         # Cascade escalate once if business tool args failed schema validation at T1/T2.
                         if (
-                            outcome.mode == "workflow_guidance"
+                            not soft_cap_active
+                            and outcome.mode == "workflow_guidance"
                             and current_decision.tier in {"T1", "T2"}
                             and escalated_from is None
                             and step + 1 < MAX_HARNESS_STEPS
@@ -2738,12 +2961,13 @@ class AssistantAgent:
 
                     messages.append(assistant_msg)
                     obs = outcome.model_dump(mode="json") if hasattr(outcome, "model_dump") else outcome
+                    compacted_obs = compact_tool_observation(obs, max_chars=2400)
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "name": tc.name,
-                            "content": self.context_manager.clamp_tool_output(obs),
+                            "content": self.context_manager.clamp_tool_output(compacted_obs),
                         }
                     )
                     continue
@@ -2770,12 +2994,13 @@ class AssistantAgent:
                     if isinstance(outcome, AssistantMessage) and outcome.mode == "email_draft":
                         return outcome
                     obs = outcome.model_dump(mode="json") if hasattr(outcome, "model_dump") else outcome
+                    compacted_obs = compact_tool_observation(obs, max_chars=2400)
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "name": tc.name,
-                            "content": self.context_manager.clamp_tool_output(obs),
+                            "content": self.context_manager.clamp_tool_output(compacted_obs),
                         }
                     )
                     if step == MAX_HARNESS_STEPS - 1 and getattr(outcome, "kind", None) == "result":
@@ -2799,10 +3024,24 @@ class AssistantAgent:
                 or snapshot.unread_notices > 0
                 or (snapshot.open_exceptions or 0) > 0
             )
+            msg_mode: Literal["chat", "proactive_reminder", "email_draft", "workflow_guidance"] = (
+                "proactive_reminder" if has_actionable else "chat"
+            )
+            final_reply = safe_reply[:4000]
+            if l1_eligible and step == 0 and not saw_tool_calls and "[REDACTED_POLICY]" not in final_reply:
+                self.response_cache.put(
+                    l1_key,
+                    {"reply": final_reply, "mode": msg_mode},
+                    saved_tokens=int(
+                        chat_res.usage.total_tokens
+                        or (chat_res.usage.prompt_tokens + chat_res.usage.completion_tokens)
+                    ),
+                    saved_usd=float(chat_res.usage.estimated_usd or 0.0),
+                )
             return AssistantMessage(
                 kind="message",
-                reply=safe_reply[:4000],
-                mode="proactive_reminder" if has_actionable else "chat",
+                reply=final_reply,
+                mode=msg_mode,
                 pending_work=snapshot,
                 suggested_actions=self._suggested_actions(actor, snapshot, locale),
                 email_draft=None,

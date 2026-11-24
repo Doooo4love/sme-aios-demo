@@ -1246,9 +1246,44 @@ export interface LlmTelemetrySummary {
   total_completion_tokens: number;
   total_estimated_usd: number;
   avg_latency_ms: number;
+  p50_latency_ms?: number;
+  p95_latency_ms?: number;
+  error_rate?: number;
+  failover_count?: number;
+  estimated_cache_savings_usd?: number;
   by_tier: Record<LlmRoutingTier, number>;
   by_provider: Record<string, LlmTelemetryBreakdownValue>;
   by_subject: Record<string, LlmTelemetryBreakdownValue>;
+}
+
+export interface ProviderCircuitSnapshot {
+  provider: string;
+  state: "closed" | "open" | "half_open";
+  failures: number;
+  retry_in_seconds: number;
+}
+
+export interface L1CacheSnapshot {
+  hits: number;
+  misses: number;
+  hit_ratio: number;
+  entries: number;
+  max_entries: number;
+  estimated_usd_saved: number;
+  tokens_saved: number;
+}
+
+export interface SystemHealthSnapshot {
+  status: "ok" | "degraded";
+  db_engine_mode: string;
+  storage_ok: boolean;
+  provider_circuits: ProviderCircuitSnapshot[];
+  l1_cache: L1CacheSnapshot;
+  fallback_configured: boolean;
+  active_sse_subscribers: number;
+  rate_limit_rejections: number;
+  otel_genai_enabled: boolean;
+  uptime_seconds: number;
 }
 
 export type QuotaScopeType = "tenant" | "role" | "subject" | (string & {});

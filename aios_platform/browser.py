@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from aios_demo.storage import canonical
 
 from .contracts import Actor
+from .http_pool import get_http_client
 from .providers import https_base
 
 SESSION_LIFETIME = 900
@@ -42,14 +43,14 @@ class BrowserOIDC:
         form = {"grant_type": "authorization_code", "code": code, "code_verifier": verifier,
                 "client_id": self.client_id, "client_secret": self.client_secret, "redirect_uri": redirect_uri}
         try:
-            with httpx.Client(follow_redirects=False, trust_env=False, timeout=5) as client:
-                with client.stream("POST", url, data=form) as response:
-                    response.raise_for_status()
-                    payload = bytearray()
-                    for chunk in response.iter_bytes(4096):
-                        payload.extend(chunk)
-                        if len(payload) > 65_536:
-                            raise ValueError("OIDC token response too large")
+            client = get_http_client("browser-oidc", timeout=5.0)
+            with client.stream("POST", url, data=form) as response:
+                response.raise_for_status()
+                payload = bytearray()
+                for chunk in response.iter_bytes(4096):
+                    payload.extend(chunk)
+                    if len(payload) > 65_536:
+                        raise ValueError("OIDC token response too large")
             token = json.loads(payload)["access_token"]
             if not isinstance(token, str) or not 1 <= len(token) <= 24_576:
                 raise ValueError("Invalid OIDC token")

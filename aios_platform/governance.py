@@ -22,6 +22,7 @@ from aios_demo.storage import canonical
 from .collaboration import notify, subject_tx
 from .contracts import Actor, Grant, Identifier, Strict
 from .events import EventHub, WorkEvent
+from .http_pool import get_http_client
 from .module_access import Subject
 from .providers import action_sites, approval_sites, https_base, order_read_sites
 from .security_guard import (
@@ -1354,15 +1355,15 @@ class GovernanceService:
 
         def _dispatch() -> None:
             try:
-                with httpx.Client(follow_redirects=False, timeout=2.0, trust_env=False) as client:
-                    for url, bearer, payload in deliveries:
-                        headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                        if bearer:
-                            headers["Authorization"] = f"Bearer {bearer}"
-                        try:
-                            client.post(url, json=payload, headers=headers)
-                        except Exception:
-                            pass
+                client = get_http_client("governance-relay", timeout=2.0)
+                for url, bearer, payload in deliveries:
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    if bearer:
+                        headers["Authorization"] = f"Bearer {bearer}"
+                    try:
+                        client.post(url, json=payload, headers=headers)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 

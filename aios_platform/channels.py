@@ -24,6 +24,7 @@ from pydantic import Field
 
 from .collaboration import subject_tx
 from .contracts import Actor, Identifier, Strict
+from .http_pool import get_http_client
 from .module_access import Subject
 from .providers import https_base
 from .security_guard import check_output_leakage, normalize_user_text, scrub_secrets
@@ -605,10 +606,10 @@ class ChannelService:
                 },
             }
             try:
-                with httpx.Client(follow_redirects=False, timeout=8.0, trust_env=False) as client:
-                    with client.stream("POST", mcp_url, json=rpc_body, headers=headers) as response:
-                        response.raise_for_status()
-                        rpc_data = _read_bounded_json(response)
+                client = get_http_client("channels-mcp", timeout=8.0)
+                with client.stream("POST", mcp_url, json=rpc_body, headers=headers) as response:
+                    response.raise_for_status()
+                    rpc_data = _read_bounded_json(response)
                 ext_id = _extract_mcp_message_id(rpc_data) or f"mcp-{spec.channel_id}-{uuid4().hex[:12]}"
                 return "connected_mcp", "sent_mcp", ext_id
             except (httpx.HTTPError, OSError, ValueError):
@@ -631,10 +632,10 @@ class ChannelService:
                 "sender_subject": actor.subject,
             }
             try:
-                with httpx.Client(follow_redirects=False, timeout=8.0, trust_env=False) as client:
-                    with client.stream("POST", webhook_url, json=payload, headers=headers) as response:
-                        response.raise_for_status()
-                        resp_data = _read_bounded_json(response)
+                client = get_http_client("channels-webhook", timeout=8.0)
+                with client.stream("POST", webhook_url, json=payload, headers=headers) as response:
+                    response.raise_for_status()
+                    resp_data = _read_bounded_json(response)
                 ext_id = None
                 for key in ("external_message_id", "message_id", "id", "ts"):
                     val = resp_data.get(key)

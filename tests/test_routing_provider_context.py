@@ -255,7 +255,10 @@ class RoutingProviderContextTests(unittest.TestCase):
             }
         ]
         ant_payload = ant.build_payload(ant_profile, ant_messages, tools, effort="high", max_tokens=8192, temperature=0.35)
-        self.assertEqual(ant_payload["system"][0]["cache_control"], {"type": "ephemeral"})
+        self.assertNotIn("cache_control", ant_payload["system"][0])
+        long_ant_messages = [{"role": "system", "content": "Immutable policy " * 300}, *ant_messages[1:]]
+        long_ant_payload = ant.build_payload(ant_profile, long_ant_messages, tools, effort="high", max_tokens=8192, temperature=0.35)
+        self.assertEqual(long_ant_payload["system"][0]["cache_control"], {"type": "ephemeral"})
         self.assertEqual(ant_payload["tools"][-1]["cache_control"], {"type": "ephemeral"})
         self.assertEqual(ant_payload["output_config"]["effort"], "high")
         self.assertEqual(ant_payload["thinking"]["type"], "enabled")

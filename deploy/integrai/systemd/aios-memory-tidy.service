@@ -1,0 +1,38 @@
+# ==============================================================================
+# IntegrAI Nightly Memory Consolidation Oneshot Service
+# ==============================================================================
+# Runs `python -m aios_platform.memory_tidy` nightly to merge passive staging
+# cues, deduplicate bullets, and keep per-user MEMORY.md within token budgets.
+# ==============================================================================
+
+[Unit]
+Description=IntegrAI Nightly Memory Consolidation (MEMORY.md)
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aios-demo
+Group=aios-demo
+WorkingDirectory=/opt/aios
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/aios/demo-common.env
+EnvironmentFile=-/etc/aios/demo-api.env
+ExecStart=/opt/aios/.venv/bin/python -m aios_platform.memory_tidy
+ReadWritePaths=/var/lib/aios/state
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+MemoryMax=256M
+TimeoutStartSec=300

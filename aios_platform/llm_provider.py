@@ -1,7 +1,11 @@
 """Pure httpx + pydantic multi-provider LLM client with pooled transport, prompt caching, and circuit breaker."""
 from __future__ import annotations
 
+from hashlib import sha256
+import importlib
 import json
+import os
+from pathlib import Path
 import random
 import threading
 import time
@@ -14,6 +18,7 @@ from .contracts import Strict
 from .providers import https_base
 
 MAX_LLM_RESPONSE_BYTES = 524_288
+ANTHROPIC_PROMPT_CACHE_MIN_CHARS = 3600
 EffortLevel = Literal["none", "low", "medium", "high"]
 AdapterKind = Literal["openai_compat", "anthropic", "gemini"]
 
@@ -78,6 +83,7 @@ class ChatResult(Strict):
     usage: UsageMetrics = Field(default_factory=UsageMetrics)
     finish_reason: str | None = None
     latency_ms: float = 0.0
+    failover_from: str | None = None
 
 
 class ModelProfile(Strict):
@@ -306,6 +312,16 @@ def resolve_model_profile(
     )
 
 
+def _emit_circuit_breaker_metric(provider: str, state: str) -> None:
+    try:
+        obs_mod = importlib.import_module("aios_platform.observability")
+        fn = getattr(obs_mod, "set_circuit_breaker_metric", None)
+        if callable(fn):
+            fn(provider=provider, state=state)
+    except Exception:
+        pass
+
+
 class ProviderCircuitBreaker:
     """Thread-safe consecutive-failure circuit breaker per provider/endpoint key."""
 
@@ -317,6 +333,7 @@ class ProviderCircuitBreaker:
 
     def state(self, key: str) -> Literal["closed", "open", "half_open"]:
         now = time.monotonic()
+        transition: str | None = None
         with self._lock:
             entry = self._states.get(key)
             if entry is None:
@@ -325,12 +342,20 @@ class ProviderCircuitBreaker:
             if entry["state"] == "open":
                 if now >= opened_until:
                     entry["state"] = "half_open"
-                    return "half_open"
-                return "open"
-            return entry["state"]
+                    transition = "half_open"
+                    result: Literal["closed", "open", "half_open"] = "half_open"
+                else:
+                    result = "open"
+            else:
+                result = entry["state"]
+        if transition is not None:
+            _emit_circuit_breaker_metric(key, transition)
+        return result
 
     def allow_request(self, key: str) -> bool:
         now = time.monotonic()
+        transition: str | None = None
+        allowed = True
         with self._lock:
             entry = self._states.get(key)
             if entry is None:
@@ -339,36 +364,85 @@ class ProviderCircuitBreaker:
                 if now >= entry["opened_until"]:
                     entry["state"] = "half_open"
                     entry["half_open_inflight"] = True
-                    return True
-                return False
-            if entry["state"] == "half_open":
+                    transition = "half_open"
+                    allowed = True
+                else:
+                    allowed = False
+            elif entry["state"] == "half_open":
                 if entry.get("half_open_inflight"):
-                    return False
-                entry["half_open_inflight"] = True
-                return True
-            return True
+                    allowed = False
+                else:
+                    entry["half_open_inflight"] = True
+                    allowed = True
+            else:
+                allowed = True
+        if transition is not None:
+            _emit_circuit_breaker_metric(key, transition)
+        return allowed
 
     def record_success(self, key: str) -> None:
+        changed = False
         with self._lock:
+            prev = self._states.get(key)
+            if prev is None or prev.get("state") != "closed":
+                changed = True
             self._states[key] = {"state": "closed", "failures": 0, "opened_until": 0.0, "half_open_inflight": False}
+        if changed:
+            _emit_circuit_breaker_metric(key, "closed")
 
     def record_failure(self, key: str) -> None:
         now = time.monotonic()
+        transition: str | None = None
         with self._lock:
             entry = self._states.setdefault(
                 key,
                 {"state": "closed", "failures": 0, "opened_until": 0.0, "half_open_inflight": False},
             )
+            prev_state = entry["state"]
             entry["half_open_inflight"] = False
-            if entry["state"] == "half_open":
+            if prev_state == "half_open":
                 entry["state"] = "open"
                 entry["opened_until"] = now + self.recovery_timeout_s
                 entry["failures"] = self.failure_threshold
-                return
-            entry["failures"] += 1
-            if entry["failures"] >= self.failure_threshold:
-                entry["state"] = "open"
-                entry["opened_until"] = now + self.recovery_timeout_s
+                transition = "open"
+            else:
+                entry["failures"] += 1
+                if entry["failures"] >= self.failure_threshold:
+                    entry["state"] = "open"
+                    entry["opened_until"] = now + self.recovery_timeout_s
+                    if prev_state != "open":
+                        transition = "open"
+        if transition is not None:
+            _emit_circuit_breaker_metric(key, transition)
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        transitions: list[tuple[str, str]] = []
+        items: list[dict[str, Any]] = []
+        with self._lock:
+            for key in sorted(self._states.keys()):
+                entry = self._states[key]
+                cur_state = entry["state"]
+                retry_in = 0.0
+                if cur_state == "open":
+                    opened_until = float(entry.get("opened_until") or 0.0)
+                    if now >= opened_until:
+                        entry["state"] = "half_open"
+                        cur_state = "half_open"
+                        transitions.append((key, "half_open"))
+                    else:
+                        retry_in = round(max(0.0, opened_until - now), 2)
+                items.append(
+                    {
+                        "provider": key,
+                        "state": cur_state,
+                        "failures": int(entry.get("failures") or 0),
+                        "retry_in_seconds": retry_in,
+                    }
+                )
+        for key, new_state in transitions:
+            _emit_circuit_breaker_metric(key, new_state)
+        return items
 
 
 def _stream_json_response(
@@ -536,6 +610,10 @@ class OpenAICompatAdapter(BaseAdapter):
         }
         if user_tag:
             payload["user"] = user_tag
+        if profile.provider == "openai" and profile.supports_prompt_cache:
+            sys_text, _ = _extract_system_and_turns(messages)
+            if sys_text:
+                payload["prompt_cache_key"] = f"aios:{sha256(sys_text.encode('utf-8')).hexdigest()[:24]}"
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -752,13 +830,13 @@ class AnthropicAdapter(BaseAdapter):
             "messages": anthropic_messages,
         }
         if system_text:
-            payload["system"] = [
-                {
-                    "type": "text",
-                    "text": system_text,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
+            sys_block: dict[str, Any] = {
+                "type": "text",
+                "text": system_text,
+            }
+            if len(system_text) >= ANTHROPIC_PROMPT_CACHE_MIN_CHARS:
+                sys_block["cache_control"] = {"type": "ephemeral"}
+            payload["system"] = [sys_block]
         if tools:
             ant_tools: list[dict[str, Any]] = []
             for item in tools:
@@ -1074,8 +1152,52 @@ _ADAPTERS: dict[AdapterKind, BaseAdapter] = {
 }
 
 
+def resolve_fallback_llm_configs() -> list[dict[str, str | None]]:
+    """Resolve optional fallback LLM provider configuration from env/secret file without logging secrets."""
+    api_key: str | None = None
+    key_file = (os.getenv("AIOS_LLM_FALLBACK_API_KEY_FILE") or "").strip()
+    if key_file:
+        path = Path(key_file)
+        if path.is_file():
+            val = path.read_text(encoding="utf-8").strip()
+            if val:
+                api_key = val
+    if api_key is None:
+        raw_key = (os.getenv("AIOS_LLM_FALLBACK_API_KEY") or "").strip()
+        if raw_key:
+            api_key = raw_key
+    if not api_key:
+        return []
+
+    raw_provider = (os.getenv("AIOS_LLM_FALLBACK_PROVIDER") or "").strip() or None
+    raw_base_url = (os.getenv("AIOS_LLM_FALLBACK_BASE_URL") or "").strip()
+    base_url = https_base(raw_base_url) if raw_base_url else None
+    raw_models = (os.getenv("AIOS_LLM_FALLBACK_MODEL") or "").strip()
+
+    default_by_provider = {
+        "openai": "gpt-5.4-mini",
+        "anthropic": "claude-sonnet-4-6",
+        "gemini": "gemini-2.5-pro",
+        "qwen": "qwen-plus",
+        "deepseek": "deepseek-chat",
+    }
+    models = [m.strip() for m in raw_models.split(",") if m.strip()] if raw_models else []
+    if not models:
+        models = [default_by_provider.get(raw_provider or "", "deepseek-chat")]
+
+    return [
+        {
+            "api_key": api_key,
+            "model": model,
+            "provider": raw_provider,
+            "base_url": base_url,
+        }
+        for model in models
+    ]
+
+
 class LLMProvider:
-    """Unified pure-httpx/pydantic multi-provider gateway with pooled client, retries, and circuit breaker."""
+    """Unified pure-httpx/pydantic multi-provider gateway with pooled client, retries, circuit breaker, and failover."""
 
     def __init__(
         self,
@@ -1085,6 +1207,7 @@ class LLMProvider:
         base_url: str | None = None,
         provider: str | None = None,
         circuit_breaker: ProviderCircuitBreaker | None = None,
+        fallback_providers: list[LLMProvider] | None = None,
         max_retries: int = 2,
         retry_backoff_base: float = 0.15,
         max_response_bytes: int = MAX_LLM_RESPONSE_BYTES,
@@ -1094,6 +1217,9 @@ class LLMProvider:
         self.base_url = https_base(base_url) if base_url else self.profile.default_base_url
         self.adapter = _ADAPTERS[self.profile.adapter_kind]
         self.circuit_breaker = circuit_breaker or ProviderCircuitBreaker()
+        self.fallback_providers: list[LLMProvider] = [
+            fb for fb in (fallback_providers or []) if fb is not None and fb is not self
+        ]
         self.max_retries = max(0, max_retries)
         self.retry_backoff_base = max(0.0, retry_backoff_base)
         self.max_response_bytes = max_response_bytes
@@ -1103,6 +1229,33 @@ class LLMProvider:
     @property
     def enabled(self) -> bool:
         return self.api_key is not None
+
+    @property
+    def breaker_key(self) -> str:
+        return f"{self.profile.provider}:{self.base_url}"
+
+    def with_fallbacks(self, fallback_providers: list[LLMProvider]) -> LLMProvider:
+        """Attach ordered fallback providers cleanly and return self."""
+        self.fallback_providers = [fb for fb in fallback_providers if fb is not None and fb is not self]
+        return self
+
+    def circuit_snapshots(self) -> list[dict[str, Any]]:
+        """Return deterministic sorted circuit breaker snapshots across primary and configured fallbacks."""
+        merged: dict[str, dict[str, Any]] = {}
+        for item in self.circuit_breaker.snapshot():
+            merged[item["provider"]] = item
+        if self.enabled and self.breaker_key not in merged:
+            merged[self.breaker_key] = {
+                "provider": self.breaker_key,
+                "state": self.circuit_breaker.state(self.breaker_key),
+                "failures": 0,
+                "retry_in_seconds": 0.0,
+            }
+        for fb in self.fallback_providers:
+            for item in fb.circuit_snapshots():
+                if item["provider"] not in merged:
+                    merged[item["provider"]] = item
+        return [merged[k] for k in sorted(merged.keys())]
 
     def _get_client(self) -> httpx.Client:
         with self._client_lock:
@@ -1119,8 +1272,10 @@ class LLMProvider:
             if self._client is not None and not self._client.is_closed:
                 self._client.close()
                 self._client = None
+        for fb in self.fallback_providers:
+            fb.close()
 
-    def chat_with_raw(
+    def _chat_single_with_raw(
         self,
         messages: list[dict[str, Any]],
         *,
@@ -1132,11 +1287,10 @@ class LLMProvider:
         user_tag: str | None = None,
         cached_content: str | None = None,
     ) -> tuple[ChatResult, dict[str, Any]]:
-        """Execute a provider chat completion and return both normalized ChatResult and raw response dict."""
         if not self.api_key:
             raise LLMProviderError("LLM API key not configured", error_code="NO_API_KEY", status_code=503)
 
-        breaker_key = f"{self.profile.provider}:{self.base_url}"
+        breaker_key = self.breaker_key
         if not self.circuit_breaker.allow_request(breaker_key):
             raise CircuitOpenError(breaker_key)
 
@@ -1185,10 +1339,10 @@ class LLMProvider:
                     status_code=503,
                 ) from err
 
-            # Strip unsupported reasoning/thinking fields once on HTTP 400 and retry immediately.
+            # Strip unsupported reasoning/thinking/prompt-cache fields once on HTTP 400 and retry immediately.
             if status_code == 400 and not stripped_reasoning_once:
                 stripped = False
-                for field in ("reasoning_effort", "output_config", "thinking"):
+                for field in ("reasoning_effort", "output_config", "thinking", "prompt_cache_key"):
                     if field in payload:
                         payload.pop(field, None)
                         stripped = True
@@ -1215,6 +1369,62 @@ class LLMProvider:
             result = self.adapter.parse_response(data, self.profile, latency_ms=elapsed_ms)
             self.circuit_breaker.record_success(breaker_key)
             return result, data
+
+    def chat_with_raw(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        effort: EffortLevel = "low",
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+        temperature: float = 0.35,
+        user_tag: str | None = None,
+        cached_content: str | None = None,
+    ) -> tuple[ChatResult, dict[str, Any]]:
+        """Execute a provider chat completion with multi-provider failover, returning ChatResult and raw dict."""
+        try:
+            return self._chat_single_with_raw(
+                messages,
+                tools=tools,
+                effort=effort,
+                max_tokens=max_tokens,
+                timeout_s=timeout_s,
+                temperature=temperature,
+                user_tag=user_tag,
+                cached_content=cached_content,
+            )
+        except LLMProviderError as primary_err:
+            failover_eligible = bool(self.fallback_providers) and (
+                isinstance(primary_err, CircuitOpenError)
+                or primary_err.error_code == "CIRCUIT_OPEN"
+                or primary_err.status_code in RETRYABLE_STATUS_CODES
+                or (primary_err.status_code is not None and primary_err.status_code >= 500)
+            )
+            if not failover_eligible:
+                raise
+
+            origin = f"{self.profile.provider}/{self.profile.model_id}"
+            for fb in self.fallback_providers:
+                if not fb.enabled:
+                    continue
+                try:
+                    fb_result, fb_raw = fb.chat_with_raw(
+                        messages,
+                        tools=tools,
+                        effort=effort,
+                        max_tokens=max_tokens,
+                        timeout_s=timeout_s,
+                        temperature=temperature,
+                        user_tag=user_tag,
+                        cached_content=cached_content,
+                    )
+                    if fb_result.failover_from is None:
+                        fb_result = fb_result.model_copy(update={"failover_from": origin})
+                    return fb_result, fb_raw
+                except LLMProviderError:
+                    continue
+            raise primary_err
 
     def chat(
         self,

@@ -1,22 +1,35 @@
 # Theodic SME AIOS · 企业运营级 AI 操作系统
 
-[English](README.md) · [受控 AI 预审与部署交接](docs/governed-assurance.zh-CN.md) · [后端架构及 ERP 合同](docs/platform.md) · [生产加固指南](docs/production-readiness.md) · [企业工作台与前端交接](docs/workbench-handoff.zh-CN.md) · [桌面端架构](desktop/README.md)
+[English](README.md) · [在线演示](https://aios-demo.hk-demo.workers.dev) · [受控 AI 预审与部署交接](docs/governed-assurance.zh-CN.md) · [后端架构及 ERP 合同](docs/platform.md) · [生产加固指南](docs/production-readiness.md) · [企业工作台与前端交接](docs/workbench-handoff.zh-CN.md) · [桌面端架构](desktop/README.md) · [企业级评测脚本](scripts/enterprise_eval.py)
 
-**Theodic SME AIOS** 是面向批发贸易、跨境物流与多仓中小企业的**零迁移企业运营级 AI 操作系统**。它在企业现有 **ERP、WMS/TMS、财务系统、日程会议、企业邮箱与即时通讯** 之上构建统一的多端受控工作台，以确定性权限边界、提案摘要锁与 Outbox 写后核对、跨厂商智能路由与 4 区 KV 缓存管理、以及零本地大模型密钥的 Tauri 2 桌面沙盒为核心，做到“核心业务库零改造，AI 行动可审计、可撤权、可急停”。
+**Theodic SME AIOS** 是面向批发贸易、跨境物流与多仓中小企业的**零迁移企业运营级 AI 操作系统**。它在企业现有 **ERP、WMS/TMS、财务系统、日程会议、企业邮箱与即时通讯** 之上构建统一的多端受控工作台——通过确定性多仓 RBAC、密封 `SOUL.md` 治理、摘要锁人工审批、事务 Outbox 写后核对、纯 `httpx + pydantic` 无第三方包装 SDK 的跨厂商智能路由（**零 `litellm` 依赖**）、KV 缓存最优每用户 `MEMORY.md` 以及零本地模型密钥的 Tauri 2 桌面沙盒，在不暴露原始凭据、不改造核心业务库的前提下实现可审计、可撤权、可急停的企业级 AI 运营闭环。
 
 ---
 
-## 渐进式交付阶梯（`Tier 0` → `Tier 1` → `Tier 2`）
+## 高管架构概览与实测评分卡（Measured Enterprise Scorecard）
 
-企业可根据信息化成熟度按阶段平滑演进，既有快速见效的 OCR 接单切入点，也能一键升级到全企业 AIOS 与受控桌面端：
+安全防线、KV 前缀字节不变性、FinOps 成本压缩、SQLite WAL 高并发、跨厂商故障转移与 SSE 断线重放均已通过零外部 API 密钥的确定性评测引擎 [`scripts/enterprise_eval.py`](scripts/enterprise_eval.py) 与全量自动化测试套件完成实测验证：
 
-| 阶梯 | 产品形态 | 技术栈与覆盖范围 | 核心商业与工程价值 |
-|---|---|---|---|
-| **Tier 0** | **最小化付费服务起点：批发采购单 OCR 接单工作台** | [`aios_demo/`](aios_demo/) · 本地 Tesseract OCR + 按需裁剪视觉复核 + SQLite/PostgreSQL Outbox | 低门槛单点切入：用像素级 OCR 证据、确定性箱件换算与总额核验、以及丢回复可恢复的 ERP 写后核对快速替代手工录单。 |
-| **Tier 1** | **全功能企业 AIOS 云端工作台** | [`web/`](web/) + [`aios_platform/`](aios_platform/) + [`mcp/email-server/`](mcp/email-server/) | 多租户多仓 RBAC + PostgreSQL 强制 RLS、原生 macOS iMessage/WhatsApp 协作体验、8 渠道 IM 中枢、Ed25519 签名受控预审、`<2ms` `EffortRouter`、KV 缓存最优每用户 `MEMORY.md`（`Zone 1.2`）+ 4 区提示词缓存与 L1/L2/L3 非工作行为治理。 |
-| **Tier 2** | **Tauri 2 跨平台桌面端与本地受控 MCP/CUA** | [`desktop/`](desktop/) + [`mcp/workspace-server/`](mcp/workspace-server/) | 原生 macOS（`.dmg`/`.app`）与 Windows（`.msi`/`.exe`）壳层，**零本地大模型密钥**、OS Keychain/Credential Manager 短效设备令牌、沙盒 OOXML/PDF 文档引擎、白名单单窗口 CUA 与 `CmdOrCtrl+Escape` 全局急停。 |
+- **企业就绪度评测（[`scripts/enterprise_eval.py --json`](scripts/enterprise_eval.py)）**：**`6 / 6` 核心门禁全数通过**，耗时 `0.727s`（`zero_api_keys_required: true`，`litellm_absent: true`）。
+- **全栈自动化验证套件**：Python 后端 **`166` 项测试**（`unittest discover -s tests`：`163` 通过、`3` 项需真实 Postgres DSN 跳过、`0` 失败）；`web/` 严格模式 `next typegen && tsc --noEmit && next build`（`0` TS 错误、`14/14` 路由及 `26/26` Playwright 端到端回归）；`mcp/email-server` 编译通过；Cloudflare Worker 类型检查与单元测试全通过。
 
-### 企业工作台端到端界面实景
+| 评测门禁 / 工程域 | 实测指标（`scripts/enterprise_eval.py --json`） | 核心工程机制与源码路径 |
+|---|---|---|
+| **1. 安全护栏、密封 `SOUL.md` 与防记忆投毒** | **`100%` 拦截召回率（`44 / 44` 全阻断、`0` 漏报、`3` 项正常业务对照 `0` 误报）**；`403 SYSTEM_POLICY_IMMUTABLE`；投毒样本落库保持为空 | 覆盖 `27` 条对抗对话、`14` 条 `MEMORY.md` 投毒载荷与 `3` 条输出泄露探针（[`security_guard.py`](aios_platform/security_guard.py)、[`governance.py`](aios_platform/governance.py)、[`user_memory.py`](aios_platform/user_memory.py)） |
+| **2. KV 缓存 `Zone 1` 字节不变性** | **`100%` 前缀与工具 Schema 字节一致（`72 / 72` 次组装、`0` 次失配）**，跨 `2` 租户、`6` 主体、`4` 角色及动态切换 `MEMORY.md`（`Zone 1.2`）与 `ActiveDocumentRef`（`Zone 1.5`） | 密封 `SOUL.md` 与字典序 `zone1_tool_schemas` 严格锁定在 `Zone 1`，隔离于 `Zone 1.2` XML 围栏与 `Zone 1.5` 之前（[`ContextManager`](aios_platform/routing_context.py)） |
+| **3. FinOps 成本与 Token 压缩** | **L1 响应缓存**：`31.776 ms -> 0.664 ms`（**提速 `47.86x`**、**边际美元降本 `100.0%`**、省 `6,720` tokens）；**工具结果紧凑化**：`25,487 -> 3,740` 字符（**缩减 `85.33%` 字符 / `85.31%` Token**）；**80% 软预算降档**：`0.85` 利用率单次 SQL 触发 `T3 (8,192 tok) -> T1 (1,200 tok)`（`0` 热路径 DDL）；**Anthropic 防惩罚**：`< 3,600` 字符跳过 `cache_control` | [`BoundedResponseCache`](aios_platform/response_cache.py)、[`compact_tool_observation`](aios_platform/response_cache.py)、[`QuotaManager`](aios_platform/routing_context.py) 与 [`AnthropicAdapter`](aios_platform/llm_provider.py) |
+| **4. 跨厂商故障转移与熔断恢复** | 自动完成 `deepseek/deepseek-chat -> openai` 无缝切换（`3` 次主路径 + `3` 次备路径 HTTP）；准确记录 `open` 短路 -> `half_open` 探测 -> `closed` 恢复 | 纯 `httpx + pydantic` [`LLMProvider`](aios_platform/llm_provider.py) 与 [`ProviderCircuitBreaker`](aios_platform/llm_provider.py)（零 `litellm`） |
+| **5. 16 线程 SQLite WAL 并发压测** | `sqlite-wal-pooled`（`wal` 模式）：**`480` 次并发操作**（`16` 线程 `240` 写 + `240` 读），**`0` 次 `SQLITE_BUSY` 报错**，**`P50 = 0.054 ms`**、**`P95 = 2.206 ms`**、吞吐 **`3,028.2 ops/sec`** | 线程局部连接池 + `(st_dev, st_ino)` 失效重连 + PostgreSQL `psycopg_pool`（[`aios_demo/storage.py`](aios_demo/storage.py)） |
+| **6. 可观测性、请求体封顶与 SSE 重放** | `/v1/workbench/turns` 放行 `180,000 B` 大文档负载（`2 MiB` 上限）并拦截超限（`413`）；其余接口强制 `65,536 B` 上限（`/v1/memory`、`/v1/actions`、`/v1/tasks` 均返回 `413`）；透传 `X-Request-Id` 与 `traceparent`；`Last-Event-ID` 精确重放漏帧 | [`RequestEnvelope`](aios_platform/observability.py)、[`EventHub.since_event`](aios_platform/events.py) 与 [`events_stream`](aios_platform/workbench.py) |
+
+---
+
+## 在线交互演示与界面实景
+
+立即体验已上线部署的企业演示入口：**[https://aios-demo.hk-demo.workers.dev](https://aios-demo.hk-demo.workers.dev)**
+
+- **边缘安全与 Cloudflare Workers VPC 门禁（[`deploy/cloudflare-worker/`](deploy/cloudflare-worker/)）**：后端全量端口严格仅监听回环地址（`127.0.0.1:3000`、`:8760`、`:8761`），通过 Cloudflare Named Tunnel（`deploy/integrai/`）与 **Cloudflare Workers VPC** 对外提供受控访问；边缘 HMAC **Reviewer Gate**（[`src/reviewer-gate.ts`](deploy/cloudflare-worker/src/reviewer-gate.ts)）强制注入 `X-Robots-Tag: noindex, nofollow, noarchive`、IP 滑动窗口模型限流（`8 次/分`、`40 次/时`）、变更限流（`30 次/分`）及 Judge 沙盒管理写操作拦截（`403 JUDGE_SANDBOX_PROTECTED`）。
+- **23 张端到端实测界面截图**：完整覆盖桌面端（`1440×900`）与移动端（`390×844`）、简体中文 / 香港繁体 / 英文三语、Warm Museum Alabaster（`#FAF8F5`）浅色与 Warm Carbon Obsidian（`#111110`）深色主题（存放于 [`web/e2e/screenshots/`](web/e2e/screenshots/)）。
 
 | Warm Porcelain 3D 登录舞台 | 原生双栏会话与联系上下文 | 摘要锁审批前后差异视图 |
 |---|---|---|
@@ -28,296 +41,228 @@
 
 ---
 
-## 全栈系统架构
+## 渐进式交付阶梯（`Tier 0 -> Tier 1 -> Tier 2 -> Tier 3`）
 
-### 1. 云端控制面 ↔ Tauri 2 桌面端（macOS/Windows）与本地 MCP/CUA 端到端架构
+企业可按信息化与组织治理成熟度分阶段平滑接入，核心 ERP/WMS 数据库零改动：
+
+| 阶梯 | 交付形态 | 技术栈与核心模块 | 商业价值与工程能力 |
+|---|---|---|---|
+| **Tier 0** | **OCR 采购单接单起点** | [`aios_demo/`](aios_demo/) · 本地 Tesseract OCR + 按需裁剪视觉复核 + SQLite/PostgreSQL Outbox | 低门槛快速见效：用像素级 OCR 证据框、确定性箱件与金额规则、以及丢回复可恢复的 ERP 写后核对取代手工录单（`http://127.0.0.1:8758`）。 |
+| **Tier 1** | **企业团队协作工作台** | [`web/`](web/) + [`aios_platform/`](aios_platform/)（`workflow.py`、`module_access.py`、`chat.py`、`channels.py`） | 多租户多仓 RBAC、原生 macOS iMessage/WhatsApp 双栏协作（含实时已送达/已读回执）、8 渠道企业 IM 中枢、`/` 斜杠技能指令与摘要锁人工审批。 |
+| **Tier 2** | **智能路由与个人长期记忆 AIOS** | [`routing_context.py`](aios_platform/routing_context.py)、[`response_cache.py`](aios_platform/response_cache.py)、[`user_memory.py`](aios_platform/user_memory.py)、[`memory_tidy.py`](aios_platform/memory_tidy.py) | `<2ms` `EffortRouter`（`T0–T3`）、4 区 KV 缓存（`Zone 1` 不变前缀）、`L1` `BoundedResponseCache`、`compact_tool_observation`、`80%` 软预算自动降档、每用户 `MEMORY.md`（`Zone 1.2`）+ 4 层防投毒、L1/L2/L3 工作边界升级与 `aios-memory-tidy.timer`。 |
+| **Tier 3** | **全跨厂商云端/桌面企业版** | [`llm_provider.py`](aios_platform/llm_provider.py)、[`http_pool.py`](aios_platform/http_pool.py)、[`observability.py`](aios_platform/observability.py)、[`assurance.py`](aios_platform/assurance.py)、[`desktop/`](desktop/)、[`mcp/`](mcp/) | 纯 `httpx + pydantic` 多厂商适配器与熔断自动故障转移、PostgreSQL 强制 RLS + `psycopg_pool`、OTel GenAI 与 Prometheus `/metrics`、SSE `Last-Event-ID` 断点续传、Ed25519 受控预审（`:8761`）、独立 Email MCP 与零本地模型密钥 Tauri 2 桌面沙盒 CUA。 |
+
+---
+
+## 全栈统一架构视图
+
+### 1. 云端控制面、高可用连接池与 Tauri 2 / 本地 MCP 端到端拓扑
 
 ```mermaid
 flowchart TB
     subgraph CLIENT_LAYER ["终端与桌面执行层"]
         WEB["Web 浏览器: Next.js 16 暖白瓷釉 / 碳黑曜石界面 (/inbox, /settings/memory)"]
-        DESK["Tauri 2 桌面端: macOS .dmg/.app 与 Windows .msi/.exe"]
+        DESK["Tauri 2 桌面壳: macOS .dmg/.app 与 Windows .msi/.exe"]
         KEYCHAIN["OS Keychain / Windows Credential Manager (<=24h 设备令牌, 零 LLM 密钥)"]
-        ESTOP["全局热键 CmdOrCtrl+Escape 与 RED 级人工确认弹窗"]
+        ESTOP["全局热键 CmdOrCtrl+Escape 与 RED 级确认弹窗"]
     end
 
-    subgraph EDGE_BFF ["边缘加密门禁与同源 BFF"]
-        CF["Cloudflare Workers VPC 与评审加密门禁"]
-        BFF["Next.js 同源 BFF (:3000): HttpOnly Cookie, CSRF, /v1/memory* 白名单, 输出脱敏, Streamable MCP 桥接"]
+    subgraph EDGE_BFF ["边缘安全门禁与同源 BFF"]
+        CF["Cloudflare Workers VPC 与评审门禁 (noindex, 8/min 限流, 403 Judge 沙盒保护)"]
+        BFF["Next.js 同源 BFF (:3000): HttpOnly Cookie, CSRF, 65s/15s 超时, X-Request-ID/traceparent, 脱敏"]
     end
 
     subgraph CLOUD_CORE ["Theodic 云端控制面 (aios_platform)"]
-        API["FastAPI 核心网关 (:8760) + 受控预审伴生服务 (:8761)"]
-        RBAC["OIDC / 演示认证 + 模块级 RBAC + 可选 OPA + PostgreSQL 强制 RLS"]
-        GOV["密封 SOUL.md + 12 类确定性护栏 + L1/L2/L3 上报升级"]
-        MEM["每用户 MEMORY.md (aios_user_memory + T0 暂存 + 4 层防投毒)"]
-        TIDY["夜间整洁 CLI (python -m aios_platform.memory_tidy: 零 Token / 门控 T2)"]
-        ROUTER["EffortRouter (<2ms T0-T3) + KV-Cache Zone 1/1.2/1.5/2/3 上下文管理 + 纯 httpx LLMProvider"]
-        OUTBOX["提案摘要锁 + 事务 Outbox + 独立执行器 aios_worker"]
-        CHHUB["8 渠道企业消息中枢 + 独立 Email MCP (mcp/email-server)"]
+        API["FastAPI 核心网关 (:8760, lifespan, RequestEnvelope 2MiB/64KiB, 滑动限流) + 预审 (:8761)"]
+        POOL["存储与连接池: SQLite WAL 池 / psycopg_pool + 共享 http_pool + OTel GenAI /metrics"]
+        RBAC["OIDC / 演示认证 + 多仓模块 RBAC + 可选 OPA + PostgreSQL 强制 RLS"]
+        GOV["密封 SOUL.md (403 不可变) + 12 类安全护栏 + L1/L2/L3 隐私脱敏升级"]
+        MEM["每用户 MEMORY.md (Zone 1.2, 4 层防投毒) + aios-memory-tidy.timer"]
+        ROUTER["EffortRouter + BoundedResponseCache (L1) + 4 区上下文 + 纯 httpx 多厂商故障转移"]
+        SSE["EventHub (Last-Event-ID 重放) + ProactiveAgentNotifier (可见性感知 + 抖动退避)"]
+        OUTBOX["提案摘要锁 + 事务 Outbox + SIGTERM 优雅退避 aios_worker"]
+        CHHUB["8 渠道企业消息中枢 + 独立 TypeScript Email MCP (mcp/email-server)"]
     end
 
     subgraph LOCAL_MCP ["本地工作区 FastMCP 与受控 CUA (mcp/workspace-server)"]
         SANDBOX["WorkspaceSandbox (realpath 沙盒越狱拦截, 禁读 .env/.ssh/.sqlite/SOUL.md)"]
-        DOCTOOLS["API 优先文档工具 (OOXML, Docling/MarkItDown, LibreOffice PNG 预览)"]
+        DOCTOOLS["API 优先文档引擎 (OOXML, Docling/MarkItDown, LibreOffice PNG 预览)"]
         CUAGUARD["CuaPolicyEngine: 单窗口 AX/UIA 白名单, PII 脱敏, 间接注入清洗"]
     end
 
     WEB -->|"HTTPS + HttpOnly Cookie + CSRF"| CF
-    DESK -->|"短效设备会话令牌"| KEYCHAIN
+    DESK -->|"短效设备令牌"| KEYCHAIN
     DESK -->|"Rust IPC 通道"| ESTOP
     DESK -->|"HTTPS 控制面通信 (零本地模型密钥)"| CF
     CF -->|"Cloudflare 加密隧道"| BFF
-    BFF -->|"白名单 /v1/* 与 /v1/memory* 与 SSE 实时流"| API
+    BFF -->|"白名单 /v1/* + /v1/memory* + /v1/operations/system-health"| API
+    API --> POOL
     API --> RBAC
     RBAC --> GOV
     RBAC --> MEM
     GOV --> ROUTER
     MEM -->|"Zone 1.2 (<=1200 tok, 仅非空注入)"| ROUTER
-    ROUTER -.->|"T0 正则 / /memory 线索暂存"| MEM
-    TIDY -->|"夜间去重与分节归并"| MEM
+    TIDY["夜间 Systemd 定时器 (19:15 UTC)"] -->|"零 Token / 门控 T2 归并"| MEM
+    API --> SSE
     API --> OUTBOX
     API --> CHHUB
     DESK -->|"Stdio JSON-RPC 2.0"| SANDBOX
     SANDBOX --> DOCTOOLS
     DESK -->|"Green / Yellow / Red 人工确认"| CUAGUARD
-    ESTOP -.->|"aios://emergency-stop 原子急停熔断"| CUAGUARD
+    ESTOP -.->|"aios://emergency-stop 全局原子急停"| CUAGUARD
 ```
 
-### 2. 安全治理、密封 `SOUL.md` 与 L1/L2/L3 非工作行为脱敏升级流水线
-
-```mermaid
-flowchart TD
-    IN["员工自然语言 / 渠道 Webhook / 桌面 CUA 目标"] --> NORM["NFKC 与零宽字符 Cf 归一化 (normalize_user_text)"]
-    NORM --> SEALED["维护团队密封 SOUL.md 与模块策略 (403 SYSTEM_POLICY_IMMUTABLE)"]
-    NORM --> COREGUARD["10 类核心对抗护栏 (技能篡改, 策略篡改, 注入, 删库, 文件逃逸, 密钥外泄)"]
-    COREGUARD -->|"命中阻断"| SEC_LEDGER["高危/严重安全事件入账 + SHA-256 + SSE 告警 (T0)"]
-    COREGUARD -->|"通过基础护栏"| BOUNDARY["evaluate_work_boundary 与企业办公应用白名单"]
-    BOUNDARY -->|"合规业务请求 / 正常问候"| EXEC["进入 EffortRouter (T1/T2/T3) + RBAC/OPA 工具执行"]
-    BOUNDARY -->|"私人闲聊或非工作本地自动化"| HISTORY["统计 aios_security_event 24h 与 7d 历史计数"]
-    HISTORY -->|"L1: 每日 1-2 次私人闲聊"| NUDGE["温和同事口吻提醒 (T0 零模型开销, Info/Resolved, 不上报主管)"]
-    HISTORY -->|"L2: 每日 3-4 次或首次非工作自动化"| DENY["确定性边界拒绝 (Medium/Denied, 仅记审计不上报)"]
-    HISTORY -->|"L3: >=5次/日 或 >=12次/7日 或 >=2次/日桌面越界"| REDACT["PDPO/GDPR/PIPL 硬脱敏 (preview 强制为 REDACTED_PRIVACY_POLICY)"]
-    REDACT --> ESCALATE["按汇报链职级路由 (经办->主管, 主管/运维->高管+法务, 7日安全异常->抄送权限管理员+法务)"]
-    ESCALATE --> NOTIFY["SSE EventHub + 站内通知 + 可选 8 渠道 Webhook 推送"]
-    EXEC --> SCRUB["check_output_leakage (实时剥离密钥, 服务器路径与密封策略原文)"]
-    SEALED -.-> SCRUB
-```
-
-### 3. 跨厂商 `EffortRouter`、每用户 `MEMORY.md`（`Zone 1.2`）与双桶 KV 提示词缓存调度流
+### 2. FinOps 成本治理、4 区 KV 提示词缓存与多厂商故障转移流水线
 
 ```mermaid
 flowchart LR
-    TURN["员工回合 + 每用户 MEMORY.md + 挂载文档 + 工作脉冲"] --> QUOTA["QuotaManager (租户 / 角色 / 主体每日美元与 Token 配额)"]
+    TURN["员工回合 + 每用户 MEMORY.md + 挂载文档 + 工作脉冲"] --> QUOTA["QuotaManager (单次 SQL 日配额核查 + 80% 软预算 T3->T1 降档)"]
     QUOTA --> ROUTER["EffortRouter (<2ms 确定性路由分类器)"]
-    ROUTER -->|"T0: 安全拦截 / /memory / 记住与忘掉 / L1 提醒"| ZERO["0 次模型调用 -> 确定性即时返回与 T0 采集"]
-    ROUTER -->|"T1: 寒暄 / 工作脉冲 / 明确单读查询 + T0 暂存"| EFF_N["effort=none (1200 tok, 15s)"]
-    ROUTER -->|"T2: 起草邮件 / 摘要 / 参数澄清 + T0 暂存"| EFF_L["effort=low (2400 tok, 22s)"]
-    ROUTER -->|"T3: 跨模块推理 / 合同条款冲突 + T0 暂存"| EFF_H["effort=high (8192 tok, 55s)"]
-
-    EFF_N --> CTX["ContextManager KV-Cache 分区上下文组装"]
-    EFF_L --> CTX
-    EFF_H --> CTX
+    ROUTER -->|"T0: 安全拦截 / /memory / 记住与忘掉 / L1 提醒"| ZERO["0 次模型调用 -> 即时响应与 T0 暂存"]
+    ROUTER -->|"T1 / T2 / T3"| L1["L1 BoundedResponseCache (租户/主体/角色/语言/记忆版本/文档 SHA 隔离键)"]
+    L1 -->|"命中 (0.66ms, 100% 美元降本)"| ZERO
+    L1 -->|"未命中"| CTX["ContextManager 4 区上下文组装"]
 
     subgraph ZONES ["KV 缓存最优 Zone 1 / 1.2 / 1.5 / 2 / 3 分区架构"]
-        Z1["Zone 1 (~3K-5K 全局不变前缀): 密封 SOUL.md + 模块策略 + 字典序 Schema + 记忆边界规则"]
-        Z12["Zone 1.2 (每用户 <=1200 tok / 6000 字符): 非空 MEMORY.md 包裹于非信任 XML 围栏"]
-        Z15["Zone 1.5 (<=140K 且 <=safe_cap-38K): 单文档挂载槽 (切换自动卸载为 <=2K 结构化摘要)"]
-        Z2["Zone 2 (32K 对话轨迹桶): 工具结果入桶前截断 <=1500 tok, >=28K 滞回压缩至 ~7K, >60m 闲置压缩"]
-        Z3["Zone 3 (瞬态尾部): 实时 pulse_summary 仅附着于当前请求 (永不入库污染前缀)"]
+        Z1["Zone 1 (~3K-5K 100% 字节不变前缀): 密封 SOUL.md + 策略 + 字典序 Schema + 边界规则"]
+        Z12["Zone 1.2 (<=1200 tok / 6000 字符): 非空 MEMORY.md 包裹于非信任 XML 围栏"]
+        Z15["Zone 1.5 (<=140K 且 <=safe_cap-38K): 单文档挂载槽 (卸载生成 <=2K 结构化摘要)"]
+        Z2["Zone 2 (32K 轨迹桶): <=1500 tok 工具裁剪, >=28K->~7K 滞回压缩与 >60m 闲置压缩"]
+        Z3["Zone 3 (瞬态尾部): 实时 pulse_summary 仅附着当次请求 (永不入库污染前缀)"]
     end
 
     CTX --> Z1 --> Z12 --> Z15 --> Z2 --> Z3
-    TURN -.->|"T0 正则偏好线索 (0 LLM 调用)"| STAGE["T0 被动暂存 (aios_user_memory_staging, SHA-256 去重)"]
-    ZERO -.->|"直接执行 /memory 或 记住/忘掉"| STAGE
-    STAGE --> TIDY_CLI["夜间整洁 CLI (memory_tidy: 零 Token 确定性归并 / 可选门控 T2 -> 4 层护栏校验)"]
-    TIDY_CLI -->|"校验通过的 <=1200 tok 快照"| Z12
-    Z15 -->|">140K 超大文档包"| MR["MapReduceDocumentAnalyzer: <=24K 分片 (T1/T2 并发抽取) -> <=80K (T3 综合)"]
-    Z3 --> PROV["纯 httpx+pydantic LLMProvider (OpenAICompat / Anthropic / Gemini + 熔断器)"]
+    Z15 -->|">140K 超大文档包"| MR["MapReduceDocumentAnalyzer: <=24K 分片 (T1/T2 Map) -> <=80K (T3 Reduce)"]
+    Z3 --> PROV["纯 httpx+pydantic LLMProvider (OpenAI prompt_cache_key / Anthropic >=3600 字符护栏 / Gemini)"]
     MR --> PROV
-    PROV --> HARNESS["多步 Plan-Act-Observe 执行器 (MAX_HARNESS_STEPS = 4)"]
-    HARNESS -->|"T1/T2 工具参数异常触发级联升级"| CASCADE["Cascade Escalation -> T3 (effort=high)"]
+    PROV -->|"主厂商报错或熔断开启"| CB["ProviderCircuitBreaker -> 有序备选厂商故障转移"]
+    CB --> PROV
+    PROV --> HARNESS["多步执行器 (MAX_HARNESS_STEPS=4) + compact_tool_observation"]
+    HARNESS -->|"T1/T2 工具调用畸形触发级联升级"| CASCADE["Cascade Escalation -> T3 (effort=high)"]
     CASCADE --> PROV
-    HARNESS -->|"HITL 写提案 / 邮件草稿 / 审批预览"| TELEM["RoutingTelemetryStore (KV 命中率, USD 成本, 时延)"]
+    HARNESS -->|"最终回复 / HITL 审批提案"| TELEM["RoutingTelemetryStore (P50/P95, 缓存节省) + OTel GenAI /metrics"]
 ```
 
-### 4. 提案摘要锁审批、Outbox 写后核对与 8 渠道协作闭环
+### 3. 安全治理、密封 `SOUL.md`、L1/L2/L3 隐私分级升级与 Outbox 写后核对闭环
 
 ```mermaid
-flowchart LR
-    INTAKE["采购单影像 / 批量结构化接单 / 自然语言指令"] --> PREP["强类型工具校验 + SHA-256 plan_digest"]
-    PREP --> PROP["PROPOSED (900s 有效期, 幂等 Idempotency-Key)"]
-    PROP -->|"SSE 工作脉冲与渠道提醒"| REVIEW["独立主管复核 (前后差异对比, 拦截自我审批)"]
-    REVIEW -->|"提交精确 SHA-256 摘要 + 可选 OPA"| QUEUED["QUEUED (单事务入队 + 审计 + PostgreSQL 咨询锁)"]
-    QUEUED --> WORKER["独立 aios_worker (SKIP LOCKED + 租约 / Epoch 栅栏)"]
-    WORKER -->|"Odoo JSON-2 / ERPNext Frappe / LocalERP"| ERP["企业权威 ERP 系统"]
-    ERP -->|"网络丢回复 / 租约过期"| UNKNOWN["OUTCOME_UNKNOWN -> 受限只读回执核查"]
-    UNKNOWN -->|"回执核对一致"| VERIFIED["VERIFIED (已写入回执 + Ed25519 签名审计链)"]
-    UNKNOWN -->|"达重试上限 / 摘要不符"| OPS["NEEDS_OPERATOR (运维异常队列与人工重查)"]
-    ERP -->|"确认回执"| VERIFIED
-    VERIFIED -->|"SSE + 实时已读回执与渠道外发"| CHANNELS["收件箱 / 8 渠道中枢 (WhatsApp, 企业微信, 飞书, 钉钉, Slack, Teams, Telegram, LINE)"]
+flowchart TD
+    IN["员工输入 / 渠道 Webhook / 桌面 CUA 目标"] --> NORM["NFKC 与零宽字符 Cf 归一化 (normalize_user_text)"]
+    NORM --> SEALED["维护团队密封 SOUL.md 与模块策略 (403 SYSTEM_POLICY_IMMUTABLE)"]
+    NORM --> COREGUARD["10 类核心对抗护栏 (技能篡改, 策略篡改, 注入, 删库, 文件逃逸, 密钥外泄)"]
+    COREGUARD -->|"命中阻断"| SEC_LEDGER["高危/严重安全事件入账 + SHA-256 + SSE 告警 (T0)"]
+    COREGUARD -->|"通过基础护栏"| BOUNDARY["evaluate_work_boundary + DEFAULT_WORK_APP_ALLOWLIST"]
+    BOUNDARY -->|"私人闲聊或非工作本地自动化"| HISTORY["统计 aios_security_event 24h 与 7d 历史计数"]
+    HISTORY -->|"L1 (1-2次/日) / L2 (3-4次/日或首越界应用)"| NUDGE_DENY["T0 温和提醒 (L1) 或确定性拒绝 (L2, 不推送主管)"]
+    HISTORY -->|"L3 (>=5次/日, >=12次/7日, >=2次/日应用)"| REDACT["PDPO/GDPR/PIPL 硬脱敏 (REDACTED_PRIVACY_POLICY) -> 汇报链路由告警"]
+    BOUNDARY -->|"合规业务请求"| EXEC["EffortRouter + RBAC/OPA 工具执行"]
+    EXEC --> SCRUB["check_output_leakage (实时剥离密钥, 服务路径与密封策略锚点)"]
+    EXEC -->|"写操作提案"| PROP["PROPOSED (SHA-256 plan_digest, 900s 有效期, Idempotency-Key)"]
+    PROP --> REVIEW["独立主管复核 (前后差异视图, 拦截自我审批)"]
+    REVIEW --> QUEUED["QUEUED (事务入队 + 咨询锁) -> aios_worker (SKIP LOCKED + 租约/Epoch)"]
+    QUEUED --> ERP["Odoo JSON-2 / ERPNext Frappe / LocalERP -> VERIFIED 或 OUTCOME_UNKNOWN 对账"]
 ```
 
 ---
 
-## 每用户长期记忆系统（`MEMORY.md`）
+## 六大核心工程支柱
 
-借鉴 Muse 风格的编辑级透明记忆体验，每位已认证员工在 `(tenant, subject)` 隔离维度下拥有一份透明、可审阅、可编辑的个人长期记忆文件 **`MEMORY.md`**（实现于 [`aios_platform/user_memory.py`](aios_platform/user_memory.py) 与 [`aios_platform/user_memory.sql`](aios_platform/user_memory.sql)）：
+### 支柱一：安全治理、多仓 RBAC、密封 `SOUL.md` 与人机协同审批（HITL）
 
-- **核心运作方式**：助手在每次会话开始时读取用户的 `MEMORY.md`（注入 `Zone 1.2`），对话期间在 `T0` 零模型开销下自动采集或响应显式偏好线索，并由夜间整洁任务（[`aios_platform/memory_tidy.py`](aios_platform/memory_tidy.py)）定时归并整理。用户可在 `/settings/memory`（[`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx)）直接查看、编辑、回滚或清空文件内容，也可直接在对话中使用 `/memory` 或自然语言（`"记住..."` / `"忘掉..."` / `"remember that..."`）即时更新。编辑器顶部的说明横幅（**“此说明并非文件内容本身。”**）严格属于前端 UI 界面提示，绝不写入 `aios_user_memory` 数据库，也不会进入模型上下文。
-- **结构化 Markdown 模板**：从简洁可读的四节骨架（`# MEMORY.md`：`## Identity & Role`、`## Communication Preferences`、`## Working Context`、`## Ongoing Commitments & Habits`）起步，并硬性封顶 **`1,200` tokens**（`approx_tokens`）与 **`6,000` 字符**。
+- **密封不可变 `SOUL.md`（[`aios_platform/governance.py`](aios_platform/governance.py)、[`aios_platform/SOUL.md`](aios_platform/SOUL.md)）**：系统人格与角色/模块策略仅从维护团队密封的 `SOUL.md` 与服务端 `PromptScopeSpec` 加载，企业管理员与大模型均不可读写；`PUT /v1/operations/prompt-policies/{scope_key}` 与 `POST .../reset` 恒返回 `HTTP 403 SYSTEM_POLICY_IMMUTABLE`（`PolicyImmutableError`），配合 `check_output_leakage()` 在响应出口剥离密钥、服务路径与密封锚点。
+- **多仓模块 RBAC、可选 OPA 与 PostgreSQL 强制 RLS**：[`aios_platform/module_access.py`](aios_platform/module_access.py) 支持按模块/仓库动态赋权、咨询锁与乐观锁 `version` 校验（越权变更即时触发 `403 ACCESS_CHANGED`）；支持可选 OPA 策略网关（[`deploy/platform/opa.rego`](deploy/platform/opa.rego)、[`providers.py`](aios_platform/providers.py)）；[`deploy/platform/postgres-security.sql`](deploy/platform/postgres-security.sql) 对 23 张以上租户表启用 `ENABLE` + `FORCE ROW LEVEL SECURITY`，并由 [`database_security.py`](aios_platform/database_security.py) 在启动阶段核验 `aios_api` 与 `aios_worker` 权限分离。
+- **12 类确定性护栏与 L1/L2/L3 PDPO/GDPR/PIPL 升级（[`security_guard.py`](aios_platform/security_guard.py)、[`governance.py`](aios_platform/governance.py)）**：`normalize_user_text()` 先执行 NFKC 归一化与零宽字符 `Cf` 剥离，覆盖 10 类对抗安全事件（`SKILL_TAMPER_ATTEMPT`、`PROMPT_TAMPER_ATTEMPT`、`DESTRUCTIVE_ACTION_ATTEMPT`、`FILESYSTEM_ESCAPE_ATTEMPT`、`PROMPT_INJECTION_ATTEMPT`、`SECRET_EXFILTRATION_ATTEMPT`、`PRIVILEGE_ESCALATION_ATTEMPT`、`CROSS_SCOPE_ACCESS_ATTEMPT`、`UNAUTHORIZED_MODULE_QUERY`、`EMAIL_POLICY_VIOLATION`）及 2 类工作边界事件（`OFF_TOPIC_PERSONAL_CHAT`、`OFF_TOPIC_LOCAL_AUTOMATION`）。`evaluate_work_boundary()` 基于 `DEFAULT_WORK_APP_ALLOWLIST` 确保正常寒暄与业务查询零误报：**L1** 走 `T0` 温和提醒（`info`/`resolved`），**L2** 确定性拒绝（`medium`/`denied`，不上报），**L3**（`>=5次/日`、`>=12次/7日` 或 `>=2次/日` 本地自动化）按汇报链自动路由（`operator -> [manager]`、`manager/admin -> [executive, legal]`、`executive -> [legal]`，近 7 日存在高危安全异常则抄送 `access-admin` 与 `legal`）且强制写入 `preview = "[REDACTED_PRIVACY_POLICY]"`。
+- **提案摘要锁、Outbox 与 Ed25519 受控预审（[`workflow.py`](aios_platform/workflow.py)、[`assurance.py`](aios_platform/assurance.py)）**：完整状态机（`PROPOSED -> QUEUED -> SENDING -> VERIFYING -> CHECKING -> VERIFIED` / `OUTCOME_UNKNOWN` / `NEEDS_OPERATOR` / `REJECTED`）、精确 SHA-256 `plan_digest`、禁止自我审批、PostgreSQL `SKIP LOCKED` + 租约/Epoch 栅栏（[`run_worker.py`](aios_platform/run_worker.py)）及 `LocalERP` / `OdooERP` / `ERPNext` 适配器（[`erp.py`](aios_platform/erp.py)）。独立受控预审伴生服务（`:8761`，[`assurance_policy.py`](aios_platform/assurance_policy.py)、[`assurance_gateway.py`](aios_platform/assurance_gateway.py)、[`assurance_audit.py`](aios_platform/assurance_audit.py)、[`assurance_catalog.py`](aios_platform/assurance_catalog.py)）提供单元格白名单、16 KiB 边界网关、AES-256-GCM 密文审计链与 Ed25519 签名检查点。
 
-### 架构权衡：文件优先的结构化 Markdown vs. Mem0 / Letta / Zep
+### 支柱二：FinOps 成本优化与 4 区 KV 提示词缓存
 
-相比引入独立的向量库、知识图谱引擎或每轮调用一次大模型做记忆抽取，Theodic SME AIOS 选择将 `MEMORY.md` 直接保存在事务型 PostgreSQL（启用强制 RLS）或 SQLite 中：
+- **纯 `httpx + pydantic` 跨厂商 `LLMProvider`（[`aios_platform/llm_provider.py`](aios_platform/llm_provider.py)）**：**零 `litellm` SDK 依赖**，彻底消除第三方模型包装库供应链风险，同时支持通过 `base_url` 对接兼容网关。`ModelProfile` 内置 `deepseek-chat`、`deepseek-flash`、`deepseek-v4-pro`、`gpt-5.4-mini`、`claude-sonnet-4-6`、`gemini-2.5-pro` 与 `qwen-plus`，统一计算 `safe_cap_tokens = min(180_000, int(surcharge_cliff * 0.90), int(context_window * 0.60))`，实施 `MAX_LLM_RESPONSE_BYTES = 524_288` 流式字节封顶、HTTP 400 推理/缓存字段自动剥离重试、多轮 `reasoning_content` / `thinking_blocks` 透传、以及多备选厂商链式 `fallback_providers` + `ProviderCircuitBreaker` 熔断器（默认 `failure_threshold=5`、`recovery_timeout_s=30.0`）。
+- **`<2ms` `EffortRouter` 与级联升级（[`routing_context.py`](aios_platform/routing_context.py)）**：在 2 毫秒内将请求路由为 `T0`（0 次模型调用）、`T1`（`effort="none"`，`1,200` tokens / `15s`）、`T2`（`effort="low"`，`2,400` tokens / `22s`）或 `T3`（`effort="high"`，`8,192` tokens / `55s`），保持同模型前缀缓存温度，并在 `T1/T2` 出现工具调用畸形时自动触发 **Cascade Escalation** 升级至 `T3`。
+- **`L1` `BoundedResponseCache` 与 `compact_tool_observation`（[`aios_platform/response_cache.py`](aios_platform/response_cache.py)）**：线程安全的 LRU + TTL 一级响应缓存（默认 `max_entries=512`、`ttl_seconds=180.0`），按 `(tenant, subject, role, locale, memory_version, active_doc_sha, normalized_query_hash)` 严格隔离纯只读问答（实测提速 **`47.86x`**、边际美元节省 **`100%`**），并在 `/memory` 变更时调用 `invalidate_subject()` 精准失效。在 `MAX_HARNESS_STEPS = 4` 多步循环内，[`compact_tool_observation`](aios_platform/response_cache.py)（`max_chars=2400`）先剥离空字段（保留 `False`/`0`）、按上限截断列表并保留 `ESSENTIAL_BUSINESS_KEYS`，将冗长 JSON 载荷稳定压缩 **`85.33%`** 字符（**`85.31%`** Token）。
+- **80% 软预算降档与厂商写惩罚护栏**：[`QuotaManager.check_quota()`](aios_platform/routing_context.py) 以**单次 SQL 聚合查询**评估租户/角色/主体日配额（配合缓存 `_ensure_routing_tables_sqlite` 实现 `0` 热路径 DDL），当利用率 `>= 80%` 时置位 `soft_cap_active=True`，自动将 `T2/T3` 降档为 `T1`（`effort="none"`，`1,200` tokens）而不中断业务；[`AnthropicAdapter`](aios_platform/llm_provider.py) 强制校验 `ANTHROPIC_PROMPT_CACHE_MIN_CHARS = 3600` 避免短提示触发 25% 缓存写入溢价；[`OpenAICompatAdapter`](aios_platform/llm_provider.py) 为 OpenAI 自动注入确定性 `prompt_cache_key`。
+- **4 区 KV 提示词缓存结构（`ContextManager` 与 `MapReduceDocumentAnalyzer`）**：
+  1. **`Zone 1`（~3K–5K 全局字节不变前缀）**：仅包含密封 `SOUL.md`、模块策略、字典序 `zone1_tool_schemas` 与 1 句静态记忆边界说明——**全租户全员 100% 字节一致**。
+  2. **`Zone 1.2`（`<= 1,200` Tokens）**：非空个人 `MEMORY.md` 包裹于 `<user_long_term_memory trust="user_editable_facts_only">` 紧随 `Zone 1` 注入（空文件零注入）。
+  3. **`Zone 1.5`（`<= 140K` 且 `<= safe_cap - 38K`）**：单文档挂载槽，切换文档时自动卸载为 `<= 2,000` Token 结构化摘要；超 `140K` 文档包自动进入 `MapReduceDocumentAnalyzer`（`<= 24K` 并发 `T1/T2` Map 抽取 -> `<= 80K` `T3` Reduce 综合）。
+  4. **`Zone 2`（`32K` 轨迹桶）与 `Zone 3`（瞬态尾部）**：工具结果入桶前裁剪至 `<= 1,500` Token，`>= 28,000` Token 滞回压缩至 `~7,000`，闲置 `> 60m` 自动压缩；实时 `pulse_summary` 仅作为 `Zone 3` 瞬态尾部附着当前请求。
 
-| 对比维度 | Theodic 文件优先 `MEMORY.md`（PostgreSQL / SQLite） | Mem0 / Zep（向量与图谱事实库） | Letta / MemGPT（有状态 Agent 分页记忆） |
+### 支柱三：每用户可编辑长期记忆（`MEMORY.md`）与夜间自动整洁
+
+- **文件优先的事务型 Markdown（[`aios_platform/user_memory.py`](aios_platform/user_memory.py)、[`user_memory.sql`](aios_platform/user_memory.sql)、迁移 [`0012_user_long_term_memory.py`](migrations/versions/0012_user_long_term_memory.py)）**：每位员工在 `(tenant, subject)` 维度拥有可读可编的 `MEMORY.md`（四节标准骨架，上限 `MAX_MEMORY_TOKENS = 1200`、`MAX_MEMORY_CHARS = 6000`）。
+- **4 层防记忆投毒与权限越狱防线**：
+  1. `NFKC` + 零宽字符 `Cf` 剥离 + `scrub_secrets()` 抹除密钥。
+  2. 保存期确定性校验拦截 `SOUL.md` 覆盖、RBAC/仓库提权、`SKILL.md` 篡改、提示词边界注入标签及 Shell/文件系统逃逸（`HTTP 422 MEMORY_POLICY_VIOLATION` / `MEMORY_TOKEN_LIMIT_EXCEEDED`），所有门控 `T2` 整理结果亦需复检通过方可落库。
+  3. `Zone 1.2` 非信任 XML 围栏隔离与 `Zone 1` 静态边界免疫。
+  4. `(tenant, subject)` `subject_tx` / PostgreSQL 强制 RLS 行级隔离、`HTTP 409 Conflict` 乐观版本锁，以及 `previous_content` 快照一键撤回（`POST /v1/memory/revert`）。
+- **`T0` 零开销捕获、`/v1/memory*` 与夜间 `systemd` 定时任务**：支持 `/memory [view|add|forget|tidy]`、中英自然语言（`"记住..."`、`"忘掉..."`、`"remember that..."`）、`fact_sha256` 去重被动暂存、完整 `/v1/memory*` REST 接口（`GET/PUT/DELETE /v1/memory`、`POST /v1/memory/{tidy,revert,forget}`），以及加固版夜间定时器（[`aios-memory-tidy.service`](deploy/integrai/systemd/aios-memory-tidy.service) 与 [`aios-memory-tidy.timer`](deploy/integrai/systemd/aios-memory-tidy.timer)：每日 `19:15:00 UTC` / `03:15 HKT` 触发，`RandomizedDelaySec=120`、`Persistent=true`、`MemoryMax=256M`、`ProtectSystem=strict`）。
+
+### 支柱四：生产级高可用、存储连接池与全链路可观测性
+
+- **SQLite WAL 线程连接池与 PostgreSQL `psycopg_pool`（[`aios_demo/storage.py`](aios_demo/storage.py)、[`requirements-postgres.txt`](requirements-postgres.txt)）**：SQLite 采用线程局部连接池（`check_same_thread=False` + 弱引用注册表退出自动关闭）、按 `(resolved_path, inode)` 加锁一次性初始化 `WAL` / `SYNCHRONOUS=NORMAL` / `TEMP_STORE=MEMORY` / `cache_size=-16000`、`(st_dev, st_ino)` 失效文件句柄自动重连及 `:memory:` 豁免；PostgreSQL 路径启用懒加载 `psycopg_pool.ConnectionPool`（`min_size=1`、`max_size=16`、`timeout=5.0`），对外暴露 `engine_mode`（如 `sqlite-wal-pooled`、`postgres-pooled`）。
+- **共享 `http_pool` 与进程优雅生命周期（[`aios_platform/http_pool.py`](aios_platform/http_pool.py)、[`api.py`](aios_platform/api.py)、[`run_worker.py`](aios_platform/run_worker.py)）**：`providers.py`、`browser.py`、`channels.py`、`governance.py` 复用 `get_http_client()`（`max_connections=32`、`max_keepalive_connections=16`、`keepalive_expiry=30.0`、`follow_redirects=False`、`trust_env=False`）。FastAPI `lifespan` 在退出时统一释放 `assistant_agent`、`close_all_http_clients()` 与数据库连接；`run_worker.py` 捕获 `SIGTERM`/`SIGINT` 并实施按租户隔离的 `0.5s -> 5.0s` 指数退避。
+- **SSE `Last-Event-ID` 断点续传与可见性感知重连（[`events.py`](aios_platform/events.py)、[`workbench.py`](aios_platform/workbench.py)、[`ProactiveAgentNotifier.tsx`](web/src/components/shell/ProactiveAgentNotifier.tsx)）**：`EventHub.since_event` 与 `/v1/workbench/events/stream` 按时间序精确重放断线期间漏发的可见事件并做帧 ID 去重；前端 `ProactiveAgentNotifier` 在标签页不可见时暂停轮询、切回可见即刻补拉并通过 `1.5s -> 30s`（`±25%` 抖动）指数退避重连。
+- **请求体封顶、滑动窗口限流、W3C 链路追踪与 OTel GenAI / Prometheus（[`observability.py`](aios_platform/observability.py)）**：`RequestEnvelope` 将 `/v1/workbench/turns` 限制在 `2,097,152` 字节（`2 MiB`）、其余 `/v1/` 写接口限制在 `65,536` 字节（超限返回 `413`，保留二进制上传通道）；`SlidingWindowRateLimiter` 强制 `AIOS_API_RATE_LIMIT_RPM=600` 与 `AIOS_TURNS_RATE_LIMIT_RPM=120`（`429 RATE_LIMITED` + `Retry-After`）；校验并回传 `X-Request-Id` 与 W3C `traceparent` 至 `contextvars`（协同 Next.js BFF [`proxy.ts`](web/src/lib/bff/proxy.ts) 的 `65s`/`15s` `AbortController` 超时控制）；在 Bearer 鉴权的 `/metrics` 输出 `aios_http_requests`、`aios_http_duration_seconds`、`aios_llm_calls_total`、`aios_llm_tokens_total`、`aios_llm_cost_usd_total`、`aios_llm_cache_events_total`、`aios_circuit_breaker_state` 与 `aios_rate_limit_rejections_total`，同步输出 `gen_ai.*` 结构化日志与可选 `opentelemetry.trace` Span（`AIOS_OTEL_GENAI=1`），并开放管理员专属健康检查接口 `GET /v1/operations/system-health`。
+
+### 支柱五：编辑级浅/深双主题 iMessage 协作界面、全渠道中枢与 FinOps 管理台
+
+- **Warm Museum Alabaster（`#FAF8F5`）与 Warm Carbon Obsidian（`#111110`）（[`web/src/styles/tokens.css`](web/src/styles/tokens.css)、[`layout.tsx`](web/src/app/layout.tsx)、[`globals.css`](web/src/app/globals.css)）**：基于 Next.js 16（App Router）、React 19、TypeScript 5.9（`strict`、`noUncheckedIndexedAccess`）、Tailwind CSS v4 与 Radix UI；服务端 Cookie 持久化 `aios_locale`/`aios_theme` 实现零闪烁首屏（**零 `localStorage`**）、`:lang(zh-HK)` 港繁字形优先、外科级钴蓝强调色（浅色 `#1B4F9C` / 深色 `#6EA3F2`）、双墨色几何品牌标识 [`TheodicBrand.tsx`](web/src/components/ui/TheodicBrand.tsx) 与克制物理动效（[`ArchitecturalRelayCanvas.tsx`](web/src/components/kinetic/ArchitecturalRelayCanvas.tsx)、[`Interactive3DCard.tsx`](web/src/components/kinetic/Interactive3DCard.tsx)、[`BriefProgressChain.tsx`](web/src/components/kinetic/BriefProgressChain.tsx)、[`ExecutionTopologyRibbon.tsx`](web/src/components/kinetic/ExecutionTopologyRibbon.tsx)、[`StatePulseBeacon.tsx`](web/src/components/kinetic/StatePulseBeacon.tsx)）。
+- **原生 macOS iMessage / WhatsApp 协作与 `/settings/memory` 编辑台**：悬浮 `88px` 对话顶栏 + `112px` 渐进磨砂面纱（[`ConversationHeader.tsx`](web/src/components/chat/ConversationHeader.tsx)）、有机堆叠气泡（`20px`/`6px`/`10px` 圆角与 SVG 尾翼，[`bubble-group.tsx`](web/src/features/inbox/bubble-group.tsx)）、实时 **已送达 / 已读** 回执（[`ChatRoomWorkspace.tsx`](web/src/features/chat/ChatRoomWorkspace.tsx)）、企业通讯录与名片弹窗（[`ContactsDirectoryModal.tsx`](web/src/features/inbox/ContactsDirectoryModal.tsx)、[`ContactProfileDialog.tsx`](web/src/components/chat/ContactProfileDialog.tsx)）、安全 GFM 渲染（[`MarkdownMessage.tsx`](web/src/components/ui/MarkdownMessage.tsx)）、`cmdk` `/` 斜杠面板（[`SlashCommandPalette.tsx`](web/src/features/inbox/SlashCommandPalette.tsx)）、右侧滑出抽屉（`⌘.`，[`WorkbenchDrawerSlot.tsx`](web/src/components/shell/WorkbenchDrawerSlot.tsx)）及 `/settings/memory`（[`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx)：编辑/分栏/预览、Token 仪表、待归并队列、Quick Forget 与一键撤回）。
+- **8 渠道企业中枢与 FinOps / 系统韧性监控台**：[`ChannelsHubPanel.tsx`](web/src/features/admin/ChannelsHubPanel.tsx) 与 [`channels.py`](aios_platform/channels.py) 统一打通 **WhatsApp Business、企业微信 WeCom、飞书/Lark、钉钉 DingTalk、Slack Enterprise、Microsoft Teams、Telegram Business、LINE Official/WORKS**（含签名验证与防重放）；[`SecurityMonitorPanel.tsx`](web/src/features/admin/SecurityMonitorPanel.tsx) 集成 12 类脱敏安全审计流、非工作行为升级策略编辑器、**智能路由与 KV 缓存遥测**（`T0–T3` 占比、`P50`/`P95` 时延、`Est. Cache Savings` 预估缓存节省、日配额治理）以及管理员专属 **`admin-system-resilience-card`**（展示 `db_engine_mode`、厂商熔断状态、`l1_cache` 命中统计、SSE 活跃连接数、限流拦截次数与 OTel GenAI 状态），配合 [`AdminOpsOverview.tsx`](web/src/features/admin/AdminOpsOverview.tsx) 与 [`PromptGovernancePanel.tsx`](web/src/features/admin/PromptGovernancePanel.tsx) 构成完整运维控制台。
+- **同源脱敏 BFF 与 Streamable MCP 日历/Zoom 订会**：白名单代理（[`proxy.ts`](web/src/lib/bff/proxy.ts)、[`route.ts`](web/src/app/v1/[...path]/route.ts)、[`sanitize.ts`](web/src/lib/bff/sanitize.ts)）剥离内部 `planner`/模型键、强制 `Cache-Control: no-store`、按 `authGeneration` 丢弃跨账号迟到响应，接入三语自然语言 Zoom 订会与 MCP 日历同步（[`web/src/lib/mcp/`](web/src/lib/mcp/)），并仅在 Tauri 2 环境下挂载 [`DesktopHarnessOverlay.tsx`](web/src/components/desktop/DesktopHarnessOverlay.tsx)。
+
+### 支柱六：Tauri 2 跨平台桌面端、沙盒化工作区 MCP 与独立 Email MCP
+
+- **Tauri 2 桌面端（[`desktop/`](desktop/)、[`desktop/README.md`](desktop/README.md)）**：原生 macOS（`.dmg`/`.app`）与 Windows（`.msi`/`.exe`）外壳**零本地 LLM 密钥**；`keyring` v3（`apple-native` / `windows-native`）仅保存短效设备令牌（`<=24h`）并主动拒绝 `sk-`/`AIza` 等模型密钥前缀（`ForbiddenLlmSecret`）；配置严格 CSP、最小化 Capability 权限、5 个 Rust IPC 命令（`ipc.rs`）与 `CmdOrCtrl+Escape` 全局急停热键（`lib.rs` 发送 `aios://emergency-stop`）。
+- **本地工作区 FastMCP 与受控 CUA（[`mcp/workspace-server/`](mcp/workspace-server/)、[`mcp/workspace-server/README.md`](mcp/workspace-server/README.md)）**：[`sandbox.py`](mcp/workspace-server/sandbox.py) 的 `WorkspaceSandbox` 基于 `os.path.realpath` 阻断路径穿越、软链接逃逸及 `.env`/`.ssh`/`id_rsa`/`*.sqlite*`/`.reviewer-pass.local.json`/`SOUL.md` 读取；[`document_tools.py`](mcp/workspace-server/document_tools.py) 优先使用 API 解析/生成 OOXML/PDF 与 LibreOffice PNG 预览；[`cua_guard.py`](mcp/workspace-server/cua_guard.py) 实施 macOS AX / Windows UIA 办公应用白名单、强制单窗口采集（`full_screen_capture=False`）、`GREEN`/`YELLOW`/`RED` 分级确认令牌、PII 脱敏、间接注入清洗与 `EmergencyStopController`（[`server.py`](mcp/workspace-server/server.py)）。
+- **独立 TypeScript Email MCP（[`mcp/email-server/`](mcp/email-server/)）**：`server.ts`、`security.ts` 与 `transport.ts` 实现 `MAX_EMAIL_RECIPIENTS = 10` 上限、CRLF 邮件头注入拦截、按发件人 `SlidingWindowRateLimiter` 限流、连接池化 TLS/STARTTLS `nodemailer` 发信以及 `/v1/workbench/email-outbox` 审计联动。
+
+---
+
+## 开源生态“自研 vs. 选型”技术决策矩阵
+
+| 技术分层 | Theodic 最终架构选型 | 放弃的替代方案 | 核心工程与 FinOps 决策理由 |
 |---|---|---|---|
-| **存储与运维开销** | **零额外基础设施**：直接复用既有 PG（强制 RLS）/ SQLite 中的 `aios_user_memory` 与 `aios_user_memory_staging` | 需额外部署向量数据库、图数据库及 Embedding 同步管道 | 需维护 Agent 运行时记忆块与分页状态存储 |
-| **每轮 Token 开销** | **`0` 次额外抽取 LLM 调用**：`T0` 确定性正则与斜杠指令直接暂存线索，并按 `fact_sha256` 去重 | 依赖异步或每轮调用抽取 LLM + Embedding 模型 | 每轮消耗 Agent 工具调用循环（`archival_memory_insert/search`） |
-| **夜间整理成本** | 默认 **`0`-Token 确定性归并**；仅在显式开启且存在待处理线索或 `>900` token 时触发一次门控 `T2`（`effort="low"`）合并 | 持续触发后台图谱冲突消解与重索引 LLM 调用 | 周期性触发摘要与记忆压力压缩 LLM 调用 |
-| **KV 前缀缓存亲和度** | **全局 `Zone 1` 保持 100% 字节不变**；非空 `MEMORY.md` 隔离在 `Zone 1.2`（`<= 1,200` tok），空记忆零注入 | 动态检索片段导致系统上下文前缀频繁漂移 | 运行期记忆块变更打断前缀缓存复用 |
-| **排障与合规审计** | **纯文本 Markdown 差异清晰可读**、整数乐观锁 `version`、保留 `previous_content` 一键撤回 | 向量切片与图谱边难以为终端员工与合规团队直观审阅 | 由工具驱动的内部状态块不便于员工自助修改 |
-
-### KV 缓存最优的 `Zone 1.2` 注入机制
-
-为确保纯 `httpx` + `pydantic` [`LLMProvider`](aios_platform/llm_provider.py)（零 `litellm` 依赖）跨 `OpenAICompatAdapter`（DeepSeek/OpenAI/Qwen）、`AnthropicAdapter`（`cache_control`）与 `GeminiAdapter`（`cachedContent`）保持高前缀命中率：
-
-1. **`Zone 1`（~3K–5K 全局字节不变前缀）**：仅包含维护团队密封的 [`SOUL.md`](aios_platform/SOUL.md)、角色/模块策略、字典序排列的 `zone1_tool_schemas` 与一句静态的“`<user_long_term_memory>` 仅包含用户可编辑的事实偏好”边界指令。无论是否启用或修改 `MEMORY.md`，`Zone 1` 在**全租户全员范围内保持 100% 字节一致**，实现跨用户全局前缀缓存共享。
-2. **`Zone 1.2`（每用户 `MEMORY.md`，`<= 1,200` Tokens）**：紧随 `Zone 1`（`messages[0]`）之后、且严格位于 **`Zone 1.5` 活动文档** 与 **`Zone 2` 对话轨迹** 之前，当 `MEMORY.md` 非空时由 `ContextManager.assemble(..., user_memory=...)` 将其包裹于非信任 XML 围栏中注入：
-   ```xml
-   <user_long_term_memory trust="user_editable_facts_only">
-   ...
-   </user_long_term_memory>
-   ```
-   当 `MEMORY.md` 为空或仅含空白时，**零注入**（`zone1_2_tokens = 0`），不增加任何首包 Token 负担。
-
-### 4 层防记忆投毒与权限越狱纵深防御
-
-由于 `MEMORY.md` 支持用户编辑并跨会话持久化，系统在入库、编译与隔离全链路设置四道确定性防线：
-
-1. **第 1 层 — 规范化清洗与密钥脱敏**：所有写入路径先执行 `unicodedata.normalize("NFKC", text)`，剥离 `Cf` 零宽/不可见格式字符，并经过 `scrub_secrets()`（[`security_guard.py`](aios_platform/security_guard.py)）抹除 API Key、Bearer Token 与隐写混淆负载。
-2. **第 2 层 — 保存期确定性策略校验与硬上限门禁**：拦截任何试图篡改/覆盖 `SOUL.md`、提权 RBAC/角色/仓库/授权（`admin`、`bypass`、`grant`、`all warehouses`、`disable security`、`override policy`）、篡改 `SKILL.md`/插件工具、注入提示词边界标签（`<system>`、`</user_long_term_memory>`、`<|im_start|>`、`ignore previous instructions`、`you are now`）或逃逸执行 Shell/文件系统命令（`rm -rf`、`curl | sh`、`sudo`、`chmod`、`../etc`）的内容，返回 **`HTTP 422 MEMORY_POLICY_VIOLATION`**；超过 `1,200` tokens 或 `6,000` 字符返回 **`HTTP 422 MEMORY_TOKEN_LIMIT_EXCEEDED`**（可选 `T2` 夜间整理结果同样必须先通过该校验方可提交）。
-3. **第 3 层 — `Zone 1.2` 非信任 XML 围栏与 `Zone 1` 静态免疫**：`<user_long_term_memory trust="user_editable_facts_only">` 围栏配合 `Zone 1` 静态边界声明，确保用户记忆永远无法覆盖密封 `SOUL.md` 原则、RBAC 权限或工具安全边界。
-4. **第 4 层 — `(tenant, subject)` 行级隔离、乐观锁与一键撤销**：所有 SQL 读写经 `subject_tx` 严格锁定在 `(tenant, subject)`（生产 PostgreSQL 启用强制 RLS，绝无跨用户或 `SOUL.md` 泄露），并发写入冲突返回 **`HTTP 409 Conflict`**，且每次保存、整理、忘掉或清空均快照 `previous_content` 以支持一键回退（`POST /v1/memory/revert`）。
-
-### 记忆 API、夜间整洁 CLI 与编辑级 UI 界面
-
-| 交互入口 | 契约与核心能力 |
-|---|---|
-| **REST API (`/v1/memory*`)** | 经同源白名单 BFF 代理开放：`GET /v1/memory`（返回 `MEMORY.md`、`version`、`token_count`、`max_tokens: 1200`、`max_chars: 6000`、`has_previous`、`last_tidy_at`、`pending_staged_items`）、`PUT /v1/memory`（`{version, content}` 乐观锁保存）、`POST /v1/memory/tidy`（`{use_llm?: false}` 默认零 Token 归并或门控 `T2`）、`POST /v1/memory/revert`（`{version}` 一键撤回上一版本）、`POST /v1/memory/forget`（`{query}` 精准清理匹配行与暂存线索）、`DELETE /v1/memory?version=<n>`（清空正文并保留 `previous_content` 供撤销）。 |
-| **夜间整洁 CLI** | `python -m aios_platform.memory_tidy`（支持 `--tenant`、`--subject`、`--dry-run`、`--use-llm`、`--stale-days`）：扫描 `aios_user_memory_staging` 待整理队列或超阈值/过期记录，默认零 Token 确定性去重并分节合并（仅在 `--use-llm` 且模型已配置时按门控条件启用单次 `T2` 整理），更新 `last_tidy_at` 并输出结构化 JSON 摘要。 |
-| **编辑级工作台 (`/settings/memory`)** | [`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx) 完美适配 **Warm Porcelain 暖白瓷釉（`#FAF8F5`）** 与 **Carbon Obsidian 暖碳黑曜石（`#111110`）** 双主题：提供 Muse 风格说明横幅（与文件内容严格分离）、**编辑 / 分栏 / 预览** 三模式（`MarkdownMessage` 实时渲染、`Cmd/Ctrl+S` 快捷保存）、Token 与字符预算仪表（`>=80%` 琥珀预警、`>=100%` 绯红禁存）、一键插入结构化模板、**待归并线索暂存队列**、**快速忘掉（Quick Forget）**、**一键撤回上版** 以及 `409` / `422` 恢复提示栏。 |
-| **对话 `/memory` 与 `T0` 捕获** | 在 `/inbox/assistant` 对话框支持 `/memory` 斜杠命令（`/memory [view \| add <fact> \| forget <query> \| tidy]`）、自然语言（`"记住..."`、`"忘掉..."`、`"remember that..."`、`"forget ..."`）与 `+ 添加上下文` 直达 `/settings/memory`，全程在 **`T0`（`0` 次模型调用）** 确定性完成；日常业务对话亦会在 `T0` 零模型开销下被动暂存非涉密偏好线索。 |
+| **大模型网关与多厂商适配器** | **自研：纯 `httpx + pydantic` 适配器 + `ProviderCircuitBreaker`** | `litellm` | **零第三方模型封装 SDK 依赖**与供应链暴露面；对各厂商缓存机制进行像素级控制（Anthropic `>=3,600` 字符防写入溢价、OpenAI `prompt_cache_key`、Gemini `cachedContent`）；支持 HTTP 400 参数自动剥离重试与有序备选切换。 |
+| **PostgreSQL 连接池** | **采用：`psycopg-pool`（`ConnectionPool` min=1, max=16）** | 自建连接池或重型 ORM 池 | 原生 `psycopg` v3 连接池支持 `timeout=5.0`、缺省时优雅降级直连，且与强制 RLS 事务内 `set_config` 上下文完全兼容。 |
+| **遥测指标与分布式追踪** | **采用：`prometheus-client` + 可选 `opentelemetry.trace` 桥接** | 重型商业 APM Agent | 轻量级 `CollectorRegistry` `/metrics` 指标暴露 + 零依赖 `gen_ai.*` 结构化日志（关联 `X-Request-Id` / `traceparent`），并支持按需开启 OTel GenAI Span（`AIOS_OTEL_GENAI=1`）。 |
+| **持久化与个人长期记忆** | **自研：连接池化 SQLite WAL + 文件优先 `MEMORY.md`（`aios_user_memory`）** | Mem0 / Letta / Zep | 零额外向量库/图数据库运维负担；`T0` 正则与命令捕获实现 **0 次每轮抽取模型调用**；`Zone 1` 前缀保持 **100% 字节不变**（`MEMORY.md` 隔离于 `Zone 1.2`）；具备人类可读 Markdown Diff、`409` 乐观锁与一键撤回。 |
+| **Web、MCP 与桌面端栈** | **采用：FastAPI + Next.js 16 · Node `nodemailer` · FastMCP/stdio · Tauri 2** | Electron / 重型一体式 RPA | 成熟前后端分离与同源 BFF（`output: "standalone"`）、原生连接池化 TypeScript 邮件 MCP（`mcp/email-server`）、stdio JSON-RPC 沙盒隔离（`mcp/workspace-server`）以及极轻内存占用的 Tauri 2 桌面外壳（`desktop/`）。 |
 
 ---
 
-## 前端工程亮点（`web/`）
+## 最小化付费服务起点：批发采购单 OCR 接单工作台（`Tier 0` · `aios_demo/`）
 
-基于 **Next.js 16（App Router）**、**React 19**、**TypeScript 5.9（严格模式 `strict` + `noUncheckedIndexedAccess`）**、**Tailwind CSS v4** 与统一 **Radix UI**（[`web/package.json`](web/package.json)）：
-
-- **Warm Museum Alabaster（`#FAF8F5`）与 Warm Carbon Obsidian（`#111110`）双主题设计系统**：
-  - **零闪烁 SSR Cookie 持久化**：[`web/src/app/layout.tsx`](web/src/app/layout.tsx) 在服务端直接读取 `aios_locale`（`zh-CN` / `zh-HK` / `en`）与 `aios_theme`，首字节即输出 `<html lang="..." data-theme="...">`，全程**零 `localStorage` / `sessionStorage`**。
-  - **去 AI 味编辑级排版与 Theodic 几何标识**：内置 `--font-sans` / `--font-display` / `--font-mono` 等宽数字对齐（`.tabular-nums` / `.font-mono-code`）、港繁专属 `:lang(zh-HK)` PingFang HK/TC 字体优先级（[`globals.css`](web/src/app/globals.css)），以及双墨色 **Theodic** 品牌标识（[`TheodicBrand.tsx`](web/src/components/ui/TheodicBrand.tsx)）。
-  - 克制的外科级深海钴蓝强调色（浅色 `#1B4F9C` / 深色 `#6EA3F2`，定义于 [`tokens.css`](web/src/styles/tokens.css)）与物理阻尼动效组件（[`ArchitecturalRelayCanvas`](web/src/components/kinetic/ArchitecturalRelayCanvas.tsx)、[`Interactive3DCard`](web/src/components/kinetic/Interactive3DCard.tsx)、[`BriefProgressChain`](web/src/components/kinetic/BriefProgressChain.tsx)、[`ExecutionTopologyRibbon`](web/src/components/kinetic/ExecutionTopologyRibbon.tsx)、[`StatePulseBeacon`](web/src/components/kinetic/StatePulseBeacon.tsx)）。
-- **原生 macOS iMessage / WhatsApp 会话体验**：
-  - **无边框悬浮顶栏 + 渐进高斯模糊面纱**：[`ConversationHeader.tsx`](web/src/components/chat/ConversationHeader.tsx) 悬浮于消息流上方，配合 `.aios-chat-header-veil` 实现鼠标悬停或聚焦时的 `112px` 渐进磨砂过渡，居中展示头像与身份胶囊。
-  - **有机堆叠气泡与物理弹簧**：[`bubble-group.tsx`](web/src/features/inbox/bubble-group.tsx) 实现外圆角 `20px`（`--radius-bubble`）、连续消息邻接缝 `6px`（`--radius-bubble-tight`）、尾翼角 `10px`（`--radius-bubble-tail`）、仅底端气泡渲染 SVG 尾翼（`IMessageBubbleTail`）、CSS `linear(...)` 物理弹簧曲线，以及 300 秒 / 跨日聚类的居中时间分割线（`shouldShowBurstTimestamp` / `formatBurstTimestamp`）。
-  - **实时已送达 / 已读回执**：[`ChatRoomWorkspace.tsx`](web/src/features/chat/ChatRoomWorkspace.tsx) 与 [`AssistantWorkspace.tsx`](web/src/features/inbox/AssistantWorkspace.tsx) 接入 `fetchRoomReceipts`、`markRoomRead` 与 SSE `chat_read` 实时事件。
-  - **企业名片弹窗与全公司通讯录**：[`ContactProfileDialog.tsx`](web/src/components/chat/ContactProfileDialog.tsx) 与 [`ContactsDirectoryModal.tsx`](web/src/features/inbox/ContactsDirectoryModal.tsx) 基于 `/api/directory/contacts` 与 `/api/directory/direct-room` 展示部门、分机、邮箱、仓库授权并支持一键写邮件、约 Zoom 会议或拉起单聊。
-- **GFM Markdown 编译器、`cmdk` `/` 斜杠技能面板、`/memory` 与 SSE 工作脉冲**：
-  - [`MarkdownMessage.tsx`](web/src/components/ui/MarkdownMessage.tsx) 使用 `react-markdown` + `remark-gfm` 编译表格、代码块与引用，并通过 `safeUrlTransform` 严格拦截 `javascript:`、`data:`、`vbscript:` 与 `//` 协议相对链接。
-  - [`SlashCommandPalette.tsx`](web/src/features/inbox/SlashCommandPalette.tsx) 基于 `cmdk` 提供按实时权限过滤的技能指令（`/brief`、`/todo`、`/shipment`、`/reschedule`、`/order`、`/invoice`、`/warehouse`、`/approve`、`/email`、`/inbox-mail`、`/meeting`、`/assurance`、`/exceptions`、`/memory`、`/help`），并与 [`AssistantWorkspace.tsx`](web/src/features/inbox/AssistantWorkspace.tsx) 中的 `+ 添加上下文` 跳转及 `T0` `/memory` 直执联动。
-  - [`ProactiveAgentNotifier.tsx`](web/src/components/shell/ProactiveAgentNotifier.tsx) 订阅 `/v1/workbench/events/stream`（兼容 `/v1/workbench/work-pulse` 降级轮询），配合右侧滑出核对抽屉（[`WorkbenchDrawerSlot.tsx`](web/src/components/shell/WorkbenchDrawerSlot.tsx)，快捷键 `⌘.`）实时联动待办与审批提案。
-- **长期记忆编辑工作台（`/settings/memory`、[`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx)）**：
-  - 在 [`AppShell.tsx`](web/src/components/shell/AppShell.tsx)、[`InboxShell.tsx`](web/src/features/inbox/InboxShell.tsx)、[`ProfileSettingsView.tsx`](web/src/features/settings/ProfileSettingsView.tsx) 三标签切换栏以及 [`ContactProfileDialog.tsx`](web/src/components/chat/ContactProfileDialog.tsx) 的助手名片中均提供直达入口。
-  - 遵循暖白瓷釉（`#FAF8F5`）/ 暖碳黑曜石（`#111110`）设计令牌，支持 Edit / Split / Preview 视图、实时 Token/字符配额条（`1,200` tokens / `6,000` 字符）、待归并暂存队列、Quick Forget 检索清理、一键回滚与 `409` / `422` 友好报错恢复。
-- **管理控制台、密封策略状态、8 渠道中枢与路由/越界监控台**：
-  - [`AdminOpsOverview.tsx`](web/src/features/admin/AdminOpsOverview.tsx)：租户停写开关、手动推进 Worker、账号停权与异常处置。
-  - [`PromptGovernancePanel.tsx`](web/src/features/admin/PromptGovernancePanel.tsx)：展示维护团队密封治理状态（`managedBy: theodic_core_team`）与角色/模块能力模拟器（零策略正文暴露）。
-  - [`ChannelsHubPanel.tsx`](web/src/features/admin/ChannelsHubPanel.tsx)：8 大企业 IM 渠道目录、Webhook 复制、员工外部账号绑定与受控外发测试。
-  - [`SecurityMonitorPanel.tsx`](web/src/features/admin/SecurityMonitorPanel.tsx)：12 类安全事件审计流（含 PDPO/GDPR 隐私脱敏徽章）、**智能路由与 KV 缓存遥测**卡片（`T0–T3` 占比、命中率、美元成本、时延与租户日配额护栏），以及 **非工作行为边界与职级升级策略** 编辑器。
-- **同源脱敏 BFF、MCP 日历/Zoom 与桌面端感知层**：
-  - 白名单代理（[`proxy.ts`](web/src/lib/bff/proxy.ts)、[`route.ts`](web/src/app/v1/[...path]/route.ts)）在开放 `/v1/memory*`（`/v1/memory`、`/tidy`、`/revert`、`/forget`）及核心工作台路由的同时，递归剔除 `planner` 与模型内部键（[`sanitize.ts`](web/src/lib/bff/sanitize.ts)），将 `404` 统一收敛为 `RECORD_UNAVAILABLE`，强制 `Cache-Control: no-store` 并按 `authGeneration` 丢弃跨账号迟到响应。
-  - 服务端 Streamable HTTP MCP 与三语自然语言 Zoom 订会（[`web/src/lib/mcp/`](web/src/lib/mcp/)、`/api/integrations/*`、`/api/calendar/ics`）。
-  - [`DesktopHarnessOverlay.tsx`](web/src/components/desktop/DesktopHarnessOverlay.tsx) 挂载于 [`AppShell.tsx`](web/src/components/shell/AppShell.tsx)，在标准浏览器下严格返回 `null`，仅在 Tauri 2 运行时（`window.__TAURI_INTERNALS__`）渲染 `Cmd/Ctrl+Esc` 急停胶囊与 RED 级确认弹窗。
-
----
-
-## 后端、智能路由与桌面 Harness 工程特性（`aios_platform/`、`mcp/`、`desktop/`）
-
-- **密封不可变 `SOUL.md` 与角色/模块策略（[`aios_platform/governance.py`](aios_platform/governance.py)）**：
-  - 系统人格与模块指令由维护团队密封于 [`aios_platform/SOUL.md`](aios_platform/SOUL.md) 及服务端策略规格中，企业管理员与模型均**不可读取、不可修改**。
-  - `PUT /v1/operations/prompt-policies/{scope_key}` 与 `POST .../reset` 统一返回 HTTP `403 SYSTEM_POLICY_IMMUTABLE`（`PolicyImmutableError`）。
-  - `check_output_leakage()` 在响应返回前实时剥离密钥、服务路径与密封规则锚点。
-- **多仓多模块 RBAC、可选 OPA 与 PostgreSQL 强制 RLS**：
-  - [`aios_platform/module_access.py`](aios_platform/module_access.py) 通过咨询锁与乐观锁 `version` 实现员工按模块/仓库动态授权与有效期控制，触发 `ACCESS_CHANGED` 即时重验。
-  - 支持可选 Open Policy Agent 网关（[`deploy/platform/opa.rego`](deploy/platform/opa.rego)、[`aios_platform/providers.py`](aios_platform/providers.py)）。
-  - [`deploy/platform/postgres-security.sql`](deploy/platform/postgres-security.sql) 对核心业务、聊天、预审与治理表启用 `ENABLE` + `FORCE ROW LEVEL SECURITY`，并在启动时由 [`aios_platform/database_security.py`](aios_platform/database_security.py) 强制校验证明 `aios_api` 与 `aios_worker` 权限分离。
-- **12 类确定性安全护栏与 L1/L2/L3 隐私脱敏分级升级（[`aios_platform/security_guard.py`](aios_platform/security_guard.py)、[`aios_platform/governance.py`](aios_platform/governance.py)）**：
-  - `normalize_user_text()` 执行 NFKC 与零宽字符 `Cf` 剥离，覆盖 12 类事件：`SKILL_TAMPER_ATTEMPT`、`PROMPT_TAMPER_ATTEMPT`、`DESTRUCTIVE_ACTION_ATTEMPT`、`FILESYSTEM_ESCAPE_ATTEMPT`、`PROMPT_INJECTION_ATTEMPT`、`SECRET_EXFILTRATION_ATTEMPT`、`PRIVILEGE_ESCALATION_ATTEMPT`、`CROSS_SCOPE_ACCESS_ATTEMPT`、`UNAUTHORIZED_MODULE_QUERY`、`EMAIL_POLICY_VIOLATION`、`OFF_TOPIC_PERSONAL_CHAT`、`OFF_TOPIC_LOCAL_AUTOMATION`。
-  - `evaluate_work_boundary()` 基于企业工作应用白名单（`DEFAULT_WORK_APP_ALLOWLIST`）识别非工作对话或非工作桌面自动化（严格确保正常寒暄与差旅/周报/单据工作查询**零误报**）：
-    - **L1**（单日 1–2 次私人闲聊）：走 `T0` 零模型算力，返回克制同事口吻提醒并记 `info`/`resolved`，不推主管。
-    - **L2**（单日 3–4 次或首次非工作本地自动化）：确定性拒绝（`medium`/`denied`），不推送上级。
-    - **L3**（`>=5次/日`、`>=12次/7日` 或 `>=2次/日` 桌面越界）：升级为 `high`/`escalated`，按汇报链职级自动路由（`operator -> [manager]`、`manager/admin -> [executive, legal]`、`executive -> [legal]`；近 7 日曾发生高危安全违规时自动抄送 `access-admin` 与 `legal`）。
-    - **PDPO/GDPR/PIPL 硬脱敏**：留存 `preview` 固定为 `[REDACTED_PRIVACY_POLICY]`，汇报链仅可见 `(subject, role)`、24h/7d 统计、行为分类与估算算力开销（`estimated_usd`），绝不泄露员工私人对话原文。
-- **纯 `httpx` + `pydantic` 跨厂商 `LLMProvider`（[`aios_platform/llm_provider.py`](aios_platform/llm_provider.py)）**：
-  - **零内嵌 `litellm` SDK**，彻底消除第三方模型封装库的供应链安全风险；同时原生支持通过 `base_url` 对接外部 OpenAI 兼容网关。
-  - `ModelProfile` 注册表覆盖 `deepseek-chat`、`deepseek-flash`、`deepseek-v4-pro`、`gpt-5.4-mini`、`claude-sonnet-4-6`、`gemini-2.5-pro`、`qwen-plus`，自动计算 `safe_cap_tokens = min(180_000, int(surcharge_cliff * 0.90), int(context_window * 0.60))`。
-  - 三大连接池化适配器（`OpenAICompatAdapter`、`AnthropicAdapter`、`GeminiAdapter`）支持跨厂商前缀缓存命中统计、推理强度自动翻译及 HTTP `400` 降级剥离重试、多轮 `reasoning_content` / `thinking_blocks` 透传、`MAX_LLM_RESPONSE_BYTES = 524_288` 流式封顶、抖动退避重试与 `ProviderCircuitBreaker` 熔断器。
-- **`<2ms` `EffortRouter`、`Zone 1.2` 每用户 `MEMORY.md`、KV 分区上下文管理器与多步 HITL 执行器（[`aios_platform/routing_context.py`](aios_platform/routing_context.py)、[`aios_platform/assistant_agent.py`](aios_platform/assistant_agent.py)、[`aios_platform/user_memory.py`](aios_platform/user_memory.py)）**：
-  - `EffortRouter` 在 `<2ms` 内完成 `T0`（0 次模型调用——含 `/memory` 与明确“记住/忘掉”意图）、`T1`（`effort="none"`，`1200` tok / `15s`）、`T2`（`effort="low"`，`2400` tok / `22s`）、`T3`（`effort="high"`，`8192` tok / `55s`）调度；同一会话保持同模型动态切换 `reasoning_effort` 以锁定 KV Cache，若 `T1/T2` 工具调用或参数校验失败则自动触发 **Cascade Escalation（级联升级）** 至 `T3`。
-  - `ContextManager` 将上下文严格隔离为 **Zone 1**（~3K–5K 全租户全局 100% 字节不变前缀 + 字典序工具 Schema + 记忆边界静态说明，绝不混入动态脉冲）、**Zone 1.2**（非空每用户 `MEMORY.md` `<= 1,200` Token，置于 `<user_long_term_memory trust="user_editable_facts_only">` 围栏内，空文件零注入）、**Zone 1.5**（`<=140K` 且 `<=safe_cap-38K` 单文档槽，切单自动卸载为 `<=2,000` Token 结构化摘要并持久化至 `aios_agent_session_state`）、**Zone 2**（`32K` 只追加轨迹桶，工具结果入库前裁剪至 `<=1,500` Token，`>=28,000` Token 触发滞回压缩至 `~7,000`，闲置 `>60m` 自动压缩）、以及 **Zone 3**（仅挂在当次请求尾部的瞬态 `pulse_summary`）。
-  - `UserMemory` 与 `python -m aios_platform.memory_tidy`（[`user_memory.sql`](aios_platform/user_memory.sql)、迁移 [`0012_user_long_term_memory.py`](migrations/versions/0012_user_long_term_memory.py)）落实 4 层防投毒护栏（`NFKC` + `Cf` 剥离 + `scrub_secrets()`、`422 MEMORY_POLICY_VIOLATION` / `MEMORY_TOKEN_LIMIT_EXCEEDED`、`Zone 1.2` 非信任围栏、`(tenant, subject)` RLS 隔离 + `409` 乐观锁 + `POST /v1/memory/revert`）、`T0` 被动线索暂存（`fact_sha256` 去重）及零 Token 夜间归并（支持可选门控 `T2`）。
-  - 超过 `140K` 的超大文档包由 `MapReduceDocumentAnalyzer` 自动切分为 `<=24K` 分片并发 `T1/T2` Map 抽取，再由 `T3` 在 `<=80K` 汇总稿上完成最终冲突综合。
-  - `RoutingTelemetryStore` 与 `QuotaManager` 基于 [`routing_and_escalation.sql`](aios_platform/routing_and_escalation.sql) 与迁移 [`0011_routing_telemetry_and_escalation.py`](migrations/versions/0011_routing_telemetry_and_escalation.py) 提供实时成本/命中率遥测与配额护栏。
-- **提案摘要锁、Outbox 与 Ed25519 签名受控预审（[`aios_platform/workflow.py`](aios_platform/workflow.py)、[`aios_platform/assurance*.py`](aios_platform/assurance.py)）**：
-  - 完整状态机（`PROPOSED -> QUEUED -> SENDING -> VERIFYING -> CHECKING -> VERIFIED` / `OUTCOME_UNKNOWN` / `NEEDS_OPERATOR` / `REJECTED`）、精确 SHA-256 `plan_digest` 锁、异人审批、PostgreSQL `SKIP LOCKED` + 租约/Epoch 恢复（[`run_worker.py`](aios_platform/run_worker.py)），以及 `LocalERP` / `OdooERP`（JSON-2）/ `ERPNext`（Frappe RPC）适配器（[`erp.py`](aios_platform/erp.py)）。
-  - Governed Assurance（[`assurance.py`](aios_platform/assurance.py)、[`assurance_policy.py`](aios_platform/assurance_policy.py)、[`assurance_gateway.py`](aios_platform/assurance_gateway.py)、[`assurance_audit.py`](aios_platform/assurance_audit.py)、[`assurance_catalog.py`](aios_platform/assurance_catalog.py)）提供单元格白名单投影、16 KiB 边界网关、AES-256-GCM 密文审计正文、SHA-256 哈希链与 Ed25519 检查点签名验证。
-- **8 渠道企业消息中枢与独立 Email MCP（[`aios_platform/channels.py`](aios_platform/channels.py)、[`mcp/email-server/`](mcp/email-server/)）**：
-  - 统一接入 **WhatsApp Business**、**企业微信 WeCom**、**飞书 / Lark**、**钉钉 DingTalk**、**Slack Enterprise**、**Microsoft Teams**、**Telegram Business** 与 **LINE Official / WORKS**，内置多协议签名校验、防重放时间窗与成员映射绑定。
-  - 独立 TypeScript Email MCP 服务（`mcp/email-server/`）实现收件人数上限（`MAX_EMAIL_RECIPIENTS = 10`）、CRLF 邮件头注入阻断、滑动窗口限流、TLS/STARTTLS 连接池发信与 `/v1/workbench/email-outbox` 审计联动。
-- **Tauri 2 跨平台桌面端（[`desktop/`](desktop/)）与本地工作区 FastMCP + 受控 CUA（[`mcp/workspace-server/`](mcp/workspace-server/)）**：
-  - `desktop/src-tauri/`：严格 CSP、最小化 Capability 白名单、`keyring` v3 原生凭据库（拦截任何 `sk-`/`AIza` 等 LLM 密钥写入 `ForbiddenLlmSecret`）、5 个 Rust IPC 命令（`ipc.rs`）与 `CmdOrCtrl+Escape` 全局急停热键（`lib.rs`）。
-  - `mcp/workspace-server/`：`WorkspaceSandbox(root_dir)` 基于 `os.path.realpath` 阻断路径穿越、软链接逃逸及 `.env`/`.ssh`/`id_rsa`/`*.sqlite*`/`.reviewer-pass.local.json`/`SOUL.md` 读取；`document_tools.py` 优先使用 API 解析/生成（支持标准库 OOXML 与可选 `docling`/`markitdown`/`python-docx`/`python-pptx`/`openpyxl` 及 LibreOffice PNG 视觉防遮挡预览）；`CuaPolicyEngine` 实现 macOS AX / Windows UIA 办公应用白名单、强制单窗口采集（`full_screen_capture=False`）、`GREEN`/`YELLOW`/`RED` 确认令牌、PII 脱敏（支持可选 Presidio）、间接提示词注入清洗与 `EmergencyStopController` 步步熔断。
-
----
-
-## 最小化付费服务起点：批发采购单 OCR 接单工作台
-
-原独立批发采购单原型（`aios_demo/`）作为 **Tier 0** 最小化付费服务起点完整保留：支持上传采购单、检查字段证据、处理异常、审批销售订单草稿，然后在本地 ERP 沙盒核对写入。收件箱保存原单、已复核预览和命令。刷新或重启后可继续处理。
+原独立批发采购单原型（`aios_demo/`）作为 **Tier 0** 最小化付费服务起点完整保留：支持上传采购单、检查像素级字段证据、处理数量冲突异常、审批销售订单草稿，然后在本地 ERP 沙盒核对写入。收件箱完整保存原单、已复核预览与命令，刷新或重启后均可继续处理。
 
 ### 物流与批发共用后端（`aios_platform/`）
 
-`aios_platform/` 为物流和批发共用后端，包含类型化动作、租户策略、独立审批及 ERP 核对。两个合成租户使用不同主数据。下方采购单工作台可独立运行。
+`aios_platform/` 直接复用并扩展这些类型化动作、租户策略、独立审批及 ERP 核对语义（内置合成租户 `harbour` 与 `island`），而下方采购单工作台可完全独立运行：
 
 ```bash
 python -m pip install -r requirements-platform.txt
 python scripts/platform_smoke.py
 ```
 
-[后端架构及 ERP 合同](docs/platform.md)涵盖租户配置、Linux 和 PostgreSQL 隔离、API、模型与客户接入。[生产加固指南](docs/production-readiness.md)涵盖迁移、操作控制和上线条件。[试点自动化指南](docs/pilot-automation.zh-CN.md)说明批量接单、审批、异常处理和可复现的效率测试。
-
-[企业工作台与前端交接](docs/workbench-handoff.zh-CN.md)包含岗位工具、员工聊天及生产接入边界。
+详情请参阅[后端架构及 ERP 合同](docs/platform.md)、[生产加固指南](docs/production-readiness.md)、[试点自动化指南](docs/pilot-automation.zh-CN.md)以及[企业工作台与前端交接](docs/workbench-handoff.zh-CN.md)。
 
 ![采购单工作台、收件箱、OCR 证据和草稿预览](docs/browser/04-upload-and-inbox.png)
 
 ### 两分钟演示
 
-1. 打开 **Standard PO**，点选 **Line 1 · Quantity** 查看 OCR 框。目录将 2 箱转换成 48 件，采购单总额核对为 HKD 804。
-2. 切换 **Quantity conflict**。Tesseract 读取 2，脚本模拟的视觉模型 A 读出 8，模型 B 读出 2。系统继续要求复核。输入 8 会触发行金额错误，改为 2 后通过。
-3. 点 **Approve and queue**，保持 **Simulate a lost reply** 勾选。Worker 第一步写入沙盒后模拟丢回复，第二步单独读回。账本显示只有一份匹配草稿。
-4. 刷新页面重新查看已核对的单据，再上传 `fixtures/harbour-po.png`。清晰且一致的样张走本地 OCR，视觉模型调用数为零。
+1. 打开 **Standard PO**，点选 **Line 1 · Quantity** 查看 OCR 定位框。目录将 **2 箱** 转换成 **48 件**，采购单总额核对为 **HKD 804**。
+2. 切换 **Quantity conflict**。Tesseract 读取 **2**，脚本模拟的视觉模型 A 读出 **8**，模型 B 读出 **2**，系统仍按冲突门禁要求复核。输入 **8** 会触发行金额校验拦截，改为 **2** 后通过。
+3. 点 **Approve and queue**，保持 **Simulate a lost reply** 勾选。Worker 第一步写入沙盒后模拟丢回复，第二步执行独立读回校验，账本仅记录一份匹配草稿。
+4. 刷新页面重新查看已核对的单据，再上传 `fixtures/harbour-po.png`。清晰且一致的样张仅走本地 OCR，视觉模型调用数为零。
 
 | 异常复核 | ERP 写后核对 |
 |---|---|
 | [浏览器截图](docs/browser/02-quantity-review.png) | [浏览器截图](docs/browser/03-erp-reconciliation.png) |
 
-收件箱截图来自 [CI 浏览器实跑](https://github.com/Doooo4love/sme-aios-demo/actions/runs/44757111231)。[演示手册](docs/demo.zh-CN.md)提供讲解步骤。
+收件箱截图来自 [CI 浏览器实跑](https://github.com/Doooo4love/sme-aios-demo/actions/runs/44757111231)，完整操作脚本见[演示手册](docs/demo.zh-CN.md)。
 
 ### 本地运行（独立采购单工作台）
 
-使用 Python 3.11+ 和 Tesseract 英文数据。Debian／Ubuntu 可安装 `tesseract-ocr` 与 `tesseract-ocr-eng`，macOS 可通过 Homebrew 安装 `tesseract`。
+需安装 Python 3.11+ 与 Tesseract 英文训练数据（Debian/Ubuntu 安装 `tesseract-ocr` 与 `tesseract-ocr-eng`；macOS 使用 `brew install tesseract`）：
 
 ```bash
 python -m venv .venv
@@ -326,7 +271,7 @@ python -m pip install -r requirements.txt
 python -m uvicorn aios_demo.api:app --host 127.0.0.1 --port 8758
 ```
 
-打开 **http://127.0.0.1:8758**。默认无需模型密钥。用新的 `AIOS_STATE_DIR` 可重复演示，同一个业务键在原库中会返回已有命令。演示工作台可以逐步推进 Worker。独立运行时，API 和 `python -m aios_demo.worker` 使用同一状态目录及可选 PostgreSQL DSN。
+访问 **http://127.0.0.1:8758**（默认无需模型密钥）。使用全新 `AIOS_STATE_DIR` 可重复演示，也可独立启动 Worker（`python -m aios_demo.worker`）共用同一状态目录及可选 `AIOS_POSTGRES_DSN`。
 
 ```bash
 python scripts/run_demo.py
@@ -334,26 +279,22 @@ python -m pip install -r requirements-test.txt
 python -m unittest discover -s tests -v
 ```
 
-### 接单合同
+### 接单合同与核心实现
 
 ```bash
 python -m aios_demo.extract_po fixtures/harbour-po.png --mode ocr
 ```
 
-CLI 返回 JSON，包含原文件哈希、尺寸、字段值、OCR 区域、复核原因、模型调用次数和可选草稿。配置服务商后可用 `--mode vision-on-demand` 检查争议字段。两种模式复用金额与箱件规则，CLI 输出止于草稿预览。
-
-工作台接受不超过 8 MB、800 万像素的 PNG／JPEG，并存储标准化 PNG 以保持坐标一致。当前解析和目录按演示买方和单据版式配置，未知版式进入复核。启用视觉模型时，每次仅发送定位后的裁剪和字段类型。
-
-### 核心实现
+CLI 返回包含原文件哈希、尺寸、字段值、OCR 区域、复核原因、模型调用次数和可选草稿的 JSON（传入 `--mode vision-on-demand` 可对争议字段触发裁剪复核）。工作台支持不超过 8 MB / 800 万像素的 PNG/JPEG。
 
 | 模块 | 已实现能力 |
 |---|---|
 | [解析器](aios_demo/parsing.py) | Tesseract TSV 转成类型化字段、完整性检查、像素位置、评分 |
 | [多模态路由](aios_demo/routing.py) | 证据定位、业务规则、定向和限额视觉读取、人工复核 |
-| [命令与 outbox](aios_demo/storage.py) | 保存输入和预览、摘要审批、幂等、事务入队、PostgreSQL `SKIP LOCKED`、租约、epoch 和有限读回 |
+| [命令与 outbox](aios_demo/storage.py) | 线程连接池化 SQLite WAL 与懒加载 `psycopg_pool`、摘要审批、幂等、PostgreSQL `SKIP LOCKED`、租约/Epoch 栅栏 |
 | [消费者](aios_demo/worker.py) | 持久化派发步骤、跨独立数据库写入、丢回复恢复、校验草稿状态和完整内容 |
 | [API 与工作台](aios_demo/api.py) | 上传、收件箱、存储证据和预览、审批和回执状态 |
-| [测试](tests/) | 本地 OCR、冲突门禁、并发重复审批、过期租约、未知结果和端到端 API |
+| [测试](tests/) | 本地 OCR、冲突门禁、并发重复审批、16 线程 WAL 压测、过期租约与未知结果对账 |
 
 ```mermaid
 flowchart LR
@@ -363,17 +304,13 @@ flowchart LR
     D --> E["ERP 草稿与读回"]
 ```
 
-### 适用范围
+### 适用范围与平滑演进路径
 
-工作台采用合成单据、固定本地审核人和独立 ERP 沙盒库，预设场景默认使用脚本模拟视觉模型。新上传默认本地 OCR，命令库默认 SQLite，可选 PostgreSQL 和 HTTPS 视觉接口。后端平台另有权限控制及 ERP bridge 客户端。客户 ERP 事务、身份对接和写入验收属于试点集成。[实现边界](docs/demo.zh-CN.md#实现边界)
-
-员工级工作台模块、Agent 越权处理与上线步骤见[工作台后端与授权](docs/workbench-backend.zh-CN.md)。
-
-> **平滑升级路径**：`aios_demo/` 的 PO 证据定位与 `plan_digest` 摘要锁审批语义已无缝融入 [`aios_platform/`](aios_platform/)（`POST /v1/intakes/{warehouse}`、`/structured/batch`、`/proposals/{id}/approve`）与 Next.js 前端的 [`OrderIntakeWorkspace.tsx`](web/src/features/orders/OrderIntakeWorkspace.tsx) 及 [`OcrEvidenceViewer.tsx`](web/src/features/orders/OcrEvidenceViewer.tsx)。
+`aios_demo/` 为单租户合成样张起点原型（详见[实现边界](docs/demo.zh-CN.md#实现边界)）。其 PO 证据定位与 `plan_digest` 摘要锁审批语义已无缝融入 [`aios_platform/`](aios_platform/)（`POST /v1/intakes/{warehouse}`、`/structured/batch`、`/proposals/{id}/approve`）与 Next.js 前端的 [`OrderIntakeWorkspace.tsx`](web/src/features/orders/OrderIntakeWorkspace.tsx) 及 [`OcrEvidenceViewer.tsx`](web/src/features/orders/OcrEvidenceViewer.tsx)。
 
 ---
 
-## 快速启动、测试验证与线上运维
+## 快速启动、环境变量参考、企业评测与线上运维
 
 ### 1. 企业云端工作台（`web/` + `aios_platform/`）
 
@@ -393,74 +330,88 @@ export AIOS_LLM_API_KEY="sk-your-server-only-key"
 
 访问 **http://localhost:3000/** 即可使用账号密码登录，或展开演示账号助手快速体验全部 11 个受控企业身份（`operator`、`manager`、`finance`、`access-admin`、`admin`、`other-manager`、`island-manager`、`viewer`、`quality`、`legal`、`executive`）。Next.js BFF 环境变量与外部 MCP 日历/Zoom 接入配置见 [`web/README.md`](web/README.md)。
 
-### 2. 数据库迁移、夜间记忆整理与自动化测试回归
+### 2. 核心服务端环境变量参考
+
+全部敏感凭据均支持 `*_FILE` 文件路径注入（如 `AIOS_LLM_API_KEY_FILE`、`AIOS_PLATFORM_DSN_FILE`），严禁将任何服务端密钥暴露为 `NEXT_PUBLIC_*`。
+
+| 环境变量 | 默认值 / 作用域 | 用途说明 |
+|---|---|---|
+| `AIOS_PROFILE` / `AIOS_PLATFORM_DSN` | `oidc` / `demo` 模式回退 SQLite | 切换 `demo` 与 `oidc`（PostgreSQL `psycopg_pool` + 强制 RLS）运行模式 |
+| `AIOS_LLM_PROVIDER` / `AIOS_LLM_MODEL` / `AIOS_LLM_BASE_URL` / `AIOS_LLM_API_KEY` | `deepseek-chat`（`https://api.deepseek.com`） | 主路径纯 `httpx + pydantic` 大模型适配器配置 |
+| `AIOS_LLM_FALLBACK_PROVIDER` / `AIOS_LLM_FALLBACK_MODEL` / `AIOS_LLM_FALLBACK_BASE_URL` / `AIOS_LLM_FALLBACK_API_KEY` | 可选 | 配置有序故障转移备选模型，自动注入 `LLMProvider.with_fallbacks(...)` 与熔断器 |
+| `AIOS_API_RATE_LIMIT_RPM` / `AIOS_TURNS_RATE_LIMIT_RPM` | `600` / `120` | 按客户端滑动窗口写限流（超限返回 `429 RATE_LIMITED` 与 `Retry-After`） |
+| `AIOS_OTEL_GENAI` / `AIOS_METRICS_TOKEN` | `1` / 可选（`>=32` 字符） | 控制 `opentelemetry.trace` GenAI Span 桥接及 Bearer 鉴权的 Prometheus `/metrics` |
+| `AIOS_BROWSER_ORIGIN` / `AIOS_BROWSER_SESSION_KEY` / `AIOS_DEMO_SECRET` | 同源 BFF 会话 | `__Host-aios_session` 加密签名、CSRF 与浏览器 Origin 校验 |
+| `AIOS_SMTP_HOST` / `AIOS_SMTP_PORT` / `AIOS_SMTP_USER` / `AIOS_SMTP_PASS` / `AIOS_SMTP_FROM` | 端口 `587`（TLS/STARTTLS） | [`mcp/email-server/`](mcp/email-server/) 邮件连接池传输配置 |
+| `AIOS_CHANNEL_<ID>_WEBHOOK_SECRET` / `AIOS_MCP_CHANNEL_<ID>_URL` | 按渠道配置 | 8 大企业 IM 渠道入站验签密钥与出站 MCP 中继地址 |
+
+### 3. 企业就绪度评测、自动化回归、迁移与夜间 `systemd` 定时任务
 
 ```bash
+# 运行零外部 API 密钥的 6 门禁企业就绪度评测基准
+python scripts/enterprise_eval.py --json
+
+# 运行后端全量单元测试与集成测试（166 项）
+python -m unittest discover -s tests -v
+
+# 运行企业就绪度、FinOps 故障转移、存储/可观测韧性、MEMORY.md、路由、桌面与越界专项测试
+python -m unittest tests.test_enterprise_readiness tests.test_finops_and_failover tests.test_infra_resilience -v
+python -m unittest tests.test_migrations tests.test_user_memory tests.test_routing_provider_context tests.test_assistant_and_sse -v
+python -m unittest tests.test_desktop_workspace_harness tests.test_off_topic_escalation tests.test_governance_and_guard -v
+
 # 执行 Alembic 数据库迁移至 0012_user_long_term_memory
-.venv/bin/python -m alembic upgrade head
+python -m alembic upgrade head
 
-# 执行每用户 MEMORY.md 夜间整理任务（默认 0-Token 确定性归并；附加 --use-llm 启用门控 T2）
-.venv/bin/python -m aios_platform.memory_tidy --dry-run
-.venv/bin/python -m aios_platform.memory_tidy --use-llm --stale-days 7
+# 手动运行夜间 MEMORY.md 整理任务（默认 0-Token 确定性归并；附加 --use-llm 启用门控 T2）
+python -m aios_platform.memory_tidy --dry-run
+python -m aios_platform.memory_tidy --use-llm --stale-days 7
 
-# 运行后端全量单元测试与集成测试
-.venv/bin/python -m unittest discover -s tests -v
+# 启用并核查加固版夜间 systemd 定时器（每日 19:15:00 UTC / 03:15 HKT）
+sudo systemctl enable --now aios-memory-tidy.timer
+systemctl status aios-memory-tidy.timer aios-memory-tidy.service
 
-# 运行每用户 MEMORY.md、Zone 1.2 KV 缓存、防投毒与数据库迁移专项测试
-.venv/bin/python -m unittest tests.test_migrations tests.test_user_memory -v
-
-# 运行路由、4 区上下文、智能助手与数据库迁移专项测试
-.venv/bin/python -m unittest tests.test_routing_provider_context tests.test_assistant_and_sse tests.test_migrations -v
-
-# 运行桌面端与本地工作区 MCP Harness 专项测试
-.venv/bin/python -m unittest tests.test_desktop_workspace_harness -v
-
-# 运行非工作行为 L1/L2/L3 升级与安全护栏专项测试
-.venv/bin/python -m unittest tests.test_off_topic_escalation tests.test_governance_and_guard -v
-
-# 运行前端严格 TypeScript 类型检查、Standalone 构建与 Playwright 端到端回归
+# 前端严格 TypeScript 类型检查、Standalone 构建与 Playwright 端到端回归
 pnpm --dir web run typecheck
 pnpm --dir web run build
 pnpm --dir web run test:e2e
 
-# 运行 Cloudflare Worker 类型检查与单元测试
-pnpm --dir deploy/cloudflare-worker run typecheck
-pnpm --dir deploy/cloudflare-worker run test
+# 独立 Email MCP 与 Cloudflare Worker 类型及单元测试
+pnpm --dir mcp/email-server run typecheck && pnpm --dir mcp/email-server run build
+pnpm --dir deploy/cloudflare-worker run typecheck && pnpm --dir deploy/cloudflare-worker run test
 ```
 
-### 3. Tauri 2 桌面端（`desktop/`）与本地工作区 MCP（`mcp/workspace-server/`）
+### 4. Tauri 2 桌面端（`desktop/`）与本地工作区 MCP（`mcp/workspace-server/`）
 
 ```bash
 # 通过 stdio 运行本地工作区与受控 CUA MCP 服务
-.venv/bin/python mcp/workspace-server/server.py --root /path/to/workspace
+python mcp/workspace-server/server.py --root /path/to/workspace
 
-# 启动或打包 Tauri 2 跨平台桌面壳（需在 macOS/Windows CI 或本机安装 Node >= 20、pnpm 与 Rust >= 1.77）
+# 启动或打包 Tauri 2 跨平台桌面壳（需在 macOS/Windows 安装 Node >= 20、pnpm 与 Rust >= 1.77）
 pnpm --dir desktop install
 pnpm --dir desktop dev
 pnpm --dir desktop build
 ```
 
-关于 OS Keychain 设备令牌约束、最小权限 Capability 与 macOS/Windows 安装包构建细节，请参阅 [`desktop/README.md`](desktop/README.md) 与 [`mcp/workspace-server/README.md`](mcp/workspace-server/README.md)。
+OS Keychain 设备令牌约束、最小权限 Capability 与 `.dmg`/`.app`/`.msi`/`.exe` 构建细节请参阅 [`desktop/README.md`](desktop/README.md) 与 [`mcp/workspace-server/README.md`](mcp/workspace-server/README.md)。
 
-### 4. Cloudflare Zero Trust、IntegrAI 云主机与评审门禁运维
+### 5. Cloudflare Zero Trust、IntegrAI 云主机与评审门禁运维
 
-生产演示部署将全部应用端口严格锁定在回环地址（`127.0.0.1:3000`、`:8760`、`:8761`），通过 Cloudflare Named Tunnel（[`deploy/integrai/`](deploy/integrai/)）与 **Cloudflare Workers VPC**（[`deploy/cloudflare-worker/`](deploy/cloudflare-worker/)）对外提供服务；边缘端 **Reviewer Gate**（`src/reviewer-gate.ts`）强制附带 `X-Robots-Tag: noindex, nofollow, noarchive`、基于 IP 的 LLM 滑动限流（`8/min`、`40/hr`）以及 Judge 沙盒管理写操作拦截（`403 JUDGE_SANDBOX_PROTECTED`）。
+所有生产演示应用端口均严格锁定于回环地址（`127.0.0.1:3000`、`:8760`、`:8761`），经由 Cloudflare Named Tunnel（[`deploy/integrai/`](deploy/integrai/)）与 **Cloudflare Workers VPC**（[`deploy/cloudflare-worker/`](deploy/cloudflare-worker/)）暴露给授权评审方（[`src/reviewer-gate.ts`](deploy/cloudflare-worker/src/reviewer-gate.ts)）。
 
-- **本地 Dry-Run 校验与无回显推流推送密钥**（读取已忽略的 `.reviewer-pass.local.json`，通过 `stdin` 写入 `wrangler secret put`）：
-  ```bash
-  ./deploy/cloudflare-worker/activate-reviewer-gate.sh --dry-run
-  ./deploy/cloudflare-worker/activate-reviewer-gate.sh
-  ```
-- **零停机紧急到期熔断**（立即作废当前全部评审口令与签名直链）：
-  ```bash
-  printf '%s' '2020-01-01T00:00:00Z' | pnpm --dir deploy/cloudflare-worker exec wrangler secret put AIOS_REVIEWER_EXPIRES_AT --name aios-demo
-  ```
-- **一键轮换密钥与口令**（吊销历史 Cookie 与旧版二维码令牌）：
-  ```bash
-  node ./deploy/cloudflare-worker/scripts/generate-reviewer-pass.mjs --force
-  ./deploy/cloudflare-worker/activate-reviewer-gate.sh
-  ```
-- 完整 Worker 部署、Zero Trust Access 回切与正式域名迁移说明见 [`deploy/cloudflare-worker/README.zh-CN.md`](deploy/cloudflare-worker/README.zh-CN.md)；Ubuntu 宿主机加固发布手册（`01-preflight.sh` → `06-verify-live.sh`）见 [`deploy/integrai/RUNBOOK.zh-CN.md`](deploy/integrai/RUNBOOK.zh-CN.md)。
+```bash
+# 本地 Dry-Run 校验与无回显推流推送密钥（读取 .reviewer-pass.local.json 经 stdin 写入）
+./deploy/cloudflare-worker/activate-reviewer-gate.sh --dry-run
+./deploy/cloudflare-worker/activate-reviewer-gate.sh
+
+# 零停机紧急到期熔断（立即作废当前全部评审口令与签名直链）
+printf '%s' '2020-01-01T00:00:00Z' | pnpm --dir deploy/cloudflare-worker exec wrangler secret put AIOS_REVIEWER_EXPIRES_AT --name aios-demo
+
+# 一键轮换密钥与口令（吊销历史 Cookie 与旧版二维码令牌）
+node ./deploy/cloudflare-worker/scripts/generate-reviewer-pass.mjs --force
+./deploy/cloudflare-worker/activate-reviewer-gate.sh
+```
+
+完整 Worker 部署、Zero Trust Access 回切及 Ubuntu 宿主机加固发布手册（`01-preflight.sh` -> `06-verify-live.sh`）见 [`deploy/cloudflare-worker/README.zh-CN.md`](deploy/cloudflare-worker/README.zh-CN.md) 与 [`deploy/integrai/RUNBOOK.zh-CN.md`](deploy/integrai/RUNBOOK.zh-CN.md)。
 
 ---
 
@@ -473,6 +424,7 @@ pnpm --dir desktop build
 | **生产加固与上线验收门禁** | [docs/production-readiness.md](docs/production-readiness.md) | [docs/production-readiness.en.md](docs/production-readiness.en.md) |
 | **批发与物流试点自动化指南** | [docs/pilot-automation.zh-CN.md](docs/pilot-automation.zh-CN.md) | [docs/pilot-automation.md](docs/pilot-automation.md) |
 | **企业工作台与前端交接规范** | [docs/workbench-handoff.zh-CN.md](docs/workbench-handoff.zh-CN.md) | [docs/workbench-handoff.md](docs/workbench-handoff.md) |
+| **商业定价矩阵与零 FDE 本地化战略** | [docs/pricing-and-localization-report.zh-CN.md](docs/pricing-and-localization-report.zh-CN.md) | [docs/pricing-and-localization-report.md](docs/pricing-and-localization-report.md) |
 | **工作台后端与模块授权机制** | [docs/workbench-backend.zh-CN.md](docs/workbench-backend.zh-CN.md) | — |
 | **员工协作、同源会话与客户连接器** | [docs/workbench-collaboration.zh-CN.md](docs/workbench-collaboration.zh-CN.md) | — |
 | **企业工作台前端交付指南（`web/`）** | [docs/workbench-frontend.zh-CN.md](docs/workbench-frontend.zh-CN.md) | [web/README.md](web/README.md) |
@@ -486,6 +438,6 @@ pnpm --dir desktop build
 
 Theodic SME AIOS 的构建受益于以下优秀开源生态：
 
-- **后端、安全与数据层**：[FastAPI](https://fastapi.tiangolo.com/)、[Pydantic](https://docs.pydantic.dev/)、[httpx](https://www.python-httpx.org/)、[SQLAlchemy](https://www.sqlalchemy.org/) / [Alembic](https://alembic.sqlalchemy.org/)、[PostgreSQL](https://www.postgresql.org/)（强制 RLS 与 `SKIP LOCKED`）、[PyJWT](https://pyjwt.readthedocs.io/)、[cryptography](https://cryptography.io/)（Ed25519 / AES-256-GCM）、[Open Policy Agent](https://www.openpolicyagent.org/)、[Prometheus Python Client](https://github.com/prometheus/client_python)。
-- **前端与交互体验**：[Next.js](https://nextjs.org/)、[React](https://react.dev/)、[Tailwind CSS](https://tailwindcss.com/)、[Radix UI](https://www.radix-ui.com/)、[cmdk](https://cmdk.paco.me/)、[react-markdown](https://github.com/remarkjs/react-markdown) + [remark-gfm](https://github.com/remarkjs/remark-gfm)、[Lucide](https://lucide.dev/)、[Zod](https://zod.dev/)、[Playwright](https://playwright.dev/)。
-- **桌面端、文档解析与受控自动化**：[Tauri 2](https://v2.tauri.app/)（`keyring` v3）、[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)、[Docling](https://github.com/DS4SD/docling) / [MarkItDown](https://github.com/microsoft/markitdown)、[Microsoft Presidio](https://microsoft.github.io/presidio/)、[OmniParser](https://github.com/microsoft/OmniParser)、[Tesseract OCR](https://github.com/tesseract-ocr/tesseract) 以及 [Cloudflare Workers](https://developers.cloudflare.com/workers/)。
+- **后端、高可用与数据层**：[FastAPI](https://fastapi.tiangolo.com/)、[Pydantic](https://docs.pydantic.dev/)、[httpx](https://www.python-httpx.org/)、[SQLAlchemy](https://www.sqlalchemy.org/) / [Alembic](https://alembic.sqlalchemy.org/)、[PostgreSQL](https://www.postgresql.org/)（强制 RLS 与 `SKIP LOCKED`）、[psycopg-pool](https://www.psycopg.org/psycopg3/docs/advanced/pool.html)、[PyJWT](https://pyjwt.readthedocs.io/)、[cryptography](https://cryptography.io/)（Ed25519 / AES-256-GCM）、[Open Policy Agent](https://www.openpolicyagent.org/)、[Prometheus Python Client](https://github.com/prometheus/client_python) 以及 [OpenTelemetry Python](https://opentelemetry.io/docs/languages/python/)。
+- **前端与交互体验**：[Next.js](https://nextjs.org/)、[React](https://react.dev/)、[Tailwind CSS](https://tailwindcss.com/)、[Radix UI](https://www.radix-ui.com/)、[cmdk](https://cmdk.paco.me/)、[react-markdown](https://github.com/remarkjs/react-markdown) + [remark-gfm](https://github.com/remarkjs/remark-gfm)、[Lucide](https://lucide.dev/)、[Zod](https://zod.dev/) 以及 [Playwright](https://playwright.dev/)。
+- **桌面端、文档、邮件与边缘自动化**：[Tauri 2](https://v2.tauri.app/)（`keyring` v3）、[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)、[Nodemailer](https://nodemailer.com/)、[Docling](https://github.com/DS4SD/docling) / [MarkItDown](https://github.com/microsoft/markitdown)、[Microsoft Presidio](https://microsoft.github.io/presidio/)、[OmniParser](https://github.com/microsoft/OmniParser)、[Tesseract OCR](https://github.com/tesseract-ocr/tesseract) 以及 [Cloudflare Workers](https://developers.cloudflare.com/workers/)。

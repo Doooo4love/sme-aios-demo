@@ -2,6 +2,7 @@ import { apiFetch, isApiError, type ApiError } from "@/lib/api-client";
 import type {
   AssuranceCheckpoint,
   ExceptionPage,
+  L1CacheSnapshot,
   LlmRoutingTier,
   LlmTelemetrySummary,
   OffTopicPolicy,
@@ -10,6 +11,7 @@ import type {
   PromptPoliciesResponse,
   PromptSimulateResponse,
   Proposal,
+  ProviderCircuitSnapshot,
   QuotaPoliciesResponse,
   QuotaPolicyItem,
   QuotaPolicyUpdatePayload,
@@ -18,6 +20,7 @@ import type {
   SecurityEventSeverity,
   SecurityEventStatus,
   SecurityEventsSummary,
+  SystemHealthSnapshot,
 } from "@/lib/types";
 
 export interface HealthProbeResult {
@@ -402,6 +405,90 @@ export async function fetchLlmTelemetry(
       raw?.by_subject && typeof raw.by_subject === "object"
         ? raw.by_subject
         : {},
+    ...(typeof raw?.p50_latency_ms === "number" &&
+    Number.isFinite(raw.p50_latency_ms)
+      ? { p50_latency_ms: raw.p50_latency_ms }
+      : {}),
+    ...(typeof raw?.p95_latency_ms === "number" &&
+    Number.isFinite(raw.p95_latency_ms)
+      ? { p95_latency_ms: raw.p95_latency_ms }
+      : {}),
+    ...(typeof raw?.error_rate === "number" && Number.isFinite(raw.error_rate)
+      ? { error_rate: raw.error_rate }
+      : {}),
+    ...(typeof raw?.failover_count === "number" &&
+    Number.isFinite(raw.failover_count)
+      ? { failover_count: raw.failover_count }
+      : {}),
+    ...(typeof raw?.estimated_cache_savings_usd === "number" &&
+    Number.isFinite(raw.estimated_cache_savings_usd)
+      ? { estimated_cache_savings_usd: raw.estimated_cache_savings_usd }
+      : {}),
+  };
+}
+
+function normalizeCircuitState(
+  raw: unknown,
+): ProviderCircuitSnapshot["state"] {
+  if (raw === "open" || raw === "half_open" || raw === "closed") {
+    return raw;
+  }
+  return "closed";
+}
+
+function asFiniteNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+export async function fetchSystemHealth(
+  signal?: AbortSignal,
+): Promise<SystemHealthSnapshot> {
+  const raw = await apiFetch<Partial<SystemHealthSnapshot>>(
+    "/v1/operations/system-health",
+    { signal },
+  );
+  const rawCircuits: unknown[] = Array.isArray(raw?.provider_circuits)
+    ? raw.provider_circuits
+    : [];
+  const rawCache =
+    raw?.l1_cache && typeof raw.l1_cache === "object"
+      ? (raw.l1_cache as Partial<L1CacheSnapshot>)
+      : {};
+  return {
+    status: raw?.status === "ok" ? "ok" : "degraded",
+    db_engine_mode:
+      typeof raw?.db_engine_mode === "string" && raw.db_engine_mode.trim()
+        ? raw.db_engine_mode.trim()
+        : "unknown",
+    storage_ok: Boolean(raw?.storage_ok),
+    provider_circuits: rawCircuits
+      .filter(
+        (item): item is Partial<ProviderCircuitSnapshot> =>
+          typeof item === "object" && item !== null && !Array.isArray(item),
+      )
+      .map((item) => ({
+        provider:
+          typeof item.provider === "string" && item.provider.trim()
+            ? item.provider.trim()
+            : "default",
+        state: normalizeCircuitState(item.state),
+        failures: asFiniteNumber(item.failures, 0),
+        retry_in_seconds: asFiniteNumber(item.retry_in_seconds, 0),
+      })),
+    l1_cache: {
+      hits: asFiniteNumber(rawCache.hits, 0),
+      misses: asFiniteNumber(rawCache.misses, 0),
+      hit_ratio: asFiniteNumber(rawCache.hit_ratio, 0),
+      entries: asFiniteNumber(rawCache.entries, 0),
+      max_entries: asFiniteNumber(rawCache.max_entries, 0),
+      estimated_usd_saved: asFiniteNumber(rawCache.estimated_usd_saved, 0),
+      tokens_saved: asFiniteNumber(rawCache.tokens_saved, 0),
+    },
+    fallback_configured: Boolean(raw?.fallback_configured),
+    active_sse_subscribers: asFiniteNumber(raw?.active_sse_subscribers, 0),
+    rate_limit_rejections: asFiniteNumber(raw?.rate_limit_rejections, 0),
+    otel_genai_enabled: Boolean(raw?.otel_genai_enabled),
+    uptime_seconds: asFiniteNumber(raw?.uptime_seconds, 0),
   };
 }
 

@@ -11,6 +11,15 @@ import {
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const MAX_PROXY_BODY_BYTES = 8_500_000;
+const SSE_UPSTREAM_PATH = "/v1/workbench/events/stream";
+const LONG_UPSTREAM_PATHS = new Set([
+  "/v1/workbench/turns",
+  "/v1/memory/tidy",
+]);
+const LONG_UPSTREAM_TIMEOUT_MS = 65_000;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 15_000;
+const VALID_REQUEST_ID_RE = /^[A-Za-z0-9._:-]{8,128}$/;
+const VALID_TRACEPARENT_RE = /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/;
 
 const ALLOWED_V1_PATTERNS: readonly RegExp[] = [
   /^\/v1\/session$/,
@@ -84,6 +93,7 @@ const ALLOWED_V1_PATTERNS: readonly RegExp[] = [
   /^\/v1\/operations\/off-topic-policy$/,
   /^\/v1\/operations\/llm-telemetry$/,
   /^\/v1\/operations\/quota-policies$/,
+  /^\/v1\/operations\/system-health$/,
   /^\/v1\/workbench\/events\/stream$/,
   /^\/v1\/workbench\/work-pulse$/,
   /^\/v1\/workbench\/skills$/,
@@ -134,12 +144,46 @@ export function copySetCookieHeaders(
   }
 }
 
+function resolveRequestId(req: Request): string {
+  const inbound = req.headers.get("x-request-id")?.trim() ?? "";
+  if (VALID_REQUEST_ID_RE.test(inbound)) {
+    return inbound;
+  }
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+function resolveTraceparent(req: Request): string {
+  const inbound = req.headers.get("traceparent")?.trim() ?? "";
+  if (
+    VALID_TRACEPARENT_RE.test(inbound) &&
+    !inbound.startsWith("00-00000000000000000000000000000000-") &&
+    !inbound.includes("-0000000000000000-")
+  ) {
+    return inbound;
+  }
+  const traceId = crypto.randomUUID().replace(/-/g, "");
+  const spanId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  return `00-${traceId}-${spanId}-01`;
+}
+
+function getUpstreamTimeoutMs(normalizedPath: string): number | null {
+  if (normalizedPath === SSE_UPSTREAM_PATH) return null;
+  return LONG_UPSTREAM_PATHS.has(normalizedPath)
+    ? LONG_UPSTREAM_TIMEOUT_MS
+    : DEFAULT_UPSTREAM_TIMEOUT_MS;
+}
+
 function copyCommonMetadataHeaders(
   upstreamHeaders: Headers,
   outgoingHeaders: Headers,
+  fallbackRequestId?: string,
+  fallbackTraceparent?: string,
 ): void {
-  const requestId = upstreamHeaders.get("x-request-id");
+  const requestId = upstreamHeaders.get("x-request-id") || fallbackRequestId;
   if (requestId) outgoingHeaders.set("X-Request-ID", requestId);
+
+  const traceparent = upstreamHeaders.get("traceparent") || fallbackTraceparent;
+  if (traceparent) outgoingHeaders.set("traceparent", traceparent);
 
   const retryAfter = upstreamHeaders.get("retry-after");
   if (retryAfter) outgoingHeaders.set("Retry-After", retryAfter);
@@ -163,6 +207,9 @@ export async function proxyToAios(
     return makeOriginRejectedResponse();
   }
 
+  const requestId = resolveRequestId(req);
+  const traceparent = resolveTraceparent(req);
+
   // Block POST /v1/session directly from browser (demo-login handles server-side bearer exchange; OIDC uses /v1/session/callback)
   if (normalizedPath === "/v1/session" && method === "POST") {
     return new Response(
@@ -177,6 +224,8 @@ export async function proxyToAios(
         headers: {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
+          "X-Request-ID": requestId,
+          traceparent,
         },
       },
     );
@@ -186,6 +235,8 @@ export async function proxyToAios(
   const upstreamUrl = `${getUpstreamBaseUrlForPath(normalizedPath)}${normalizedPath}${incomingUrl.search}`;
 
   const upstreamHeaders = new Headers();
+  upstreamHeaders.set("X-Request-ID", requestId);
+  upstreamHeaders.set("traceparent", traceparent);
   const browserOrigin = getBrowserOrigin();
 
   if (!options?.allowPublicHealth) {
@@ -231,6 +282,8 @@ export async function proxyToAios(
             headers: {
               "Content-Type": "application/json; charset=utf-8",
               "Cache-Control": "no-store",
+              "X-Request-ID": requestId,
+              traceparent,
             },
           },
         );
@@ -250,6 +303,8 @@ export async function proxyToAios(
           headers: {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
+            "X-Request-ID": requestId,
+            traceparent,
           },
         },
       );
@@ -259,7 +314,32 @@ export async function proxyToAios(
     }
   }
 
+  const timeoutMs = getUpstreamTimeoutMs(normalizedPath);
+  const timeoutController = timeoutMs !== null ? new AbortController() : null;
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let onAbort: (() => void) | null = null;
+
+  if (timeoutController && timeoutMs !== null) {
+    if (req.signal?.aborted) {
+      timeoutController.abort();
+    } else {
+      onAbort = () => {
+        timeoutController.abort();
+      };
+      req.signal?.addEventListener("abort", onAbort, { once: true });
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        timeoutController.abort();
+      }, timeoutMs);
+    }
+  }
+
   let upstreamRes: Response;
+  let upstreamContentType = "";
+  let binaryBytes: ArrayBuffer | null = null;
+  let textBody = "";
+
   try {
     upstreamRes = await fetch(upstreamUrl, {
       method,
@@ -267,9 +347,89 @@ export async function proxyToAios(
       body: bodyBuffer,
       redirect: "manual",
       cache: "no-store",
-      signal: req.signal,
+      signal: timeoutController ? timeoutController.signal : req.signal,
     });
+
+    const outgoingHeaders = new Headers();
+    copyCommonMetadataHeaders(
+      upstreamRes.headers,
+      outgoingHeaders,
+      requestId,
+      traceparent,
+    );
+
+    // Preserve redirects cleanly for OIDC /v1/session/login and /v1/session/callback
+    if (upstreamRes.status >= 300 && upstreamRes.status < 400) {
+      const location = upstreamRes.headers.get("location");
+      if (location) {
+        outgoingHeaders.set("Location", location);
+      }
+      return new Response(null, {
+        status: upstreamRes.status,
+        headers: outgoingHeaders,
+      });
+    }
+
+    // 204 No Content (e.g. DELETE /v1/session)
+    if (upstreamRes.status === 204 || method === "HEAD") {
+      return new Response(null, {
+        status: upstreamRes.status,
+        headers: outgoingHeaders,
+      });
+    }
+
+    upstreamContentType = (
+      upstreamRes.headers.get("content-type") || ""
+    ).toLowerCase();
+
+    // True zero-buffer SSE streaming passthrough BEFORE JSON buffering
+    if (upstreamRes.ok && upstreamContentType.includes("text/event-stream")) {
+      outgoingHeaders.set("Content-Type", "text/event-stream; charset=utf-8");
+      outgoingHeaders.set("Cache-Control", "no-cache, no-transform");
+      outgoingHeaders.set("X-Accel-Buffering", "no");
+      return new Response(upstreamRes.body, {
+        status: upstreamRes.status,
+        headers: outgoingHeaders,
+      });
+    }
+
+    // Binary image / octet-stream passthrough (avatars, etc.)
+    if (
+      upstreamRes.ok &&
+      (upstreamContentType.startsWith("image/") ||
+        upstreamContentType.startsWith("application/octet-stream"))
+    ) {
+      binaryBytes = await upstreamRes.arrayBuffer();
+      outgoingHeaders.set("Content-Type", upstreamContentType);
+      outgoingHeaders.set("X-Content-Type-Options", "nosniff");
+      return new Response(binaryBytes, {
+        status: upstreamRes.status,
+        headers: outgoingHeaders,
+      });
+    }
+
+    // JSON or error responses — read inside timeout envelope before sanitization
+    textBody = await upstreamRes.text();
   } catch {
+    if (timedOut && !req.signal?.aborted) {
+      return new Response(
+        JSON.stringify({
+          detail: {
+            code: "UPSTREAM_TIMEOUT",
+            message: "后端处理超时，请稍后重试。",
+          },
+        }),
+        {
+          status: 504,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Request-ID": requestId,
+            traceparent,
+          },
+        },
+      );
+    }
     return new Response(
       JSON.stringify({
         detail: {
@@ -283,66 +443,28 @@ export async function proxyToAios(
           "Content-Type": "application/json; charset=utf-8",
           "Retry-After": "2",
           "Cache-Control": "no-store",
+          "X-Request-ID": requestId,
+          traceparent,
         },
       },
     );
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+    if (onAbort) {
+      req.signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   const outgoingHeaders = new Headers();
-  copyCommonMetadataHeaders(upstreamRes.headers, outgoingHeaders);
+  copyCommonMetadataHeaders(
+    upstreamRes.headers,
+    outgoingHeaders,
+    requestId,
+    traceparent,
+  );
 
-  // Preserve redirects cleanly for OIDC /v1/session/login and /v1/session/callback
-  if (upstreamRes.status >= 300 && upstreamRes.status < 400) {
-    const location = upstreamRes.headers.get("location");
-    if (location) {
-      outgoingHeaders.set("Location", location);
-    }
-    return new Response(null, {
-      status: upstreamRes.status,
-      headers: outgoingHeaders,
-    });
-  }
-
-  // 204 No Content (e.g. DELETE /v1/session)
-  if (upstreamRes.status === 204 || method === "HEAD") {
-    return new Response(null, {
-      status: upstreamRes.status,
-      headers: outgoingHeaders,
-    });
-  }
-
-  const upstreamContentType = (
-    upstreamRes.headers.get("content-type") || ""
-  ).toLowerCase();
-
-  // True zero-buffer SSE streaming passthrough BEFORE JSON buffering
-  if (upstreamRes.ok && upstreamContentType.includes("text/event-stream")) {
-    outgoingHeaders.set("Content-Type", "text/event-stream; charset=utf-8");
-    outgoingHeaders.set("Cache-Control", "no-cache, no-transform");
-    outgoingHeaders.set("X-Accel-Buffering", "no");
-    return new Response(upstreamRes.body, {
-      status: upstreamRes.status,
-      headers: outgoingHeaders,
-    });
-  }
-
-  // Binary image / octet-stream passthrough (avatars, etc.)
-  if (
-    upstreamRes.ok &&
-    (upstreamContentType.startsWith("image/") ||
-      upstreamContentType.startsWith("application/octet-stream"))
-  ) {
-    const bytes = await upstreamRes.arrayBuffer();
-    outgoingHeaders.set("Content-Type", upstreamContentType);
-    outgoingHeaders.set("X-Content-Type-Options", "nosniff");
-    return new Response(bytes, {
-      status: upstreamRes.status,
-      headers: outgoingHeaders,
-    });
-  }
-
-  // JSON or error responses — parse and apply strict whitelist/sanitization
-  const textBody = await upstreamRes.text();
   let parsed: unknown = null;
   if (textBody.length > 0) {
     try {
@@ -374,7 +496,9 @@ export async function proxyToAios(
   const sanitizedOk =
     normalizedPath === "/v1/workbench/skills"
       ? sanitizeSlashSkillsResponse(parsed)
-      : sanitizeSuccessPayload(normalizedPath, parsed);
+      : normalizedPath === "/v1/operations/system-health"
+        ? sanitizeSystemHealthResponse(parsed)
+        : sanitizeSuccessPayload(normalizedPath, parsed);
   return new Response(JSON.stringify(sanitizedOk), {
     status: upstreamRes.status,
     headers: outgoingHeaders,
@@ -422,6 +546,75 @@ function sanitizeSlashSkillsResponse(payload: unknown): { items: unknown[] } {
     .filter((entry) => entry.command.length > 0);
 
   return { items };
+}
+
+function asFiniteNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function sanitizeSystemHealthResponse(payload: unknown): Record<string, unknown> {
+  const raw =
+    typeof payload === "object" && payload !== null && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+
+  const rawCircuits = Array.isArray(raw.provider_circuits)
+    ? raw.provider_circuits
+    : [];
+  const provider_circuits = rawCircuits
+    .filter(
+      (entry): entry is Record<string, unknown> =>
+        typeof entry === "object" && entry !== null && !Array.isArray(entry),
+    )
+    .map((entry) => {
+      const state =
+        entry.state === "open" ||
+        entry.state === "half_open" ||
+        entry.state === "closed"
+          ? entry.state
+          : "closed";
+      return {
+        provider:
+          typeof entry.provider === "string" && entry.provider.trim().length > 0
+            ? entry.provider.trim().slice(0, 64)
+            : "default",
+        state,
+        failures: asFiniteNumber(entry.failures, 0),
+        retry_in_seconds: asFiniteNumber(entry.retry_in_seconds, 0),
+      };
+    });
+
+  const rawCache =
+    typeof raw.l1_cache === "object" &&
+    raw.l1_cache !== null &&
+    !Array.isArray(raw.l1_cache)
+      ? (raw.l1_cache as Record<string, unknown>)
+      : {};
+
+  return {
+    status: raw.status === "ok" ? "ok" : "degraded",
+    db_engine_mode:
+      typeof raw.db_engine_mode === "string" &&
+      raw.db_engine_mode.trim().length > 0
+        ? raw.db_engine_mode.trim().slice(0, 64)
+        : "unknown",
+    storage_ok: Boolean(raw.storage_ok),
+    provider_circuits,
+    l1_cache: {
+      hits: asFiniteNumber(rawCache.hits, 0),
+      misses: asFiniteNumber(rawCache.misses, 0),
+      hit_ratio: asFiniteNumber(rawCache.hit_ratio, 0),
+      entries: asFiniteNumber(rawCache.entries, 0),
+      max_entries: asFiniteNumber(rawCache.max_entries, 0),
+      estimated_usd_saved: asFiniteNumber(rawCache.estimated_usd_saved, 0),
+      tokens_saved: asFiniteNumber(rawCache.tokens_saved, 0),
+    },
+    fallback_configured: Boolean(raw.fallback_configured),
+    active_sse_subscribers: asFiniteNumber(raw.active_sse_subscribers, 0),
+    rate_limit_rejections: asFiniteNumber(raw.rate_limit_rejections, 0),
+    otel_genai_enabled: Boolean(raw.otel_genai_enabled),
+    uptime_seconds: asFiniteNumber(raw.uptime_seconds, 0),
+  };
 }
 
 function normalizeMemoryErrorPayload(

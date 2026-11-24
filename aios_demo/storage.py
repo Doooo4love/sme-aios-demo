@@ -3,9 +3,53 @@ from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
 import json
+import os
 import sqlite3
+import threading
 import time
+from typing import Any
 import uuid
+import weakref
+
+_WAL_LOCK = threading.Lock()
+_WAL_INITIALIZED: set[tuple[str, int, int]] = set()
+_MAX_WAL_CACHE = 4096
+
+
+def _stat_dev_ino(path: str) -> tuple[int, int] | None:
+    try:
+        st = os.stat(path)
+        return (st.st_dev, st.st_ino)
+    except FileNotFoundError:
+        return None
+
+
+def _import_psycopg_pool():
+    try:
+        import psycopg_pool  # type: ignore[import-not-found]
+        return psycopg_pool
+    except ImportError:
+        return None
+
+
+class _PooledSQLiteConn:
+    __slots__ = ("conn", "dev_ino", "__weakref__")
+
+    def __init__(self, conn: sqlite3.Connection, dev_ino: tuple[int, int] | None):
+        self.conn: sqlite3.Connection | None = conn
+        self.dev_ino = dev_ino
+
+    def close(self) -> None:
+        conn = self.conn
+        if conn is not None:
+            self.conn = None
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def __del__(self) -> None:
+        self.close()
 
 SCHEMA = Path(__file__).resolve().parents[1] / "sql" / "schema.sql"
 POSTGRES_CLAIM = """
@@ -63,29 +107,185 @@ class Database:
 
             settings = {"connect_timeout": "5", **conninfo_to_dict(self.dsn)}
             self.dsn = make_conninfo(**settings)
+        raw_path = str(sqlite_path)
+        self._is_memory = raw_path == ":memory:" or raw_path.startswith("file::memory:")
+        self._lock = threading.Lock()
+        self._local = threading.local()
+        self._open_conns: weakref.WeakSet[_PooledSQLiteConn] = weakref.WeakSet()
+        self._gen = 0
+        self._pg_pool: Any = None
+
+    @property
+    def engine_mode(self) -> str:
+        if self.dsn:
+            if self._pg_pool is not None or _import_psycopg_pool() is not None:
+                return "postgres-pooled"
+            return "postgres-direct"
+        return "sqlite-memory" if self._is_memory else "sqlite-wal-pooled"
+
+    def _ensure_pg_pool(self):
+        if self._pg_pool is not None:
+            return self._pg_pool
+        pool_mod = _import_psycopg_pool()
+        if pool_mod is None:
+            return None
+        from psycopg.rows import dict_row
+
+        with self._lock:
+            if self._pg_pool is None:
+                self._pg_pool = pool_mod.ConnectionPool(
+                    self.dsn,
+                    min_size=1,
+                    max_size=16,
+                    timeout=5.0,
+                    kwargs={"row_factory": dict_row},
+                )
+            return self._pg_pool
+
+    def _sqlite_connection(self, sqlite_timeout: float) -> sqlite3.Connection:
+        with self._lock:
+            current_gen = self._gen
+
+        entry = getattr(self._local, "entry", None)
+        if self._is_memory:
+            if entry is not None:
+                entry_gen, holder = entry
+                if entry_gen == current_gen and holder.conn is not None:
+                    try:
+                        _ = holder.conn.in_transaction
+                        return holder.conn
+                    except sqlite3.ProgrammingError:
+                        pass
+                holder.close()
+                with self._lock:
+                    self._open_conns.discard(holder)
+                self._local.entry = None
+
+            raw = str(self.sqlite_path)
+            conn = sqlite3.connect(
+                raw,
+                timeout=sqlite_timeout,
+                check_same_thread=False,
+                uri=raw.startswith("file:"),
+            )
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA cache_size=-16000")
+            holder = _PooledSQLiteConn(conn, None)
+            with self._lock:
+                if self._gen != current_gen:
+                    current_gen = self._gen
+                self._open_conns.add(holder)
+            self._local.entry = (current_gen, holder)
+            return conn
+
+        self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved = str(self.sqlite_path.resolve())
+        disk_dev_ino = _stat_dev_ino(resolved)
+        if entry is not None:
+            entry_gen, holder = entry
+            if entry_gen == current_gen and holder.conn is not None and disk_dev_ino is not None and holder.dev_ino == disk_dev_ino:
+                try:
+                    _ = holder.conn.in_transaction
+                    return holder.conn
+                except sqlite3.ProgrammingError:
+                    pass
+            holder.close()
+            with self._lock:
+                self._open_conns.discard(holder)
+            self._local.entry = None
+
+        timeout_ms = max(1, int(sqlite_timeout * 1000))
+        conn = sqlite3.connect(resolved, timeout=sqlite_timeout, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout={timeout_ms}")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA cache_size=-16000")
+
+        dev_ino = _stat_dev_ino(resolved)
+        if dev_ino is not None:
+            wal_key = (resolved, dev_ino[0], dev_ino[1])
+            with _WAL_LOCK:
+                if disk_dev_ino is None:
+                    stale = [
+                        item
+                        for item in _WAL_INITIALIZED
+                        if item[0] == resolved and (item[1], item[2]) != dev_ino
+                    ]
+                    for item in stale:
+                        _WAL_INITIALIZED.discard(item)
+                try:
+                    needs_wal = wal_key not in _WAL_INITIALIZED or os.stat(resolved).st_size == 0
+                except FileNotFoundError:
+                    needs_wal = True
+                if needs_wal:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    if len(_WAL_INITIALIZED) >= _MAX_WAL_CACHE:
+                        _WAL_INITIALIZED.clear()
+                    _WAL_INITIALIZED.add(wal_key)
+
+        holder = _PooledSQLiteConn(conn, dev_ino)
+        with self._lock:
+            if self._gen != current_gen:
+                current_gen = self._gen
+            self._open_conns.add(holder)
+        self._local.entry = (current_gen, holder)
+        return conn
+
+    def close(self) -> None:
+        with self._lock:
+            holders = list(self._open_conns)
+            self._open_conns.clear()
+            self._gen += 1
+            pool = self._pg_pool
+            self._pg_pool = None
+        for holder in holders:
+            holder.close()
+        if pool is not None:
+            try:
+                pool.close()
+            except Exception:
+                pass
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @contextmanager
     def transaction(self, *, write: bool = True, sqlite_timeout: float = 10):
         if self.dsn:
+            pool = self._ensure_pg_pool()
+            if pool is not None:
+                with pool.connection() as conn, conn:
+                    yield lambda query, args=(): conn.execute(query.replace("?", "%s"), args)
+                return
             import psycopg
             from psycopg.rows import dict_row
 
             with psycopg.connect(self.dsn, row_factory=dict_row) as conn:
                 yield lambda query, args=(): conn.execute(query.replace("?", "%s"), args)
             return
-        self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.sqlite_path, timeout=sqlite_timeout)
-        connection.row_factory = sqlite3.Row
+        connection = self._sqlite_connection(sqlite_timeout)
+        timeout_ms = max(1, int(sqlite_timeout * 1000))
         try:
+            if connection.in_transaction:
+                connection.rollback()
             connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute(f"PRAGMA busy_timeout={timeout_ms}")
             connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
             yield connection.execute
-            connection.commit()
+            if connection.in_transaction:
+                connection.commit()
         except BaseException:
-            connection.rollback()
+            try:
+                if connection.in_transaction:
+                    connection.rollback()
+            except sqlite3.Error:
+                pass
             raise
-        finally:
-            connection.close()
 
 
 class Ledger:

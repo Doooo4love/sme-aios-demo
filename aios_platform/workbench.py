@@ -227,30 +227,53 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
     @router.get("/events/stream")
     async def events_stream(request: Request, actor: Actor = Depends(authenticate)):
         current = await run_in_threadpool(refresh_actor, actor)
+        raw_last_id = request.headers.get("last-event-id", "").strip()
+        if raw_last_id and (len(raw_last_id) > 128 or any(ord(ch) < 32 for ch in raw_last_id)):
+            raise HTTPException(422, "Invalid Last-Event-ID header")
         if event_hub is None:
             async def empty_stream():
                 yield ": unavailable\n\n"
             return StreamingResponse(empty_stream(), media_type="text/event-stream")
         event_hub.bind_loop(asyncio.get_running_loop())
-        sub = event_hub.subscribe(current.tenant, current.subject, is_admin=(current.role == "admin"))
+        is_admin = current.role == "admin"
+        sub = event_hub.subscribe(current.tenant, current.subject, is_admin=is_admin)
+        replayed = (
+            event_hub.since_event(current.tenant, current.subject, raw_last_id, is_admin=is_admin)
+            if raw_last_id
+            else []
+        )
+
+        def format_frame(payload: dict) -> str:
+            event_name = (
+                "security_alert"
+                if str(payload.get("kind", "")).startswith("security_")
+                else "work_alert"
+            )
+            event_id = str(payload.get("id", ""))
+            prefix = f"id: {event_id}\n" if event_id else ""
+            return f"{prefix}event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         async def generator():
+            replayed_ids: set[str] = set()
             try:
                 yield ": connected\n\n"
+                for item in replayed:
+                    item_id = str(item.get("id", ""))
+                    if item_id:
+                        if item_id in replayed_ids:
+                            continue
+                        replayed_ids.add(item_id)
+                    yield format_frame(item)
                 while True:
                     if await request.is_disconnected():
                         break
                     try:
                         payload = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
-                        event_name = (
-                            "security_alert"
-                            if str(payload.get("kind", "")).startswith("security_")
-                            else "work_alert"
-                        )
                         event_id = str(payload.get("id", ""))
-                        if event_id:
-                            yield f"id: {event_id}\n"
-                        yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        if event_id and event_id in replayed_ids:
+                            replayed_ids.discard(event_id)
+                            continue
+                        yield format_frame(payload)
                     except asyncio.TimeoutError:
                         if await request.is_disconnected():
                             break

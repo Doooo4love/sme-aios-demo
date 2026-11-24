@@ -1,10 +1,13 @@
 """Factory for the production-shaped gateway. The existing PO demo is separate."""
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 import asyncio
 import os
 import sqlite3
 import subprocess
+import threading
+import time
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -41,9 +44,10 @@ from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, Shipme
 from .erp import ERPRejected
 from .events import EventHub
 from .governance import GovernanceService, governance_routes
+from .http_pool import close_all_http_clients
 from .identity import Identity
 from .module_access import ModuleAccess, ModuleScopeChanged, module_routes
-from .observability import instrument
+from .observability import instrument, otel_genai_enabled, rate_limit_rejections_count
 from .providers import (
     DemoPlanner, OPA, Planner, action_sites, allowed, approval_sites, can_approve, can_use_action,
     order_read_sites,
@@ -106,18 +110,49 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             raise ValueError("Assurance must use the current tenant workflow")
         if not runtime.demo and isinstance(assurance.source, DemoCaseSource):
             raise ValueError("Synthetic assurance sources require the demo profile")
+    started_at = time.monotonic()
+    workflow = runtime.workflow
+    erp = runtime.erp
+    active_assistant = assistant_agent
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            assistant_ref = getattr(_app.state, "active_assistant", active_assistant)
+            close_fn = getattr(assistant_ref, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    pass
+            try:
+                close_all_http_clients()
+            except Exception:
+                pass
+            try:
+                workflow.db.close()
+            except Exception:
+                pass
+            erp_close = getattr(getattr(erp, "db", None), "close", None)
+            if callable(erp_close):
+                try:
+                    erp_close()
+                except Exception:
+                    pass
+
     app = FastAPI(title="SME AIOS Platform", version="0.1.0", docs_url="/docs" if runtime.demo else None,
-                  redoc_url=None, openapi_url="/openapi.json" if runtime.demo else None)
+                  redoc_url=None, openapi_url="/openapi.json" if runtime.demo else None, lifespan=lifespan)
     if not 1 <= planner_limit <= 10000:
         raise ValueError("Planner limit must be between 1 and 10000 per tenant per minute")
     instrument(app, metrics_token)
-    workflow = runtime.workflow
-    erp = runtime.erp
     bearer = HTTPBearer(auto_error=False)
     module_access = ModuleAccess(workflow)
     hub = event_hub if event_hub is not None else EventHub()
     workflow.event_hub = hub
     known_actors: dict[tuple[str, str], Actor] = {}
+    known_actors_lock = threading.Lock()
     if browser is not None and browser.demo != runtime.demo:
         raise ValueError("Browser session profile must match the service profile")
     sessions = BrowserSessions(workflow, browser, runtime.profiles) if browser else None
@@ -207,8 +242,9 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
                                 headers={"WWW-Authenticate": "Bearer"}) from error
         try:
             scoped_actor = module_access.authenticate(actor)
-            if len(known_actors) < 1000:
-                known_actors[(scoped_actor.tenant, scoped_actor.subject)] = scoped_actor
+            with known_actors_lock:
+                if len(known_actors) < 1000:
+                    known_actors[(scoped_actor.tenant, scoped_actor.subject)] = scoped_actor
             return scoped_actor
         except PermissionError as error:
             raise HTTPException(403, "AIOS access is suspended") from error
@@ -320,6 +356,41 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     def operations(actor: Actor = Depends(authenticate)):
         operator_grant(actor)
         return {"proposals_by_state": workflow.summary(actor), "writes_paused": workflow.write_paused(actor.tenant)}
+
+    @app.get("/v1/operations/system-health")
+    def system_health(actor: Actor = Depends(authenticate)):
+        current = refresh_actor(actor)
+        if current.role != "admin":
+            raise HTTPException(403, "Administrator access required")
+        storage_ok = True
+        try:
+            workflow.ping(current.tenant)
+        except (sqlite3.Error, PostgresError, OSError):
+            storage_ok = False
+        assistant_ref = getattr(app.state, "active_assistant", active_assistant)
+        snap_fn = getattr(assistant_ref, "resilience_snapshot", None)
+        raw_snap = snap_fn() if callable(snap_fn) else {}
+        snap = raw_snap if isinstance(raw_snap, dict) else {}
+        circuits = snap.get("provider_circuits", [])
+        if not isinstance(circuits, list):
+            circuits = []
+        l1_cache = snap.get("l1_cache", {})
+        if not isinstance(l1_cache, dict):
+            l1_cache = {}
+        has_open_circuit = any(isinstance(item, dict) and item.get("state") == "open" for item in circuits)
+        status = "ok" if (storage_ok and not has_open_circuit) else "degraded"
+        return {
+            "status": status,
+            "db_engine_mode": workflow.db.engine_mode,
+            "storage_ok": storage_ok,
+            "provider_circuits": circuits,
+            "l1_cache": l1_cache,
+            "fallback_configured": bool(snap.get("fallback_configured", False)),
+            "active_sse_subscribers": hub.subscriber_count(),
+            "rate_limit_rejections": rate_limit_rejections_count(),
+            "otel_genai_enabled": otel_genai_enabled(),
+            "uptime_seconds": round(time.monotonic() - started_at, 2),
+        }
 
     @app.get("/v1/operations/exceptions")
     def exceptions(
@@ -568,14 +639,16 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             rows = run("SELECT subject FROM aios_employee WHERE tenant = ?", (tenant,)).fetchall()
             for row in rows:
                 candidates.add(row["subject"])
-        for cached_tenant, cached_subject in list(known_actors):
+        with known_actors_lock:
+            cached_actors = dict(known_actors)
+        for cached_tenant, cached_subject in cached_actors:
             if cached_tenant == tenant:
                 candidates.add(cached_subject)
         candidates.discard(requester)
         lookup = directory_actor or getattr(identity, "directory_actor", None)
         eligible: list[str] = []
         for subject in sorted(candidates):
-            candidate = lookup(tenant, subject) if lookup is not None else known_actors.get((tenant, subject))
+            candidate = lookup(tenant, subject) if lookup is not None else cached_actors.get((tenant, subject))
             if candidate is None:
                 continue
             try:
@@ -593,6 +666,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     active_assistant = assistant_agent
     if assurance is None and active_assistant is None and workbench_planner is None:
         active_assistant = AssistantAgent(workflow, governance_service, hub, api_key=None, demo=runtime.demo)
+    app.state.active_assistant = active_assistant
 
     app.include_router(module_routes(module_access, authenticate, runtime.profiles))
     app.include_router(workbench_routes(runtime, authenticate, refresh_actor, require_policy, visible_proposal, prepare_order,

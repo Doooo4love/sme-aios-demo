@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .contracts import INTENT, Actor, Clarify, Grant, Intent, Plan
+from .http_pool import pooled_post_json
 
 
 def https_base(value: str) -> str:
@@ -18,18 +19,7 @@ def https_base(value: str) -> str:
 
 
 def post_json(url: str, payload: dict, headers: dict | None = None, *, timeout: float = 8) -> dict:
-    with httpx.Client(follow_redirects=False, timeout=timeout, trust_env=False) as client:
-        with client.stream("POST", url, json=payload, headers=headers) as response:
-            response.raise_for_status()
-            chunks = bytearray()
-            for chunk in response.iter_bytes(8192):
-                chunks.extend(chunk)
-                if len(chunks) > 65_536:
-                    raise ValueError("Provider response exceeded the size limit")
-    data = json.loads(chunks)
-    if not isinstance(data, dict):
-        raise ValueError("Expected a provider response object")
-    return data
+    return pooled_post_json(url, payload, headers, pool_name="providers", timeout=timeout, max_bytes=65_536)
 
 
 class Planner(Protocol):

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   CheckCircle2,
   Cpu,
@@ -29,6 +30,7 @@ import {
   fetchQuotaPolicies,
   fetchSecurityEvents,
   fetchSecurityEventsSummary,
+  fetchSystemHealth,
   updateOffTopicPolicy,
   updateQuotaPolicy,
   updateSecurityEventStatus,
@@ -39,11 +41,13 @@ import type {
   LlmTelemetryBreakdownValue,
   LlmTelemetrySummary,
   OffTopicPolicy,
+  ProviderCircuitSnapshot,
   QuotaPolicyItem,
   SecurityEventItem,
   SecurityEventSeverity,
   SecurityEventStatus,
   SecurityEventsSummary,
+  SystemHealthSnapshot,
 } from "@/lib/types";
 
 const PAGE_LIMIT = 40;
@@ -213,6 +217,32 @@ function formatEstimatedUsd(amount: number): string {
   return amount >= 1 ? `$${amount.toFixed(2)}` : `$${amount.toFixed(4)}`;
 }
 
+function formatUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0s";
+  const rounded = Math.floor(seconds);
+  if (rounded < 60) return `${rounded}s`;
+  const mins = Math.floor(rounded / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+function getCircuitDotClass(state: ProviderCircuitSnapshot["state"]): string {
+  switch (state) {
+    case "open":
+      return "bg-[var(--status-crimson)]";
+    case "half_open":
+      return "bg-[var(--status-amber)]";
+    case "closed":
+    default:
+      return "bg-[var(--status-emerald)]";
+  }
+}
+
 function extractBreakdownCalls(value: LlmTelemetryBreakdownValue): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   return typeof value.calls === "number" && Number.isFinite(value.calls)
@@ -280,11 +310,15 @@ export function SecurityMonitorPanel({
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
 
-  // Telemetry & Quota state (degrades gracefully if unavailable)
+  // Telemetry, System Health & Quota state (degrades gracefully if unavailable)
   const [telemetryHours, setTelemetryHours] = useState<24 | 168>(24);
   const [telemetry, setTelemetry] = useState<LlmTelemetrySummary | null>(null);
   const [telemetryLoading, setTelemetryLoading] = useState(false);
   const [telemetryUnavailable, setTelemetryUnavailable] = useState(false);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthSnapshot | null>(
+    null,
+  );
+  const [systemHealthLoading, setSystemHealthLoading] = useState(false);
   const [quotaAvailable, setQuotaAvailable] = useState(false);
   const [quotaPolicies, setQuotaPolicies] = useState<QuotaPolicyItem[]>([]);
   const [quotaEditUsd, setQuotaEditUsd] = useState<string>("");
@@ -369,10 +403,14 @@ export function SecurityMonitorPanel({
       if (!canAccessAdminOps) return;
       setTelemetryLoading(true);
       setTelemetryUnavailable(false);
+      if (isAdmin) {
+        setSystemHealthLoading(true);
+      }
       try {
-        const [telRes, quotaRes] = await Promise.allSettled([
+        const [telRes, quotaRes, healthRes] = await Promise.allSettled([
           fetchLlmTelemetry(hours, signal),
           fetchQuotaPolicies(signal),
+          isAdmin ? fetchSystemHealth(signal) : Promise.resolve(null),
         ]);
         if (signal?.aborted) return;
 
@@ -408,13 +446,26 @@ export function SecurityMonitorPanel({
           setQuotaAvailable(false);
           setQuotaPolicies([]);
         }
+
+        if (!isAdmin) {
+          setSystemHealth(null);
+        } else if (healthRes.status === "fulfilled") {
+          setSystemHealth(healthRes.value);
+        } else {
+          const err = healthRes.reason;
+          if (isStaleAuthError(err)) return;
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          // Ignore non-fatal 403/503/network health probe failures gracefully
+          setSystemHealth(null);
+        }
       } finally {
         if (!signal?.aborted) {
           setTelemetryLoading(false);
+          setSystemHealthLoading(false);
         }
       }
     },
-    [canAccessAdminOps],
+    [canAccessAdminOps, isAdmin],
   );
 
   const loadOffTopicPolicy = useCallback(
@@ -458,6 +509,7 @@ export function SecurityMonitorPanel({
   useEffect(() => {
     setTelemetry(null);
     setTelemetryUnavailable(false);
+    setSystemHealth(null);
     setQuotaAvailable(false);
     setQuotaPolicies([]);
     setQuotaFeedback(null);
@@ -933,7 +985,7 @@ export function SecurityMonitorPanel({
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                   <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
                     <div className="aios-micro-label">
                       {tx({
@@ -999,6 +1051,103 @@ export function SecurityMonitorPanel({
                       {formatCompactCount(telemetry.total_completion_tokens)} out
                     </div>
                   </div>
+                </div>
+
+                {/* Latency Percentiles & Cache FinOps Summary Pills */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span
+                    data-testid="telemetry-latency-percentiles"
+                    className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] tabular-nums"
+                  >
+                    <span className="text-[var(--ink-muted)]">
+                      {tx({
+                        "zh-CN": "时延分位",
+                        "zh-HK": "時延分位",
+                        en: "Latency",
+                      })}
+                    </span>
+                    <span className="font-medium text-[var(--ink-primary)]">
+                      P50{" "}
+                      {typeof telemetry.p50_latency_ms === "number" &&
+                      Number.isFinite(telemetry.p50_latency_ms)
+                        ? `${Math.round(telemetry.p50_latency_ms)}ms`
+                        : "—"}
+                      {" · "}
+                      P95{" "}
+                      {typeof telemetry.p95_latency_ms === "number" &&
+                      Number.isFinite(telemetry.p95_latency_ms)
+                        ? `${Math.round(telemetry.p95_latency_ms)}ms`
+                        : "—"}
+                    </span>
+                  </span>
+
+                  <span
+                    data-testid="telemetry-cache-savings"
+                    className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] tabular-nums"
+                  >
+                    <span className="text-[var(--ink-muted)]">
+                      {tx({
+                        "zh-CN": "缓存节省",
+                        "zh-HK": "快取節省",
+                        en: "Est. Cache Saved",
+                      })}
+                    </span>
+                    <span
+                      className={
+                        (telemetry.estimated_cache_savings_usd ?? 0) > 0
+                          ? "font-medium text-[var(--status-emerald)]"
+                          : "font-medium text-[var(--ink-primary)]"
+                      }
+                    >
+                      {formatEstimatedUsd(
+                        telemetry.estimated_cache_savings_usd ?? 0,
+                      )}
+                    </span>
+                  </span>
+
+                  {typeof telemetry.error_rate === "number" &&
+                    Number.isFinite(telemetry.error_rate) && (
+                      <span className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] tabular-nums">
+                        <span className="text-[var(--ink-muted)]">
+                          {tx({
+                            "zh-CN": "异常率",
+                            "zh-HK": "異常率",
+                            en: "Error Rate",
+                          })}
+                        </span>
+                        <span
+                          className={
+                            telemetry.error_rate > 0
+                              ? "font-medium text-[var(--status-amber-ink)]"
+                              : "font-medium text-[var(--ink-primary)]"
+                          }
+                        >
+                          {formatCachePercent(telemetry.error_rate)}
+                        </span>
+                      </span>
+                    )}
+
+                  {typeof telemetry.failover_count === "number" &&
+                    Number.isFinite(telemetry.failover_count) && (
+                      <span className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] tabular-nums">
+                        <span className="text-[var(--ink-muted)]">
+                          {tx({
+                            "zh-CN": "故障切换",
+                            "zh-HK": "故障切換",
+                            en: "Failovers",
+                          })}
+                        </span>
+                        <span
+                          className={
+                            telemetry.failover_count > 0
+                              ? "font-medium text-[var(--status-amber-ink)]"
+                              : "font-medium text-[var(--ink-primary)]"
+                          }
+                        >
+                          {telemetry.failover_count}
+                        </span>
+                      </span>
+                    )}
                 </div>
 
                 {/* T0 / T1 / T2 / T3 Distribution */}
@@ -1610,6 +1759,348 @@ export function SecurityMonitorPanel({
           )}
         </section>
       </div>
+
+      {/* System Resilience & Engine Health Bar (Admin-only, degrades silently if unavailable) */}
+      {isAdmin && (systemHealth || systemHealthLoading) && (
+        <section
+          data-testid="admin-system-resilience-card"
+          className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 sm:p-5 shadow-[var(--shadow-card)] space-y-3.5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-[var(--hairline)] bg-[var(--bg-surface-tint)] text-[var(--accent-ink)]">
+                <Activity className="h-3.5 w-3.5" strokeWidth={1.85} />
+              </span>
+              <div className="min-w-0">
+                <h2 className="aios-display text-[14.5px] font-semibold text-[var(--ink-primary)]">
+                  {tx({
+                    "zh-CN": "系统韧性与引擎健康",
+                    "zh-HK": "系統韌性與引擎健康",
+                    en: "System Resilience & Engine Health",
+                  })}
+                </h2>
+                <p className="text-[11.5px] text-[var(--ink-muted)]">
+                  {tx({
+                    "zh-CN":
+                      "存储连接池、模型熔断保护、L1 响应缓存与实时事件通道状态",
+                    "zh-HK":
+                      "儲存連線池、模型熔斷保護、L1 回應快取與即時事件通道狀態",
+                    en: "Storage pool mode, provider circuit breakers, L1 response cache, and live stream telemetry.",
+                  })}
+                </p>
+              </div>
+            </div>
+
+            {systemHealth ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  data-testid="system-health-status-badge"
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-xs border px-2 py-0.5 text-[11px] font-medium",
+                    systemHealth.status === "ok" && systemHealth.storage_ok
+                      ? "border-[var(--status-emerald-border)] bg-[var(--status-emerald-wash)] text-[var(--status-emerald)]"
+                      : "border-[var(--status-amber-border)] bg-[var(--status-amber-wash)] text-[var(--status-amber-ink)]",
+                  ].join(" ")}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={[
+                      "h-1.5 w-1.5 rounded-full",
+                      systemHealth.status === "ok" && systemHealth.storage_ok
+                        ? "bg-[var(--status-emerald)]"
+                        : "bg-[var(--status-amber)]",
+                    ].join(" ")}
+                  />
+                  <span>
+                    {systemHealth.status === "ok" && systemHealth.storage_ok
+                      ? tx({
+                          "zh-CN": "运行正常",
+                          "zh-HK": "運行正常",
+                          en: "Healthy",
+                        })
+                      : tx({
+                          "zh-CN": "降级运行",
+                          "zh-HK": "降級運行",
+                          en: "Degraded",
+                        })}
+                  </span>
+                </span>
+                <span className="font-mono-code text-[11px] text-[var(--ink-muted)] tabular-nums">
+                  {systemHealth.db_engine_mode} ·{" "}
+                  {formatUptime(systemHealth.uptime_seconds)}
+                </span>
+              </div>
+            ) : (
+              <span className="text-[11.5px] text-[var(--ink-muted)]">
+                {tx({
+                  "zh-CN": "正在检查引擎健康状态…",
+                  "zh-HK": "正在檢查引擎健康狀態…",
+                  en: "Checking engine health…",
+                })}
+              </span>
+            )}
+          </div>
+
+          {systemHealth && (
+            <>
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                  <div className="aios-micro-label">
+                    {tx({
+                      "zh-CN": "存储引擎",
+                      "zh-HK": "儲存引擎",
+                      en: "Storage Engine",
+                    })}
+                  </div>
+                  <div
+                    data-testid="system-health-db-mode"
+                    className="mt-1.5 truncate font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)]"
+                    title={systemHealth.db_engine_mode}
+                  >
+                    {systemHealth.db_engine_mode}
+                  </div>
+                  <div className="mt-1.5 inline-flex items-center gap-1.5 text-[10.5px] text-[var(--ink-muted)]">
+                    <span
+                      aria-hidden="true"
+                      className={[
+                        "h-1.5 w-1.5 rounded-full",
+                        systemHealth.storage_ok
+                          ? "bg-[var(--status-emerald)]"
+                          : "bg-[var(--status-crimson)]",
+                      ].join(" ")}
+                    />
+                    <span>
+                      {systemHealth.storage_ok
+                        ? tx({
+                            "zh-CN": "读写就绪",
+                            "zh-HK": "讀寫就緒",
+                            en: "Storage OK",
+                          })
+                        : tx({
+                            "zh-CN": "存储异常",
+                            "zh-HK": "儲存異常",
+                            en: "Storage Fault",
+                          })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                  <div className="aios-micro-label">
+                    {tx({
+                      "zh-CN": "L1 响应缓存",
+                      "zh-HK": "L1 回應快取",
+                      en: "L1 Response Cache",
+                    })}
+                  </div>
+                  <div
+                    data-testid="system-health-l1-cache"
+                    className="aios-kpi mt-1.5 text-[17px] font-semibold leading-none text-[var(--status-emerald)]"
+                  >
+                    {formatCachePercent(systemHealth.l1_cache.hit_ratio)}
+                  </div>
+                  <div className="mt-1.5 font-mono-code text-[10.5px] text-[var(--ink-muted)] tabular-nums">
+                    {formatCompactCount(systemHealth.l1_cache.tokens_saved)} tok
+                    {" · "}
+                    {systemHealth.l1_cache.entries}/
+                    {systemHealth.l1_cache.max_entries}
+                  </div>
+                </div>
+
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                  <div className="aios-micro-label">
+                    {tx({
+                      "zh-CN": "实时 SSE 订阅",
+                      "zh-HK": "即時 SSE 訂閱",
+                      en: "Active SSE Streams",
+                    })}
+                  </div>
+                  <div
+                    data-testid="system-health-sse-count"
+                    className="aios-kpi mt-1.5 text-[17px] font-semibold leading-none text-[var(--ink-primary)]"
+                  >
+                    {systemHealth.active_sse_subscribers}
+                  </div>
+                  <div className="mt-1.5 font-mono-code text-[10.5px] text-[var(--ink-muted)] tabular-nums">
+                    {tx({
+                      "zh-CN": "限流拦截",
+                      "zh-HK": "限流攔截",
+                      en: "Rate-limited",
+                    })}
+                    : {systemHealth.rate_limit_rejections}
+                  </div>
+                </div>
+
+                <div className="rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                  <div className="aios-micro-label">
+                    {tx({
+                      "zh-CN": "OTel GenAI 追踪",
+                      "zh-HK": "OTel GenAI 追蹤",
+                      en: "OTel GenAI",
+                    })}
+                  </div>
+                  <div
+                    data-testid="system-health-otel-status"
+                    className="mt-1.5 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--ink-primary)]"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={[
+                        "h-1.5 w-1.5 rounded-full",
+                        systemHealth.otel_genai_enabled
+                          ? "bg-[var(--status-emerald)]"
+                          : "bg-[var(--ink-muted)]",
+                      ].join(" ")}
+                    />
+                    <span>
+                      {systemHealth.otel_genai_enabled
+                        ? tx({
+                            "zh-CN": "已启用",
+                            "zh-HK": "已啟用",
+                            en: "Active",
+                          })
+                        : tx({
+                            "zh-CN": "结构化日志",
+                            "zh-HK": "結構化日誌",
+                            en: "Log Fallback",
+                          })}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 font-mono-code text-[10.5px] text-[var(--ink-muted)] tabular-nums">
+                    {tx({
+                      "zh-CN": "运行时长",
+                      "zh-HK": "運行時長",
+                      en: "Uptime",
+                    })}
+                    : {formatUptime(systemHealth.uptime_seconds)}
+                  </div>
+                </div>
+
+                <div className="col-span-2 sm:col-span-1 rounded-tile border border-[var(--hairline)] bg-[var(--bg-surface-tint)] p-3">
+                  <div className="aios-micro-label">
+                    {tx({
+                      "zh-CN": "多引擎容灾备援",
+                      "zh-HK": "多引擎容災備援",
+                      en: "Fallback Standby",
+                    })}
+                  </div>
+                  <div
+                    data-testid="system-health-fallback-status"
+                    className="mt-1.5 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--ink-primary)]"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={[
+                        "h-1.5 w-1.5 rounded-full",
+                        systemHealth.fallback_configured
+                          ? "bg-[var(--status-emerald)]"
+                          : "bg-[var(--ink-faint)]",
+                      ].join(" ")}
+                    />
+                    <span>
+                      {systemHealth.fallback_configured
+                        ? tx({
+                            "zh-CN": "备援就绪",
+                            "zh-HK": "備援就緒",
+                            en: "Fallback Ready",
+                          })
+                        : tx({
+                            "zh-CN": "单引擎模式",
+                            "zh-HK": "單引擎模式",
+                            en: "Primary Only",
+                          })}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 font-mono-code text-[10.5px] text-[var(--ink-muted)] tabular-nums">
+                    {tx({
+                      "zh-CN": "L1 节省",
+                      "zh-HK": "L1 節省",
+                      en: "L1 Saved",
+                    })}
+                    :{" "}
+                    {formatEstimatedUsd(
+                      systemHealth.l1_cache.estimated_usd_saved,
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-[var(--hairline-subtle)] pt-2.5">
+                <span className="aios-micro-label mr-1">
+                  {tx({
+                    "zh-CN": "模型熔断器",
+                    "zh-HK": "模型熔斷器",
+                    en: "Provider Circuits",
+                  })}
+                </span>
+                {systemHealth.provider_circuits.length === 0 ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 text-[11px] text-[var(--ink-muted)]">
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 rounded-full bg-[var(--status-emerald)]"
+                    />
+                    <span>
+                      {tx({
+                        "zh-CN": "所有主备模型通道闭合正常",
+                        "zh-HK": "所有主備模型通道閉合正常",
+                        en: "All provider circuits closed",
+                      })}
+                    </span>
+                  </span>
+                ) : (
+                  systemHealth.provider_circuits.map((circuit) => {
+                    const stateLabel =
+                      circuit.state === "open"
+                        ? tx({
+                            "zh-CN": "已熔断",
+                            "zh-HK": "已熔斷",
+                            en: "Open",
+                          })
+                        : circuit.state === "half_open"
+                          ? tx({
+                              "zh-CN": "半开探测",
+                              "zh-HK": "半開探測",
+                              en: "Half-Open",
+                            })
+                          : tx({
+                              "zh-CN": "闭合",
+                              "zh-HK": "閉合",
+                              en: "Closed",
+                            });
+                    return (
+                      <span
+                        key={circuit.provider}
+                        data-testid={`circuit-pill-${circuit.provider}`}
+                        className="inline-flex items-center gap-1.5 rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[11px] text-[var(--ink-secondary)] tabular-nums"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`h-1.5 w-1.5 rounded-full ${getCircuitDotClass(circuit.state)}`}
+                        />
+                        <span className="font-medium text-[var(--ink-primary)]">
+                          {circuit.provider}
+                        </span>
+                        <span className="text-[var(--ink-muted)]">
+                          {stateLabel}
+                        </span>
+                        {(circuit.failures > 0 ||
+                          circuit.retry_in_seconds > 0) && (
+                          <span className="text-[10.5px] text-[var(--status-amber-ink)]">
+                            {circuit.failures} err
+                            {circuit.retry_in_seconds > 0
+                              ? ` · ${Math.ceil(circuit.retry_in_seconds)}s`
+                              : ""}
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       {/* Filter Bar */}
       <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]">

@@ -20,7 +20,18 @@ import type { WorkAlertItem, WorkPulseResponse } from "@/lib/types";
 const MAX_VISIBLE_TOASTS = 3;
 const AUTO_DISMISS_MS = 9000;
 const FALLBACK_POLL_MS = 15_000;
-const SSE_RETRY_MS = 30_000;
+const SSE_BASE_RETRY_MS = 1500;
+const SSE_MAX_RETRY_MS = 30_000;
+const SSE_JITTER_RATIO = 0.25;
+
+function computeSseRetryDelayMs(attempt: number): number {
+  const expDelay = Math.min(
+    SSE_MAX_RETRY_MS,
+    SSE_BASE_RETRY_MS * 2 ** Math.max(0, attempt),
+  );
+  const jitterFactor = 1 + (Math.random() * 2 - 1) * SSE_JITTER_RATIO;
+  return Math.max(250, Math.round(expDelay * jitterFactor));
+}
 
 const DEFAULT_AGENT_NAMES = new Set([
   "个人业务助手",
@@ -346,6 +357,7 @@ export function ProactiveAgentNotifier() {
     const expectedGen = authGeneration;
     const abortController = new AbortController();
     let disposed = false;
+    let sseRetryAttempt = 0;
 
     const clearTimers = () => {
       if (fallbackTimerRef.current !== null) {
@@ -362,6 +374,12 @@ export function ProactiveAgentNotifier() {
       if (disposed || fallbackTimerRef.current !== null) return;
       fallbackTimerRef.current = window.setInterval(() => {
         if (disposed || expectedGen !== getAuthGeneration()) return;
+        if (
+          typeof document !== "undefined" &&
+          document.visibilityState !== "visible"
+        ) {
+          return;
+        }
         void pollPulse(expectedGen);
       }, FALLBACK_POLL_MS);
     };
@@ -509,6 +527,7 @@ export function ProactiveAgentNotifier() {
 
       es.onopen = () => {
         if (disposed) return;
+        sseRetryAttempt = 0;
         stopFallbackPoll();
       };
 
@@ -545,15 +564,44 @@ export function ProactiveAgentNotifier() {
         }
         startFallbackPoll();
         if (reconnectTimerRef.current === null) {
+          const delayMs = computeSseRetryDelayMs(sseRetryAttempt);
+          sseRetryAttempt += 1;
           reconnectTimerRef.current = window.setTimeout(() => {
             reconnectTimerRef.current = null;
-            if (!disposed && expectedGen === getAuthGeneration()) {
-              connectSse();
+            if (disposed || expectedGen !== getAuthGeneration()) return;
+            if (
+              typeof document !== "undefined" &&
+              document.visibilityState !== "visible"
+            ) {
+              return;
             }
-          }, SSE_RETRY_MS);
+            connectSse();
+          }, delayMs);
         }
       };
     };
+
+    const handleVisibilityChange = () => {
+      if (disposed || expectedGen !== getAuthGeneration()) return;
+      if (
+        typeof document === "undefined" ||
+        document.visibilityState !== "visible"
+      ) {
+        return;
+      }
+      void pollPulse(expectedGen, abortController.signal);
+      if (eventSourceRef.current === null) {
+        if (reconnectTimerRef.current !== null) {
+          window.clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+        connectSse();
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
 
     void pollPulse(expectedGen, abortController.signal);
     connectSse();
@@ -561,6 +609,9 @@ export function ProactiveAgentNotifier() {
     return () => {
       disposed = true;
       abortController.abort();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
       clearTimers();
       if (eventSourceRef.current) {
         eventSourceRef.current.close();

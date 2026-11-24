@@ -1,0 +1,18 @@
+# ==============================================================================
+# IntegrAI Nightly Memory Consolidation Timer
+# ==============================================================================
+# Triggers `aios-memory-tidy.service` daily at 19:15 UTC (03:15 HKT) with up
+# to 120 seconds randomized delay and catch-up persistence across reboots.
+# ==============================================================================
+
+[Unit]
+Description=Nightly IntegrAI Memory Consolidation Timer (03:15 HKT)
+
+[Timer]
+OnCalendar=*-*-* 19:15:00 UTC
+RandomizedDelaySec=120
+Persistent=true
+Unit=aios-memory-tidy.service
+
+[Install]
+WantedBy=timers.target

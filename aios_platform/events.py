@@ -214,3 +214,29 @@ class EventHub:
             if subject in entry.subjects or "*" in entry.subjects or (is_admin and entry.include_admins)
         ]
         return matched[:capped]
+
+    def since_event(
+        self,
+        tenant: str,
+        subject: str,
+        last_event_id: str,
+        *,
+        is_admin: bool = False,
+    ) -> list[dict]:
+        """Return visible events buffered strictly after last_event_id in chronological order."""
+        if not isinstance(last_event_id, str) or not last_event_id:
+            return []
+        with self._lock:
+            entries = list(self._recent.get(tenant, ()))
+        anchor_idx: int | None = None
+        for idx, entry in enumerate(entries):
+            if entry.payload.get("id") == last_event_id:
+                anchor_idx = idx
+                break
+        if anchor_idx is None:
+            return []
+        return [
+            dict(entry.payload)
+            for entry in entries[anchor_idx + 1 :]
+            if subject in entry.subjects or "*" in entry.subjects or (is_admin and entry.include_admins)
+        ]
