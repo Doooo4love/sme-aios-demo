@@ -3,7 +3,8 @@ from collections.abc import Mapping
 
 from alembic import context
 from sqlalchemy import String, create_engine, pool, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import ArgumentError
 
 from aios_platform.service import setting
 
@@ -37,11 +38,41 @@ def _ensure_postgres_alembic_version(connection) -> None:
         )
 
 
-def run_migrations() -> None:
-    """Execute online or offline migrations with PostgreSQL revision ID length safety."""
-    url = make_url(setting("AIOS_MIGRATION_DATABASE_URL"))
+def _parse_migration_url(raw_dsn: str) -> URL:
+    """Parse an RFC-style SQLAlchemy URL or a libpq keyword/value conninfo string."""
+    try:
+        url = make_url(raw_dsn)
+    except ArgumentError as url_err:
+        from psycopg.conninfo import conninfo_to_dict
+
+        try:
+            info = conninfo_to_dict(raw_dsn)
+        except Exception as exc:
+            raise url_err from exc
+        if not any(key in info for key in ("dbname", "host", "hostaddr", "service", "user")):
+            raise url_err
+        port_raw = info.get("port")
+        url = URL.create(
+            "postgresql+psycopg",
+            username=info.get("user") or None,
+            password=info.get("password") or None,
+            host=info.get("host") or None,
+            port=int(port_raw) if port_raw else None,
+            database=info.get("dbname") or None,
+            query={
+                k: str(v)
+                for k, v in info.items()
+                if k not in {"user", "password", "host", "port", "dbname"}
+            },
+        )
     if url.drivername in {"postgres", "postgresql"}:
         url = url.set(drivername="postgresql+psycopg")
+    return url
+
+
+def run_migrations() -> None:
+    """Execute online or offline migrations with PostgreSQL revision ID length safety."""
+    url = _parse_migration_url(setting("AIOS_MIGRATION_DATABASE_URL"))
 
     if context.is_offline_mode():
         context.configure(url=url, literal_binds=True)

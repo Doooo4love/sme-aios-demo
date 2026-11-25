@@ -588,7 +588,10 @@ class PostgresLiveEnterpriseTests(unittest.TestCase):
                 admin.execute(
                     sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(schema), sql.Identifier(rname))
                 )
-            for stmt in secure_sql.split(";"):
+            sql_text = "\n".join(
+                line for line in secure_sql.splitlines() if not line.lstrip().startswith("--")
+            )
+            for stmt in sql_text.split(";"):
                 if stmt.strip():
                     admin.execute(stmt)
 
