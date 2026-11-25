@@ -204,7 +204,8 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
     @router.get("/skills")
     def skills(actor: Actor = Depends(authenticate)):
         current = refresh_actor(actor)
-        return {"items": [item.model_dump(mode="json") for item in skills_for_actor(current)]}
+        has_search = assistant is not None and assistant.public_search_enabled(current)
+        return {"items": [item.model_dump(mode="json") for item in skills_for_actor(current, public_search=has_search)]}
 
     @router.get("/work-pulse", response_model=WorkPulseResponse)
     def work_pulse(actor: Actor = Depends(authenticate)):

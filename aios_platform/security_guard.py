@@ -1271,14 +1271,114 @@ _OFF_TOPIC_PERSONAL_CHAT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# A product name on its own is insufficient to distinguish procurement from personal use.
+_CONSOLE_TOPIC = re.compile(
+    r"(?i)(?<![a-z0-9])(?:ps\s*5|playstation(?:\s*5)?|xbox(?:\s+series\s+[sx])?|"
+    r"nintendo\s+switch|switch\s*2|gta\s*(?:6|vi))(?![a-z0-9])|遊戲主機|游戏主机"
+)
+_CONSOLE_PERSONAL = re.compile(
+    r"(?i)(?:我(?:自己)?(?:想|打算|准备|準備|要|买|買)|自用|自己玩|想玩|玩游戏|玩遊戲|"
+    r"边度平|邊度平|想買|想买|发售日|發售日|几时出|幾時出|什么时候发售|什麼時候發售|"
+    r"\b(?:i want|i'm looking|i am looking|should i buy|for myself|want to play|release date|cheapest)\b)"
+)
+_CONSOLE_FOLLOW_UP = re.compile(
+    r"(?i)(?:光[驱驅]版|数字版|數字版|数位版|數位版|主要(?:是)?想玩|"
+    r"(?:哪[里裏]|邊度|边度).{0,6}(?:便宜|平)|\b(?:disc|digital)\s+(?:version|edition)\b|"
+    r"\b(?:where is it cheapest|which version should i buy)\b)"
+)
+_CONSOLE_BUSINESS = re.compile(
+    r"(?i)(?:(?:公司|门店|門店|本店|企业|企業|客户|客戶).{0,18}(?:采购|採購|进货|進貨|"
+    r"备货|備貨|报价|報價|库存|庫存|经销|經銷|供应商|供應商|市场调研|市場調研)|"
+    r"(?:授权|授權)(?:经销商|經銷商|供应商|供應商)|批发|批發|"
+    r"\b(?:procurement|wholesale|inventory|authorized distributor|company purchase|retail pricing analysis)\b)"
+)
+
+
+# Dual-use nouns need a purpose signal: retail, travel, health and education can all be work.
+_EXPLICIT_WORK_PURPOSE = re.compile(
+    r"(?i)(?:"
+    r"(?:为|為|给|給|替|帮|幫)(?:我们|我們|本)?(?:公司|企业|企業|门店|門店|客户|客戶|同事|团队|團隊|员工|員工)|"
+    r"(?:公司|企业|企業|门店|門店|团队|團隊|員工|员工|客户|客戶)(?:的|嘅)?.{0,8}"
+    r"(?:采购|採購|团建|團建|培训|培訓|差旅|报销|報銷|接待|安全指引|活动|活動|市场调研|市場調研)|"
+    r"供应商报价|供應商報價|采购单|採購單|商品选品|商品選品|"
+    r"\b(?:for (?:our |the )?(?:company|employees|client|store|team|customers)|"
+    r"business trip|customer event|staff training|expense report|wholesale|procurement|workplace|"
+    r"client meeting|employee benefits|corporate event|supplier qualification)\b)"
+)
+_PERSONAL_PURPOSE = re.compile(
+    r"(?i)(?:"
+    r"自用|私用|私人用途|我个人|我個人|我自己|个人优惠|個人優惠|私人瑜伽|我家里|我家裏|我屋企|私家|私人旅行|私人行程|"
+    r"我爸妈|我爸媽|我女友|我男友|我女朋友|我男朋友|我的孩子|我仔|我老婆|我老公|"
+    r"周末|週末|放假|度假|旅行攻略|自由行|两个人|兩個人|拍拖|约会穿|約會穿|"
+    r"\b(?:for myself|for personal use|my personal|my (?:kid|child|parents|partner|girlfriend|boyfriend|spouse|dog|cat)|"
+    r"my (?:living room|bedroom|vacation|holiday|honeymoon)|date night|my fantasy team|on my weekend)\b)"
+)
+_PERSONAL_REQUEST = re.compile(
+    r"(?i)(?:想|幫我|帮我|给我|給我|搵|揀|推荐|推薦|推介|应该|應該|買|买|睇|查|选|選|"
+    r"怎样|怎樣|怎么|怎麼|點|点|如何|比较|比較|安排|订|訂|写|寫|讲|講|規劃|规划|"
+    r"\b(?:recommend|book|tell|buy|choose|compare|plan|help|write|find|ideas|suggest|should|what|where|how)\b)"
+)
+_PERSONAL_DOMAINS = re.compile(
+    r"(?i)(?:"
+    r"手机|手機|手袋|球鞋|跑鞋|耳机|耳機|相机|相機|电器|電器|礼物|禮物|玩具|穿搭|化妆|化妝|"
+    r"游戏|遊戲|游戏机|遊戲機|电影|電影|电视剧|電視劇|演唱会|演唱會|追剧|追劇|睇戲|睇电影|"
+    r"酒店|民宿|景点|景點|旅行|行程|假期|机票|機票|旅遊|旅游|打卡|餐厅|餐廳|火锅|火鍋|"
+    r"生日|婚礼|婚禮|姻缘|姻緣|失恋|失戀|约会|約會|食谱|食譜|菜谱|菜譜|晚餐|煮飯|"
+    r"减肥|減肥|健身|增肌|运动计划|運動計劃|瑜伽|宠物|寵物|养猫|養貓|养狗|養狗|"
+    r"房间|房間|装修|裝修|家庭作业|家庭作業|补习|補習|亲子|親子|兴趣班|興趣班|"
+    r"投资|投資|理财|理財|炒股|保险|保險|钱包|錢包|送礼|送禮|"
+    r"\b(?:phone|headphones|camera|sneakers|outfit|haircut|makeup|movies?|concert|anime|video games?|"
+    r"hotels?|vacation|holiday|flights?|sightseeing|restaurant|dinner|recipes?|meal|gift|birthday|wedding|"
+    r"workout|fitness|diet|lose weight|pet|dog|cat|living room|bedroom|homework|"
+    r"watchlist|investments?|mortgage|credit card|cruise|itinerary|garden)\b)"
+)
+_PERSONAL_STANDALONE = re.compile(
+    r"(?i)(?:"
+    r"今天晚上吃什么|今日食乜|今晚食乜|今晚吃什么|今夜吃什么|今晚睇咩戲|周末去哪玩|週末去哪玩|"
+    r"下班.{0,8}(?:吃饭|食飯|去哪玩|追剧|追劇)|怎么追.{0,5}(?:女生|男生)|怎麼追.{0,5}(?:女生|男生)|"
+    r"我想.{0,16}(?:减肥|減肥)|给我推荐.{0,12}(?:美剧|美劇|韩剧|韓劇|综艺|綜藝)|"
+    r"我该不该分手|我該唔該分手|我應唔應該分手|"
+    r"\b(?:what should i (?:cook|eat|play|watch) (?:tonight|this weekend)|"
+    r"what (?:tv series|show) should i binge|who should i date|what should i wear on a date|for my own entertainment)\b)"
+)
+_PERSONAL_FOLLOW_UP = re.compile(
+    r"(?i)^(?:那|咁|那么|那麼|and\s+|what about\s+)?\s*(?:"
+    r"(?:哪个|哪個|邊個|边个|哪款|哪種|哪种|哪个版本|哪個版本).{0,12}(?:好|合适|合適|便宜|平)|"
+    r"(?:能|可|可不可以|可唔可以|可以|再).{0,5}(?:便宜点|便宜點|平啲|推荐几个|推薦幾個|详细说说|詳細說說)|"
+    r"\d{2,5}\s*(?:元|蚊|港币|港幣|hkd)\s*(?:以内|以內|以下|左右)|"
+    r"which (?:one|version|option) (?:should i (?:get|buy|pick)|is (?:better|cheaper))|"
+    r"(?:anything|something) cheaper|what about the second one"
+    r")[?？!！。\s]*$"
+)
+
+
+def _explicit_work_purpose(text: str) -> bool:
+    return bool(_EXPLICIT_WORK_PURPOSE.search(text) or _CONSOLE_BUSINESS.search(text))
+
+
+def _personal_life_request(text: str) -> bool:
+    return bool(not _explicit_work_purpose(text) and (
+        _PERSONAL_STANDALONE.search(text)
+        or (_PERSONAL_PURPOSE.search(text) and _PERSONAL_DOMAINS.search(text) and _PERSONAL_REQUEST.search(text))
+    ))
+
+
+
+def _personal_console_request(text: str) -> bool:
+    return bool(_CONSOLE_TOPIC.search(text) and _CONSOLE_PERSONAL.search(text)
+                and not _explicit_work_purpose(text))
+
+
+
 def evaluate_work_boundary(
     actor: Actor,
     text: str,
     *,
     requested_app: str | None = None,
     app_allowlist: Iterable[str] | None = None,
+    previous_user_text: str | None = None,
 ) -> WorkBoundaryVerdict:
-    """Detect off-topic personal chat or non-work local app automation with zero greeting/work false positives."""
+    """Detect off-topic personal chat or non-work local app automation while preserving routine greetings and evidenced work."""
     if app_allowlist is None:
         allowed_keys = {_canonicalize_app(name) for name in DEFAULT_WORK_APP_ALLOWLIST}
         if actor.role == "admin" and "operations.manage" in actor.grants:
@@ -1322,6 +1422,26 @@ def evaluate_work_boundary(
                 matched_rule="unauthorized_dev_app",
                 requested_app=clean_requested_app or target_key,
             )
+
+    personal_reason = None
+    if _personal_console_request(compact):
+        personal_reason = "personal_console_request"
+    elif _personal_life_request(compact):
+        personal_reason = "personal_life_request"
+    elif previous_user_text and len(compact) <= 128 and not _explicit_work_purpose(compact):
+        previous = normalize_user_text(previous_user_text)[1]
+        if (_CONSOLE_FOLLOW_UP.search(compact) and _personal_console_request(previous)) or (
+            _PERSONAL_FOLLOW_UP.fullmatch(compact)
+            and (_personal_console_request(previous) or _personal_life_request(previous))
+        ):
+            personal_reason = "personal_follow_up"
+    if personal_reason:
+        return WorkBoundaryVerdict(
+            is_off_topic=True,
+            category="OFF_TOPIC_PERSONAL_CHAT",
+            matched_rule=personal_reason,
+            requested_app=clean_requested_app,
+        )
 
     for rule_name, pattern in _OFF_TOPIC_PERSONAL_CHAT_PATTERNS:
         if pattern.search(compact):

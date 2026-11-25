@@ -33,6 +33,14 @@ from .llm_provider import (
     resolve_model_profile,
 )
 from .providers import approval_sites, https_base, order_read_sites
+from .public_search import (
+    SEARCH_COST_MICRO_USD,
+    PublicWebSearch,
+    format_search_hits,
+    is_public_search_output,
+    public_search_query,
+    safe_public_query,
+)
 from .response_cache import (
     BoundedResponseCache,
     compact_tool_observation,
@@ -254,7 +262,7 @@ class EmailDraftPayload(Strict):
 class AssistantMessage(Strict):
     kind: Literal["message"] = "message"
     reply: Annotated[str, Field(min_length=1, max_length=4000)]
-    mode: Literal["chat", "workflow_guidance", "proactive_reminder", "email_draft"] = "chat"
+    mode: Literal["chat", "workflow_guidance", "proactive_reminder", "email_draft", "public_search"] = "chat"
     pending_work: PendingWorkSnapshot | None = None
     suggested_actions: Annotated[list[SuggestedAction], Field(max_length=8)] = Field(default_factory=list)
     email_draft: EmailDraftPayload | None = None
@@ -382,12 +390,12 @@ def allowed_modules_for_actor(actor: Actor) -> list[str]:
     return modules
 
 
-def skills_for_actor(actor: Actor) -> list[SlashSkillItem]:
+def skills_for_actor(actor: Actor, *, public_search: bool = False) -> list[SlashSkillItem]:
     """Build the permission-aware slash skill catalog for the composer palette."""
     has_approvals = any(approval_sites(actor, action) for action in ("shipment.reschedule", "sales_order.create_draft"))
     has_ops = actor.role in {"manager", "admin"} and "operations.manage" in actor.grants
     has_assurance = any(grant.startswith("assurance.") for grant in actor.grants)
-    return [
+    skills = [
         SlashSkillItem(
             command="/brief",
             title="今日工作简报",
@@ -584,6 +592,20 @@ def skills_for_actor(actor: Actor) -> list[SlashSkillItem]:
             keywords=["help", "commands", "skills", "帮助", "指令", "功能"],
         ),
     ]
+    if public_search:
+        skills.append(SlashSkillItem(
+            command="/web",
+            title="搜索公开网页",
+            title_en="Search the Public Web",
+            description="查找公开的行业、采购或监管资料",
+            description_en="Find publicly available industry, procurement, or regulatory sources",
+            category="workflow",
+            usage="/web 香港冷链物流公开供应商",
+            requires_args=True,
+            allowed=True,
+            keywords=["web", "search", "联网", "聯網", "搜索", "搜尋"],
+        ))
+    return skills
 
 
 class AssistantAgent:
@@ -600,11 +622,13 @@ class AssistantAgent:
         model: str | None = None,
         provider: str | None = None,
         llm_provider: LLMProvider | None = None,
+        public_web_search: PublicWebSearch | None = None,
         demo: bool = True,
     ):
         self.workflow = workflow
         self.governance = governance
         self.event_hub = event_hub
+        self.public_web_search = public_web_search
         self.api_key = api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
         self.model = model or resolve_llm_model()
         resolved_provider = provider or resolve_llm_provider()
@@ -2575,6 +2599,92 @@ class AssistantAgent:
                 )
         return safe_reply
 
+    def public_search_enabled(self, actor: Actor) -> bool:
+        return (
+            self.public_web_search is not None
+            and actor.tenant in self.public_web_search.tenants
+            and "agent.web_search" in actor.grants
+        )
+
+    def _public_search_turn(
+        self, actor: Actor, query: str, locale: str, *, has_document: bool, planner_limit: int,
+    ) -> AssistantMessage:
+        backend = self.public_web_search
+        if backend is None or not self.public_search_enabled(actor):
+            reply = _localize(
+                locale, "当前账号未开通公开网页搜索。", "目前帳戶未開通公開網頁搜尋。",
+                "Public web search is not enabled for this account.",
+            )
+            return AssistantMessage(reply=reply, mode="workflow_guidance")
+        if has_document or not safe_public_query(query, actor.warehouses):
+            reply = _localize(
+                locale,
+                "请单独提供一条不超过 128 字的公开业务检索词，例如 `/web 香港冷链物流公开供应商`。"
+                "请移除附件、内部编号和个人资料。",
+                "請另外提供一條不超過 128 字的公開業務搜尋詞，例如 `/web 香港冷鏈物流公開供應商`。"
+                "請移除附件、內部編號及個人資料。",
+                "Send a public business query of up to 128 characters, such as "
+                "`/web Hong Kong cold chain suppliers`. Remove attachments, internal references and personal data.",
+            )
+            return AssistantMessage(reply=reply, mode="workflow_guidance")
+
+        reservation_id = None
+
+        def admit() -> str | None:
+            nonlocal reservation_id
+            policy = self.provider_policy_store.get_policy(actor.tenant)
+            if (
+                "deepseek" not in policy["allowed_providers"]
+                or "global" not in policy["allowed_regions"]
+                or "public" in policy["blocked_data_classes"]
+                or policy["max_tier"] == "T0"
+            ):
+                return "SEARCH_POLICY_DENIED"
+            if not self.workflow.take_planner_budget(actor.tenant, planner_limit, bounded=True):
+                return "SEARCH_LIMIT"
+            quota = self.quota_manager.reserve_budget(
+                actor, estimated_micro_usd=SEARCH_COST_MICRO_USD, estimated_tokens=0,
+            )
+            reservation_id = quota.reservation_id
+            return None if quota.allowed else "SEARCH_LIMIT"
+
+        started = time.monotonic()
+        result = backend.search(query, admit=admit)
+        cost = SEARCH_COST_MICRO_USD if result.billable else 0
+        self.quota_manager.settle_budget(actor.tenant, reservation_id, actual_micro_usd=cost, actual_tokens=0)
+        self._record_telemetry_safe(
+            actor, provider="deepseek", model="public-web-search", tier="T0", reasoning_effort="none",
+            estimated_usd=cost / 1_000_000, latency_ms=(time.monotonic() - started) * 1000,
+            success=result.error is None, error_code=result.error,
+        )
+
+        if result.hits:
+            return AssistantMessage(reply=format_search_hits(result.hits, locale), mode="public_search")
+        messages = {
+            "SEARCH_POLICY_DENIED": (
+                "企业策略未允许此公开搜索服务。", "企業政策未允許此公開搜尋服務。",
+                "Your organization's policy does not allow this public search service.",
+            ),
+            "SEARCH_LIMIT": (
+                "公开搜索已达到当前用量限制。", "公開搜尋已達目前用量上限。",
+                "Public search has reached its current usage limit.",
+            ),
+            "SEARCH_BUSY": (
+                "公开搜索繁忙，请稍后重试。", "公開搜尋繁忙，請稍後再試。",
+                "Public search is busy. Try again shortly.",
+            ),
+            "SEARCH_UNAVAILABLE": (
+                "公开搜索暂不可用，当前未取得可核对的来源。", "公開搜尋暫時無法使用，目前未取得可核對的來源。",
+                "Public search is temporarily unavailable. No sources were retrieved.",
+            ),
+            None: (
+                "没有找到匹配的公开来源。可以换一组关键词再试。",
+                "未找到相符的公開來源。可以更換關鍵字再試。",
+                "No matching public sources were found. Try a different query.",
+            ),
+        }
+        return AssistantMessage(reply=_localize(locale, *messages[result.error]), mode="workflow_guidance")
+
     def handle_turn(
         self,
         actor: Actor,
@@ -2620,7 +2730,13 @@ class AssistantAgent:
 
         # 1b. Non-work boundary evaluation (L1 gentle colleague nudge, L2/L3 denial/escalation).
         if self.governance is not None and hasattr(self.governance, "evaluate_and_record_off_topic"):
-            off_topic = self.governance.evaluate_and_record_off_topic(actor, text=text, locale=locale)
+            # Client-supplied history can only add a reminder. It cannot bypass the guard or grant tools.
+            previous_user_text = None if task_switched else next(
+                (turn.text for turn in reversed(conversation_context or []) if turn.role == "user"), None,
+            )
+            off_topic = self.governance.evaluate_and_record_off_topic(
+                actor, text=text, locale=locale, previous_user_text=previous_user_text,
+            )
             if off_topic is not None:
                 level = str(off_topic.get("level") or "L1").upper()
                 self._record_telemetry_safe(
@@ -2665,6 +2781,17 @@ class AssistantAgent:
                     incident_id=str(off_topic.get("incident_id") or "off-topic"),
                     allowed_modules=allowed_modules_for_actor(actor),
                 )
+
+        query = public_search_query(text)
+        if query is not None:
+            return self._public_search_turn(
+                actor, query, locale, has_document=active_document is not None, planner_limit=planner_limit,
+            )
+        # Older clients can echo a search card in conversation history.
+        conversation_context = [
+            turn for turn in (conversation_context or [])
+            if turn.role != "assistant" or not is_public_search_output(turn.text)
+        ]
 
         snapshot = self.pending_work(actor)
 

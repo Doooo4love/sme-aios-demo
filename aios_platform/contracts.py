@@ -8,7 +8,7 @@ Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 Capability = Literal["shipment.read", "shipment.reschedule", "sales_order.create_draft"]
 Grant = Literal[
     "shipment.read", "shipment.reschedule", "order.read", "order.work", "finance.read",
-    "mail.read", "decision.read", "chat.use", "operations.manage",
+    "mail.read", "decision.read", "chat.use", "operations.manage", "agent.web_search",
     "workbench.access.manage", "workbench.approve.orders", "workbench.approve.shipments",
     "assurance.purchase", "assurance.incoming", "assurance.contract", "assurance.procurement",
     "assurance.finance", "assurance.quality", "assurance.legal", "assurance.audit",

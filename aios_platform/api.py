@@ -53,6 +53,7 @@ from .providers import (
     order_read_sites,
 )
 from .profile import profile_routes
+from .public_search import PublicWebSearch
 from .purchase import OrderIssue, PurchaseOrder, draft_order, from_ocr
 from .service import Services, identity_for, optional_opa, planner_for, services, setting
 from .tasks import task_routes
@@ -101,10 +102,12 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
               assurance: Assurance | None = None, assurance_concurrency: int = 8,
               browser: BrowserConfig | None = None, directory_actor=None,
               assistant_agent: AssistantAgent | None = None,
+              public_web_search: PublicWebSearch | None = None,
               event_hub: EventHub | None = None,
               governance: GovernanceService | None = None) -> FastAPI:
     if assurance is not None:
-        if not isinstance(planner, DemoPlanner) or workbench_planner is not None or assistant_agent is not None:
+        if (not isinstance(planner, DemoPlanner) or workbench_planner is not None
+                or assistant_agent is not None or public_web_search is not None):
             raise ValueError("Assurance requires disabling planners outside the governed provider gateway")
         if assurance.workflow is not runtime.workflow:
             raise ValueError("Assurance must use the current tenant workflow")
@@ -690,7 +693,9 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     )
     active_assistant = assistant_agent
     if assurance is None and active_assistant is None and workbench_planner is None:
-        active_assistant = AssistantAgent(workflow, governance_service, hub, api_key=None, demo=runtime.demo)
+        active_assistant = AssistantAgent(
+            workflow, governance_service, hub, api_key=None, public_web_search=public_web_search, demo=runtime.demo,
+        )
     app.state.active_assistant = active_assistant
 
     app.include_router(module_routes(module_access, authenticate, runtime.profiles))
@@ -743,6 +748,12 @@ def create_app() -> FastAPI:
                               review_ttl=int(setting("AIOS_ASSURANCE_REVIEW_TTL", "3600")))
     workbench_planner = None
     assistant_agent = None
+    public_web_search = None
+    if os.getenv("AIOS_WEB_SEARCH_TENANTS") or os.getenv("AIOS_WEB_SEARCH_TENANTS_FILE"):
+        tenants = frozenset(part.strip() for part in setting("AIOS_WEB_SEARCH_TENANTS").split(",") if part.strip())
+        if not tenants <= runtime.profiles.keys() or assurance is not None:
+            raise ValueError("Public web search requires known tenants on the assistant gateway")
+        public_web_search = PublicWebSearch(setting("AIOS_WEB_SEARCH_API_KEY"), tenants)
     planner_kind = os.getenv("AIOS_WORKBENCH_PLANNER", "local")
     if planner_kind not in {"local", "pydantic-ai", "deepseek", "llm"}:
         raise ValueError("Unknown AIOS workbench planner")
@@ -769,6 +780,7 @@ def create_app() -> FastAPI:
                 base_url=resolve_llm_base_url(resolved_model),
                 model=resolved_model,
                 provider=resolve_llm_provider(),
+                public_web_search=public_web_search,
                 demo=runtime.demo,
             )
     browser = None
@@ -786,4 +798,4 @@ def create_app() -> FastAPI:
                      chat_directory=workspace_source.known_subject if workspace_source else None,
                      directory_actor=workspace_source.directory_actor if workspace_source else None,
                      workbench_data=workspace_source, assistant_agent=assistant_agent,
-                     event_hub=hub, governance=governance_service)
+                     event_hub=hub, governance=governance_service, public_web_search=public_web_search)

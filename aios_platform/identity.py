@@ -69,7 +69,7 @@ class DemoIdentity:
         if name == "admin":
             grants.add("assurance.audit")
         if name == "access-admin":
-            grants.add("workbench.access.manage")
+            grants.update(("workbench.access.manage", "agent.web_search"))
         return Actor(subject=name, tenant=tenant, role=role, warehouses=warehouses, grants=grants)
 
 
