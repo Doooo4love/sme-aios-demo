@@ -424,8 +424,9 @@ export function EmployeeAccessDetailView({
       const persisted = assignments[moduleId];
       const currentVersion = persisted ? persisted.version : 0;
 
-      // Client-side validation matching backend Assignment & ModuleAccess.put
-      if (draft.grants.length === 0 && draft.warehouses.length === 0) {
+      const personalScope = catalog?.modules[moduleId]?.scope === "personal";
+      // Client-side validation matching backend ModuleAccess.put
+      if (!personalScope && draft.grants.length === 0 && draft.warehouses.length === 0) {
         setModuleFeedback(moduleId, {
           kind: "error",
           text: {
@@ -438,7 +439,18 @@ export function EmployeeAccessDetailView({
         });
         return;
       }
-      if (draft.grants.length === 0 || draft.warehouses.length === 0) {
+      if (personalScope && draft.grants.length === 0) {
+        setModuleFeedback(moduleId, {
+          kind: "error",
+          text: {
+            "zh-CN": "请选择要开放给员工的操作，或撤销该模块权限。",
+            "zh-HK": "請選擇要開放給員工的操作，或撤銷此模組權限。",
+            en: "Select an action or revoke the module.",
+          },
+        });
+        return;
+      }
+      if (!personalScope && (draft.grants.length === 0 || draft.warehouses.length === 0)) {
         setModuleFeedback(moduleId, {
           kind: "error",
           text: {
@@ -498,7 +510,7 @@ export function EmployeeAccessDetailView({
         const saved = await saveEmployeeModuleAssignment(subject, moduleId, {
           version: currentVersion,
           grants: draft.grants,
-          warehouses: draft.warehouses,
+          warehouses: personalScope ? [] : draft.warehouses,
           expires_at: expiresAt,
         });
         const savedNow = Math.floor(Date.now() / 1000);
@@ -548,6 +560,7 @@ export function EmployeeAccessDetailView({
       drafts,
       assignments,
       subject,
+      catalog,
       setModuleFeedback,
       reloadAfterConflict,
       handleAccessChanged,
@@ -856,6 +869,7 @@ export function EmployeeAccessDetailView({
         <div className="space-y-4">
           {moduleIds.map((moduleId, idx) => {
             const spec = catalog.modules[moduleId]!;
+            const personalScope = spec.scope === "personal";
             const orderedSpecGrants = sortGrantsByDependency(
               spec.grants,
               spec.grants,
@@ -873,6 +887,13 @@ export function EmployeeAccessDetailView({
               nowUnix,
               locale,
             );
+            const stateSummary = personalScope && stateInfo.status === "active"
+              ? tx({
+                  "zh-CN": "该配置仅对当前员工的 Agent 生效。",
+                  "zh-HK": "設定僅適用於目前員工的 Agent。",
+                  en: "This assignment is active for the selected employee's Agent.",
+                })
+              : stateInfo.summary;
             const draft =
               drafts[moduleId] ?? buildDraftFromAssignment(persisted);
             const dirty = isDraftDirty(draft, persisted);
@@ -1015,6 +1036,7 @@ export function EmployeeAccessDetailView({
                               .join(locale === "en" ? ", " : "、")}
                       </dd>
                     </div>
+                    {!personalScope && (
                     <div>
                       <dt className="text-[11px] text-[var(--ink-muted)]">
                         {tx({
@@ -1040,6 +1062,7 @@ export function EmployeeAccessDetailView({
                           : orderedPersistedWarehouses.join(" · ")}
                       </dd>
                     </div>
+                    )}
                     <div>
                       <dt className="text-[11px] text-[var(--ink-muted)]">
                         {tx(
@@ -1195,7 +1218,20 @@ export function EmployeeAccessDetailView({
                     </div>
                   </div>
 
-                  {/* Column 2: Warehouses (Pure Tactile Toggle Pills — Sorted Naturally HK01 -> HK02) */}
+                  {personalScope ? (
+                    <div className="lg:col-span-3">
+                      <span className="text-[12.5px] font-semibold text-[var(--ink-secondary)]">
+                        {tx({ "zh-CN": "员工范围", "zh-HK": "員工範圍", en: "Employee scope" })}
+                      </span>
+                      <p className="mt-2 text-[12px] text-[var(--ink-muted)]">
+                        {tx({
+                          "zh-CN": "授权仅适用于当前员工在本企业的 Agent。",
+                          "zh-HK": "授權僅適用於目前員工在本企業的 Agent。",
+                          en: "This permission applies to this employee's Agent in this organization.",
+                        })}
+                      </p>
+                    </div>
+                  ) : (
                   <div className="lg:col-span-3">
                     <div className="mb-2.5 flex items-center justify-between gap-2">
                       <span className="text-[12.5px] font-semibold text-[var(--ink-secondary)]">
@@ -1290,6 +1326,8 @@ export function EmployeeAccessDetailView({
                       })}
                     </div>
                   </div>
+
+                  )}
 
                   {/* Column 3: Localized Expiry Picker (Zero US mm/dd/yyyy Chrome) */}
                   <div className="lg:col-span-4">
