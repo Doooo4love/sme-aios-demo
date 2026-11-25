@@ -17,6 +17,7 @@ from fastapi import HTTPException
 import httpx
 from pydantic import Field, ValidationError
 
+from .assistant_utilities import csv_profile, display_literal, document_matches
 from .collaboration import subject_tx
 from .contracts import Actor, Identifier, Strict
 from .llm_provider import (
@@ -32,10 +33,12 @@ from .llm_provider import (
     resolve_fallback_llm_configs,
     resolve_model_profile,
 )
+from .module_access import ModuleAccess
 from .providers import approval_sites, https_base, order_read_sites
 from .public_search import (
     SEARCH_COST_MICRO_USD,
     PublicWebSearch,
+    SearchResult,
     format_search_hits,
     is_public_search_output,
     public_search_query,
@@ -65,7 +68,7 @@ from .user_memory import (
     MemoryPolicyError,
     UserMemoryStore,
 )
-from .workbench_tools import CALL, TOOLS, ToolCall
+from .workbench_tools import CALL, TOOLS, TOOL_IDS_BY_FUNCTION, ToolCall
 
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 LLM_TIMEOUT_SECONDS = 22.0
@@ -262,7 +265,7 @@ class EmailDraftPayload(Strict):
 class AssistantMessage(Strict):
     kind: Literal["message"] = "message"
     reply: Annotated[str, Field(min_length=1, max_length=4000)]
-    mode: Literal["chat", "workflow_guidance", "proactive_reminder", "email_draft", "public_search"] = "chat"
+    mode: Literal["chat", "workflow_guidance", "proactive_reminder", "email_draft", "public_search", "tool_result"] = "chat"
     pending_work: PendingWorkSnapshot | None = None
     suggested_actions: Annotated[list[SuggestedAction], Field(max_length=8)] = Field(default_factory=list)
     email_draft: EmailDraftPayload | None = None
@@ -389,8 +392,23 @@ def allowed_modules_for_actor(actor: Actor) -> list[str]:
         modules.append("access-admin")
     return modules
 
+_HARNESS_SKILLS = (
+    ("/calc", "utility.calculate", "精确计算", "Decimal calculator", "/calc (804 + 120) / 2"),
+    ("/time", "utility.time", "时区查询及换算", "Timezone lookup & conversion", "/time Asia/Hong_Kong"),
+    ("/find", None, "在当前附件内查找", "Find in current attachment", "/find 交货日期"),
+    ("/csv", None, "检查 CSV 表格", "Profile CSV", "/csv"),
+    ("/agenda", "calendar.agenda.read", "查看本人日程", "Read my calendar", "/agenda"),
+    ("/submitted", "tasks.submitted.read", "查看我提交的提案", "Read my submitted proposals", "/submitted"),
+    ("/knowledge", "knowledge.search", "搜索内部知识", "Search internal knowledge", "/knowledge HK01 冷链"),
+)
+_HARNESS_COMMANDS = frozenset(row[0] for row in _HARNESS_SKILLS)
+_HARNESS_TOOL_IDS = frozenset(row[1] for row in _HARNESS_SKILLS if row[1] is not None)
+_TOOL_RESULT_HEADINGS = ("工具结果", "工具結果", "Tool result")
 
-def skills_for_actor(actor: Actor, *, public_search: bool = False) -> list[SlashSkillItem]:
+
+def skills_for_actor(
+    actor: Actor, *, public_search: bool = False, offered_tools: tuple[str, ...] = (),
+) -> list[SlashSkillItem]:
     """Build the permission-aware slash skill catalog for the composer palette."""
     has_approvals = any(approval_sites(actor, action) for action in ("shipment.reschedule", "sales_order.create_draft"))
     has_ops = actor.role in {"manager", "admin"} and "operations.manage" in actor.grants
@@ -605,6 +623,14 @@ def skills_for_actor(actor: Actor, *, public_search: bool = False) -> list[Slash
             allowed=True,
             keywords=["web", "search", "联网", "聯網", "搜索", "搜尋"],
         ))
+    for command, tool, title, title_en, usage in _HARNESS_SKILLS:
+        if tool is None or (tool in offered_tools and TOOLS[tool].allowed(actor)):
+            skills.append(SlashSkillItem(
+                command=command, title=title, title_en=title_en,
+                description=title, description_en=title_en,
+                category="workflow", usage=usage, requires_args=command in {"/calc", "/time", "/find", "/knowledge"},
+                allowed=True, keywords=[title, title_en],
+            ))
     return skills
 
 
@@ -1015,8 +1041,13 @@ class AssistantAgent:
             email_draft=None,
         )
 
-    def _build_help_reply(self, actor: Actor, snapshot: PendingWorkSnapshot, locale: str) -> AssistantMessage:
-        skills = [item for item in skills_for_actor(actor) if item.allowed]
+    def skills(self, actor: Actor, *, offered_tools: tuple[str, ...]) -> list[SlashSkillItem]:
+        return skills_for_actor(actor, public_search=self.public_search_enabled(actor), offered_tools=offered_tools)
+
+    def _build_help_reply(
+        self, actor: Actor, snapshot: PendingWorkSnapshot, locale: str, offered_tools: tuple[str, ...] = (),
+    ) -> AssistantMessage:
+        skills = [item for item in self.skills(actor, offered_tools=offered_tools) if item.allowed]
         modules_label = ", ".join(allowed_modules_for_actor(actor))
         lines = [
             _localize(
@@ -1244,6 +1275,7 @@ class AssistantAgent:
         snapshot: PendingWorkSnapshot,
         execute_call: Callable[[Actor, ToolCall, str | None], Any],
         preview_approval: Callable[[Actor, str], Any],
+        offered_tools: tuple[str, ...] = (),
     ) -> Any | None:
         stripped = text.strip()
         if not stripped.startswith("/"):
@@ -1254,7 +1286,7 @@ class AssistantAgent:
         args = parts[1:]
 
         if cmd == "/help":
-            return self._build_help_reply(actor, snapshot, locale)
+            return self._build_help_reply(actor, snapshot, locale, offered_tools)
         if cmd in {"/brief", "/todo"}:
             return self._build_brief_reply(actor, snapshot, locale)
         if cmd == "/memory":
@@ -1898,7 +1930,10 @@ class AssistantAgent:
                 mode="workflow_guidance",
             )
         try:
-            return execute_call(actor, call, key)
+            outcome = execute_call(actor, call, key)
+            if call.tool in _HARNESS_TOOL_IDS and getattr(outcome, "kind", None) == "result":
+                return self._present_harness_result(call.tool, outcome.data, locale)
+            return outcome
         except HTTPException as error:
             if error.status_code == 403:
                 return self._record_and_refuse(
@@ -1959,102 +1994,11 @@ class AssistantAgent:
         ]
 
         offered = set(offered_tools)
-        if "shipment.read" in offered:
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": "shipment_read",
-                    "description": "Read a shipment's status, delivery date, and version in an authorized warehouse.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "shipment_id": {"type": "string"},
-                            "warehouse": {"type": "string"},
-                        },
-                        "required": ["shipment_id", "warehouse"],
-                        "additionalProperties": False,
-                    },
-                },
-            })
-        if "shipment.reschedule" in offered:
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": "shipment_reschedule",
-                    "description": "Propose rescheduling an open shipment to a new YYYY-MM-DD delivery date.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "shipment_id": {"type": "string"},
-                            "warehouse": {"type": "string"},
-                            "delivery_date": {"type": "string"},
-                        },
-                        "required": ["shipment_id", "warehouse", "delivery_date"],
-                        "additionalProperties": False,
-                    },
-                },
-            })
-        if "order.draft.prepare" in offered:
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": "order_draft_prepare",
-                    "description": "Prepare a governed sales order draft proposal from an existing intake ID.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "intake_id": {"type": "string"},
-                            "warehouse": {"type": "string"},
-                        },
-                        "required": ["intake_id", "warehouse"],
-                        "additionalProperties": False,
-                    },
-                },
-            })
-        if "finance.invoice.read" in offered:
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": "finance_invoice_read",
-                    "description": "Read an invoice's currency, amount, and state in an authorized warehouse.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "invoice_id": {"type": "string"},
-                            "warehouse": {"type": "string"},
-                        },
-                        "required": ["invoice_id", "warehouse"],
-                        "additionalProperties": False,
-                    },
-                },
-            })
-        if "mail.inbox.read" in offered:
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": "mail_inbox_read",
-                    "description": "Read recent mail message headers from the employee's inbox.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 20}},
-                        "additionalProperties": False,
-                    },
-                },
-            })
-        if "decision.warehouse.summary" in offered:
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": "decision_warehouse_summary",
-                    "description": "Read open shipments decision summary for an authorized warehouse.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"warehouse": {"type": "string"}},
-                        "required": ["warehouse"],
-                        "additionalProperties": False,
-                    },
-                },
-            })
+        schemas.extend(
+            TOOLS[tool].model_schema(name)
+            for name, tool in TOOL_IDS_BY_FUNCTION.items()
+            if tool in offered and TOOLS[tool].allowed(actor)
+        )
         if any(approval_sites(actor, a) for a in ("shipment.reschedule", "sales_order.create_draft")):
             schemas.append({
                 "type": "function",
@@ -2455,19 +2399,12 @@ class AssistantAgent:
                     )
                 raise
 
-        tool_map = {
-            "shipment_read": "shipment.read",
-            "shipment_reschedule": "shipment.reschedule",
-            "order_draft_prepare": "order.draft.prepare",
-            "finance_invoice_read": "finance.invoice.read",
-            "mail_inbox_read": "mail.inbox.read",
-            "decision_warehouse_summary": "decision.warehouse.summary",
-        }
-        mapped = tool_map.get(name)
+        mapped = TOOL_IDS_BY_FUNCTION.get(name)
         if mapped is None:
             return self._offline_fallback(actor, text, locale, snapshot)
 
-        payload = {"tool": mapped, **raw_args}
+        # Model arguments never choose the tool's identity.
+        payload = {**raw_args, "tool": mapped}
         return self._execute_business_tool(actor, payload, locale, key, text, execute_call)
 
     def _record_telemetry_safe(
@@ -2599,11 +2536,120 @@ class AssistantAgent:
                 )
         return safe_reply
 
+    @staticmethod
+    def _tool_reply(locale: str, content: str) -> AssistantMessage:
+        title = _localize(locale, *_TOOL_RESULT_HEADINGS)
+        return AssistantMessage(reply=f"**{title}**\n\n{content}", mode="tool_result")
+
+    def _present_harness_result(self, tool: str, data: dict, locale: str) -> AssistantMessage:
+        empty = _localize(locale, "没有匹配的记录。", "沒有相符的紀錄。", "No matching records.")
+        if tool == "utility.calculate":
+            message = f"`{data['value']}`"
+        elif tool == "utility.time":
+            message = f"`{data['time']}` · {display_literal(data['timezone'])}"
+        elif tool == "calendar.agenda.read":
+            lines = []
+            for row in data["events"]:
+                start = datetime.fromtimestamp(row["starts_at"], HK_TZ).strftime("%Y-%m-%d %H:%M")
+                end = datetime.fromtimestamp(row["ends_at"], HK_TZ).strftime("%Y-%m-%d %H:%M")
+                status = _localize(locale, "（已取消）", "（已取消）", " (cancelled)") if row["cancelled"] else ""
+                lines.append(f"- `{start} → {end} HKT` · {display_literal(row['title'])}{status}")
+            if data["has_more"]:
+                lines.append(_localize(locale, "还有更多日程，请缩小日期范围。", "尚有其他日程，請縮窄日期範圍。", "More events exist. Use a narrower date range."))
+            message = "\n".join(lines) or empty
+        elif tool == "tasks.submitted.read":
+            message = "\n".join(
+                f"- [`{row['id'][:12]}`](/proposals/{row['id']}) · `{row['warehouse']}` · {display_literal(row['state'])}"
+                for row in data["proposals"]
+            ) or empty
+        else:
+            message = "\n\n".join(
+                f"**{display_literal(row['title'])}** · `{row['source_id']}` · {display_literal(row['section'])}"
+                f"\n\n{display_literal(row['excerpt'])}"
+                for row in data["sources"]
+            ) or empty
+        return self._tool_reply(locale, message)
+
+    def _harness_command(
+        self, actor: Actor, command: str, args: str, text: str, locale: str, active_document: Any,
+        execute_call: Callable[[Actor, ToolCall, str | None], Any],
+    ) -> Any:
+        if command in {"/find", "/csv"}:
+            document = self._coerce_active_document(active_document)
+            if document is None:
+                return self._tool_reply(locale, _localize(
+                    locale, "请通过「添加上下文」选择文件后重试。", "請透過「加入上下文」選擇檔案後再試。",
+                    "Choose a file in Add Context and try again.",
+                ))
+            try:
+                if command == "/find":
+                    hits = document_matches(document.content, args)
+                    result = "\n".join(f"- `L{line}` · {display_literal(excerpt)}" for line, excerpt in hits)
+                    return self._tool_reply(locale, result or _localize(
+                        locale, "在附件中未找到匹配文字。", "在附件中找不到相符的文字。", "No matching text in the attachment.",
+                    ))
+                suffix = Path(document.title).suffix.lower()
+                if suffix not in {".csv", ".tsv"} or args:
+                    raise ValueError
+                stats = csv_profile(document.content, "\t" if suffix == ".tsv" else ",")
+                summary = _localize(
+                    locale,
+                    f"共 **{stats['rows']}** 行、**{stats['columns']}** 列。以下为有缺失值的列（最多 12 列）。",
+                    f"共 **{stats['rows']}** 行、**{stats['columns']}** 欄。以下為有缺漏值的欄（最多 12 欄）。",
+                    f"**{stats['rows']}** rows and **{stats['columns']}** columns. Columns with missing values (up to 12).",
+                )
+                missing = [(name, n) for name, n in stats["missing"] if n]
+                return self._tool_reply(locale, summary + "".join(
+                    f"\n- {display_literal(name)} · **{count}**" for name, count in missing[:12]
+                ))
+            except ValueError:
+                return self._tool_reply(locale, _localize(
+                    locale, "请检查搜索词或表格格式。CSV/TSV 需有唯一列名且每行列数相同。",
+                    "請檢查搜尋詞或表格格式。CSV/TSV 須有唯一欄名，各行欄數須相同。",
+                    "Check the search phrase or file format. CSV/TSV needs unique headers and consistent rows.",
+                ))
+
+        try:
+            if command == "/calc":
+                payload = {"tool": "utility.calculate", "expression": args}
+            elif command == "/time":
+                parts = args.split()
+                if not 1 <= len(parts) <= 2:
+                    raise ValueError
+                payload = {"tool": "utility.time", "timezone": parts[0], **({"instant": parts[1]} if len(parts) == 2 else {})}
+            elif command == "/agenda":
+                day = datetime.strptime(args, "%Y-%m-%d").date() if args else datetime.now(HK_TZ).date()
+                start = datetime.combine(day, datetime.min.time(), tzinfo=HK_TZ)
+                payload = {"tool": "calendar.agenda.read", "start": start, "end": start + timedelta(days=1)}
+            elif command == "/submitted":
+                payload = {"tool": "tasks.submitted.read", "limit": int(args) if args else 5}
+            else:
+                warehouse, query = args.split(maxsplit=1)
+                payload = {"tool": "knowledge.search", "warehouse": warehouse, "query": query}
+            call = CALL.validate_python(payload)
+            return self._execute_business_tool(actor, call.model_dump(), locale, None, text, execute_call)
+        except (ValueError, OverflowError):
+            status = 422
+        except HTTPException as error:
+            status = error.status_code
+            if status not in {404, 422, 503}:
+                raise
+
+        usage = next(row[4] for row in _HARNESS_SKILLS if row[0] == command)
+        if status == 503:
+            message = _localize(locale, "企业数据源暂不可用。", "企業資料來源暫時無法使用。", "The business data source is unavailable.")
+        elif status == 404:
+            message = _localize(locale, "资料不可用。", "資料無法使用。", "The requested records are unavailable.")
+        else:
+            message = _localize(locale, f"请检查工具参数，例如 `{usage}`。", f"請檢查工具參數，例如 `{usage}`。",
+                                f"Check the arguments, for example `{usage}`.")
+        return self._tool_reply(locale, message)
+
     def public_search_enabled(self, actor: Actor) -> bool:
         return (
             self.public_web_search is not None
             and actor.tenant in self.public_web_search.tenants
-            and "agent.web_search" in actor.grants
+            and actor.has_personal_grant("agent.web_search")
         )
 
     def _public_search_turn(
@@ -2632,6 +2678,12 @@ class AssistantAgent:
 
         def admit() -> str | None:
             nonlocal reservation_id
+            try:
+                current = ModuleAccess(self.workflow).refresh(actor)
+            except PermissionError:
+                return "SEARCH_ACCESS_CHANGED"
+            if not self.public_search_enabled(current):
+                return "SEARCH_ACCESS_CHANGED"
             policy = self.provider_policy_store.get_policy(actor.tenant)
             if (
                 "deepseek" not in policy["allowed_providers"]
@@ -2659,8 +2711,18 @@ class AssistantAgent:
         )
 
         if result.hits:
-            return AssistantMessage(reply=format_search_hits(result.hits, locale), mode="public_search")
+            try:
+                still_allowed = self.public_search_enabled(ModuleAccess(self.workflow).refresh(actor))
+            except PermissionError:
+                still_allowed = False
+            if still_allowed:
+                return AssistantMessage(reply=format_search_hits(result.hits, locale), mode="public_search")
+            result = SearchResult(error="SEARCH_ACCESS_CHANGED")
         messages = {
+            "SEARCH_ACCESS_CHANGED": (
+                "搜索权限已变更，请重新确认访问权限。", "搜尋權限已變更，請重新確認存取權限。",
+                "Search access changed. Check your permission and try again.",
+            ),
             "SEARCH_POLICY_DENIED": (
                 "企业策略未允许此公开搜索服务。", "企業政策未允許此公開搜尋服務。",
                 "Your organization's policy does not allow this public search service.",
@@ -2782,6 +2844,11 @@ class AssistantAgent:
                     allowed_modules=allowed_modules_for_actor(actor),
                 )
 
+        tokens = text.strip().split(maxsplit=1)
+        if tokens and tokens[0].lower() in _HARNESS_COMMANDS:
+            return self._harness_command(actor, tokens[0].lower(), tokens[1] if len(tokens) == 2 else "",
+                                         text, locale, active_document, execute_call)
+
         query = public_search_query(text)
         if query is not None:
             return self._public_search_turn(
@@ -2790,7 +2857,10 @@ class AssistantAgent:
         # Older clients can echo a search card in conversation history.
         conversation_context = [
             turn for turn in (conversation_context or [])
-            if turn.role != "assistant" or not is_public_search_output(turn.text)
+            if turn.role != "assistant" or not (
+                is_public_search_output(turn.text)
+                or turn.text.startswith(tuple(f"**{title}**\n" for title in _TOOL_RESULT_HEADINGS))
+            )
         ]
 
         snapshot = self.pending_work(actor)
@@ -2804,6 +2874,7 @@ class AssistantAgent:
             snapshot,
             execute_call,
             preview_approval,
+            offered_tools,
         )
         if slash_result is not None:
             if getattr(slash_result, "kind", None) != "refusal":
@@ -3387,7 +3458,7 @@ class AssistantAgent:
                         if getattr(outcome, "kind", None) in {"proposal", "approval_preview"}:
                             return outcome
                         if isinstance(outcome, AssistantMessage):
-                            if outcome.mode == "email_draft":
+                            if outcome.mode in {"email_draft", "tool_result"}:
                                 return outcome
                             # Cascade escalate once if business tool args failed schema validation at T1/T2.
                             if (
@@ -3462,7 +3533,7 @@ class AssistantAgent:
                             return outcome
                         if getattr(outcome, "kind", None) in {"proposal", "approval_preview"}:
                             return outcome
-                        if isinstance(outcome, AssistantMessage) and outcome.mode == "email_draft":
+                        if isinstance(outcome, AssistantMessage) and outcome.mode in {"email_draft", "tool_result"}:
                             return outcome
                         obs = outcome.model_dump(mode="json") if hasattr(outcome, "model_dump") else outcome
                         compacted_obs = compact_tool_observation(obs, max_chars=2400)

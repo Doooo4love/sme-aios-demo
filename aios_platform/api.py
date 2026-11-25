@@ -732,7 +732,8 @@ def create_app() -> FastAPI:
     if not runtime.demo and (os.getenv("AIOS_WORKSPACE_SOURCE_URL") or os.getenv("AIOS_WORKSPACE_SOURCE_URL_FILE")):
         workspace_source = WorkspaceSource(setting("AIOS_WORKSPACE_SOURCE_URL"),
                                            setting("AIOS_WORKSPACE_SOURCE_TOKEN"),
-                                           setting("AIOS_CONNECTOR_TENANT"))
+                                           setting("AIOS_CONNECTOR_TENANT"),
+                                           knowledge_enabled=setting("AIOS_WORKSPACE_KNOWLEDGE", "0") == "1")
     assurance = None
     if not runtime.demo and os.getenv("AIOS_ASSURANCE_KEY_FILE"):
         if workspace_source is None:

@@ -23,11 +23,17 @@ from .assistant_agent import (
     WorkPulseResponse,
     skills_for_actor,
 )
+from .assistant_utilities import calculate, time_in_zone
+from .calendar import Calendar
 from .contracts import Actor, Clarify, Identifier, Plan, Strict
 from .erp import ERPRejected, ERP_TRANSPORT_ERRORS
 from .providers import approval_sites, can_approve, order_read_sites
 from .service import Services
-from .workbench_tools import CALL, OrderDraft, ShipmentChange, ToolCall, TOOLS, WorkData, scoped_data, local_turn
+from .tasks import Tasks
+from .workbench_tools import (
+    CALL, TOOLS, Calculate, CalendarAgenda, KnowledgeRecord, KnowledgeSearch, OrderDraft,
+    ShipmentChange, SubmittedProposals, ToolCall, WorkData, ZonedTime, local_turn, scoped_data,
+)
 from .workflow import Conflict
 
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key", pattern=r"^[A-Za-z0-9._:-]{1,128}$")]
@@ -112,11 +118,21 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
     router = APIRouter(prefix="/v1/workbench", tags=["Employee workbench"])
     workflow = runtime.workflow
     history = AgentHistory(workflow)
+    calendar = Calendar(workflow, None)
+    tasks = Tasks(workflow, None)
 
-    def source(name):
+    def source(name, actor):
         domain = TOOLS[name].domain
         if domain == "erp":
             return "synthetic" if runtime.demo else "erp"
+        if domain == "internal":
+            return "internal"
+        if domain == "knowledge" and (
+            not callable(getattr(data, "knowledge", None))
+            or not getattr(data, "knowledge_enabled", True)
+            or getattr(data, "tenant", actor.tenant) != actor.tenant
+        ):
+            return "unconfigured"
         if data is None:
             return "unconfigured"
         return "synthetic" if runtime.demo else domain
@@ -124,6 +140,39 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
     def read_or_preview(actor: Actor, request: ToolCall) -> dict | Plan:
         if isinstance(request, OrderDraft):
             return prepare_order(actor, request.intake_id, expected_warehouse=request.warehouse)
+        if isinstance(request, (Calculate, ZonedTime)):
+            try:
+                if isinstance(request, Calculate):
+                    return {"value": calculate(request.expression)}
+                return {"time": time_in_zone(request.instant, request.timezone), "timezone": request.timezone}
+            except ValueError as error:
+                raise HTTPException(422, {"code": "TOOL_ARGUMENT_INVALID"}) from error
+        if isinstance(request, CalendarAgenda):
+            page = calendar.agenda(actor, request.start.timestamp(), request.end.timestamp(), 8, None)
+            return {
+                "events": [{field: row[field] for field in ("title", "starts_at", "ends_at", "cancelled")}
+                           for row in page["items"]],
+                "has_more": page["next"] is not None,
+            }
+        if isinstance(request, SubmittedProposals):
+            rows = tasks.submitted(actor, request.limit)
+            return {"proposals": [{field: row[field] for field in ("id", "warehouse", "state")} for row in rows]}
+        if isinstance(request, KnowledgeSearch):
+            if source(request.tool, actor) == "unconfigured":
+                raise HTTPException(503, {"code": "CONNECTOR_UNAVAILABLE"})
+            try:
+                record = KnowledgeRecord.model_validate(data.knowledge(actor, request))
+            except ERP_TRANSPORT_ERRORS as error:
+                raise HTTPException(503, {"code": "CONNECTOR_UNAVAILABLE"}) from error
+            stamp = (actor.tenant, actor.subject, request.warehouse)
+            if ((record.tenant, record.subject, record.warehouse) != stamp
+                    or any((hit.tenant, hit.warehouse) != (stamp[0], stamp[2]) for hit in record.hits)
+                    or len(record.hits) > request.limit):
+                workflow.audit(actor, request.tool, "WORKBENCH_PROJECTION_REJECTED")
+                raise HTTPException(404, {"code": "RECORD_UNAVAILABLE"})
+            return {"warehouse": request.warehouse, "sources": [
+                hit.model_dump(mode="json", exclude={"tenant", "warehouse"}) for hit in record.hits
+            ]}
         if TOOLS[request.tool].domain != "erp":
             if data is None:
                 raise HTTPException(503, "This connector is not configured")
@@ -168,6 +217,7 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
 
     def execute(actor: Actor, request: ToolCall, key: str | None) -> WorkResult | WorkProposal:
         spec = TOOLS[request.tool]
+        actor = refresh_actor(actor)
         warehouse = getattr(request, "warehouse", None)
         if not spec.allowed(actor, warehouse=warehouse):
             workflow.audit(actor, request.tool, "WORKBENCH_DENIED")
@@ -181,7 +231,7 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
             workflow.audit(actor, request.tool, "WORKBENCH_DENIED")
             raise HTTPException(403, {"code": "ACCESS_CHANGED"})
         workflow.audit(actor, request.tool, "WORKBENCH_READ")
-        return WorkResult(tool=request.tool, source=source(request.tool), data=result)
+        return WorkResult(tool=request.tool, source=source(request.tool, actor), data=result)
 
     def offered_tools(actor):
         return [name for name, spec in TOOLS.items() if spec.allowed(actor)]
@@ -189,9 +239,9 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
     @router.get("/capabilities")
     def capabilities(request: Request, actor: Actor = Depends(authenticate)):
         result = {"tools": [
-            {"id": name, "mode": TOOLS[name].mode, "available": source(name) != "unconfigured",
-             "source": source(name),
-             "warehouses": sorted(TOOLS[name].sites(actor)) if TOOLS[name].domain != "mail" else []}
+            {"id": name, "mode": TOOLS[name].mode, "available": source(name, actor) != "unconfigured",
+             "source": source(name, actor),
+             "warehouses": sorted(TOOLS[name].sites(actor))}
             for name in offered_tools(actor)
         ], "order_read_warehouses": sorted(order_read_sites(actor)), "approval_warehouses": {
             action: sorted(approval_sites(actor, action)) for action in ("sales_order.create_draft", "shipment.reschedule")
@@ -204,8 +254,11 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
     @router.get("/skills")
     def skills(actor: Actor = Depends(authenticate)):
         current = refresh_actor(actor)
-        has_search = assistant is not None and assistant.public_search_enabled(current)
-        return {"items": [item.model_dump(mode="json") for item in skills_for_actor(current, public_search=has_search)]}
+        if assistant is None:
+            return {"items": [item.model_dump(mode="json") for item in skills_for_actor(current)]}
+        return {"items": [item.model_dump(mode="json") for item in assistant.skills(
+            current, offered_tools=tuple(name for name in offered_tools(current) if source(name, current) != "unconfigured"),
+        )]}
 
     @router.get("/work-pulse", response_model=WorkPulseResponse)
     def work_pulse(actor: Actor = Depends(authenticate)):
@@ -376,7 +429,7 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
         request = ApprovalIntent(kind="approval_intent", proposal_id=match[1]) if match else local_turn(body.text)
         if isinstance(request, Clarify):
             if planner is not None:
-                offered = tuple(name for name in offered_tools(actor) if source(name) != "unconfigured")
+                offered = tuple(name for name in offered_tools(actor) if source(name, actor) != "unconfigured")
                 if any(approval_sites(actor, action) for action in ("shipment.reschedule", "sales_order.create_draft")):
                     offered += ("approval.preview",)
                 if not offered:
@@ -392,7 +445,7 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
                 if isinstance(request, Clarification):
                     return Clarification(question="Choose an available operation and include the reference or warehouse.")
             elif assistant is not None:
-                offered = tuple(name for name in offered_tools(actor) if source(name) != "unconfigured")
+                offered = tuple(name for name in offered_tools(actor) if source(name, actor) != "unconfigured")
                 try:
                     return assistant.handle_turn(
                         actor,
@@ -468,7 +521,11 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
         if key is not None:
             raise HTTPException(422, "Persistent turns use client_id as their idempotency key")
         try:
-            attempt = history.begin(actor, body.client_id, body.text)
+            attachment = body.active_document
+            fingerprint_text = body.text
+            if attachment is not None and re.match(r"^/(?:find|csv)(?:\s|$)", body.text.strip(), re.IGNORECASE):
+                fingerprint_text = digest_of([body.text, attachment.title, attachment.content])
+            attempt = history.begin(actor, body.client_id, fingerprint_text)
             if attempt is None:
                 return historical_result(refresh_actor(actor), body.client_id)
             reserved_key = "activity/" + digest_of([actor.subject, body.client_id])

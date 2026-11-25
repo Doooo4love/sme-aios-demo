@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import json
 import time
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field, model_validator
@@ -17,6 +17,7 @@ from .providers import APPROVAL_GRANTS
 class Module:
     grants: tuple[Grant, ...]
     roles: frozenset[str] | None = None
+    scope: Literal["warehouse", "personal"] = "warehouse"
 
 
 APPROVAL_ROLES = frozenset({"manager", "admin"})
@@ -26,6 +27,9 @@ MODULES = {
     "invoice-review": Module(("finance.read",)),
     "warehouse-insights": Module(("decision.read",)),
     "approvals": Module(tuple(APPROVAL_GRANTS.values()), APPROVAL_ROLES),
+    "agent-web": Module(("agent.web_search",), scope="personal"),
+    "agent-collaboration": Module(("agent.calendar_read", "agent.tasks_read"), scope="personal"),
+    "agent-knowledge": Module(("agent.knowledge_read",)),
 }
 MODULE_BY_GRANT = {grant: module for module, spec in MODULES.items() for grant in spec.grants}
 Subject = Annotated[str, Field(min_length=1, max_length=150, pattern=r"^[A-Za-z0-9._:@-]+$")]
@@ -39,8 +43,8 @@ class Assignment(Strict):
 
     @model_validator(mode="after")
     def valid_scope(self):
-        if bool(self.grants) != bool(self.warehouses) or (not self.grants and self.expires_at is not None):
-            raise ValueError("Specify both grants and warehouses for access, or neither for revocation")
+        if not self.grants and (self.warehouses or self.expires_at is not None):
+            raise ValueError("Revocation cannot include warehouses or an expiration")
         return self
 
 
@@ -71,15 +75,18 @@ def refresh_scope(run, actor: Actor) -> Actor:
     now = time.time()
     rules = assignments(run, actor.tenant, actor.subject)
     scope = {}
+    personal_grants = {}
     for name, rule in rules.items():
         module = MODULES[name]
         active = rule.expires_at is None or now < rule.expires_at
         eligible = module.roles is None or actor.role in module.roles
         for grant in module.grants:
-            scope[grant] = (
-                rule.warehouses & actor.warehouses if active and eligible and grant in rule.grants else frozenset()
-            )
-    return actor.model_copy(update={"module_scopes": scope})
+            granted = active and eligible and grant in rule.grants
+            if module.scope == "personal":
+                personal_grants[grant] = granted
+            else:
+                scope[grant] = rule.warehouses & actor.warehouses if granted else frozenset()
+    return actor.model_copy(update={"module_scopes": scope, "personal_module_grants": personal_grants})
 
 
 def dispatch_permitted(run, tenant, subject, warehouse, grants, *, now, approval_grant=None):
@@ -136,6 +143,10 @@ class ModuleAccess:
 
     def put(self, actor, subject, module, update):
         spec = MODULES[module]
+        if spec.scope == "personal" and update.warehouses:
+            raise ValueError("Personal agent permissions do not accept a warehouse scope")
+        if spec.scope == "warehouse" and update.grants and not update.warehouses:
+            raise ValueError("Select at least one warehouse for this module")
         prerequisites = {"shipment.reschedule": "shipment.read", "order.work": "order.read"}
         if (not update.warehouses <= actor.warehouses or not update.grants <= set(spec.grants)
                 or any(grant in update.grants and required not in update.grants

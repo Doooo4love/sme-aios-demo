@@ -1,10 +1,10 @@
 """Typed, bounded workbench calls and synthetic provider projection."""
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 import re
 from typing import Annotated, Literal, Protocol
 
-from pydantic import Field, TypeAdapter
+from pydantic import AwareDatetime, Field, StringConstraints, TypeAdapter, model_validator
 
 from .contracts import Actor, Clarify, Grant, Identifier, Strict
 from .providers import action_sites
@@ -46,38 +46,102 @@ class WarehouseSummary(Strict):
     warehouse: Identifier
 
 
-ToolCall = Annotated[ShipmentLookup | ShipmentChange | OrderDraft | InvoiceLookup | InboxLookup | WarehouseSummary,
-                     Field(discriminator="tool")]
+class Calculate(Strict):
+    tool: Literal["utility.calculate"]
+    expression: Annotated[str, Field(min_length=1, max_length=160)]
+
+
+class ZonedTime(Strict):
+    tool: Literal["utility.time"]
+    timezone: Annotated[str, Field(min_length=1, max_length=64)]
+    instant: AwareDatetime | None = None
+
+
+class CalendarAgenda(Strict):
+    tool: Literal["calendar.agenda.read"]
+    start: AwareDatetime
+    end: AwareDatetime
+
+    @model_validator(mode="after")
+    def valid_window(self):
+        if not timedelta(0) < self.end - self.start <= timedelta(days=14):
+            raise ValueError("Choose a calendar interval of up to 14 days")
+        return self
+
+
+class SubmittedProposals(Strict):
+    tool: Literal["tasks.submitted.read"]
+    limit: Annotated[int, Field(ge=1, le=10, strict=True)] = 5
+
+
+class KnowledgeSearch(Strict):
+    tool: Literal["knowledge.search"]
+    warehouse: Identifier
+    query: Annotated[str, StringConstraints(min_length=1, max_length=160, strip_whitespace=True)]
+    limit: Annotated[int, Field(ge=1, le=5, strict=True)] = 5
+
+
+ToolCall = Annotated[
+    ShipmentLookup | ShipmentChange | OrderDraft | InvoiceLookup | InboxLookup | WarehouseSummary
+    | Calculate | ZonedTime | CalendarAgenda | SubmittedProposals | KnowledgeSearch,
+    Field(discriminator="tool"),
+]
 CALL = TypeAdapter(ToolCall)
 
 
 @dataclass(frozen=True)
 class Tool:
-    grant: Grant
-    mode: Literal["read", "proposal"]
-    domain: Literal["erp", "finance", "mail", "decision"] = "erp"
+    model: type[Strict]
+    description: str
+    grant: Grant | None
+    mode: Literal["read", "proposal"] = "read"
+    domain: Literal["erp", "finance", "mail", "decision", "internal", "knowledge"] = "erp"
     action: str | None = None
+    personal: bool = False
 
     def allowed(self, actor: Actor, *, warehouse: str | None = None) -> bool:
-        if self.domain == "mail":
-            return self.grant in actor.grants
+        if self.grant is None:
+            return True
+        if self.personal:
+            return actor.has_personal_grant(self.grant)
         sites = self.sites(actor)
         return bool(sites) if warehouse is None else warehouse in sites
 
     def sites(self, actor: Actor) -> frozenset[str]:
         if self.action is not None:
             return action_sites(actor, self.action)
-        return actor.sites_for(self.grant)
+        return actor.sites_for(self.grant) if self.grant is not None and not self.personal else frozenset()
+
+    def model_schema(self, name: str) -> dict:
+        schema = self.model.model_json_schema()
+        schema.pop("title", None)
+        schema["properties"].pop("tool")
+        required = [field for field in schema.pop("required", []) if field != "tool"]
+        if required:
+            schema["required"] = required
+        return {"type": "function", "function": {"name": name, "description": self.description, "parameters": schema}}
 
 
 TOOLS = {
-    "shipment.read": Tool("shipment.read", "read"),
-    "shipment.reschedule": Tool("shipment.reschedule", "proposal", action="shipment.reschedule"),
-    "order.draft.prepare": Tool("order.work", "proposal", action="sales_order.create_draft"),
-    "finance.invoice.read": Tool("finance.read", "read", "finance"),
-    "mail.inbox.read": Tool("mail.read", "read", "mail"),
-    "decision.warehouse.summary": Tool("decision.read", "read", "decision"),
+    "shipment.read": Tool(ShipmentLookup, "Read a shipment in an authorized warehouse.", "shipment.read"),
+    "shipment.reschedule": Tool(ShipmentChange, "Propose rescheduling an open shipment to a YYYY-MM-DD date.",
+                                "shipment.reschedule", "proposal", action="shipment.reschedule"),
+    "order.draft.prepare": Tool(OrderDraft, "Prepare a governed sales order draft from an intake ID.",
+                                "order.work", "proposal", action="sales_order.create_draft"),
+    "finance.invoice.read": Tool(InvoiceLookup, "Read an invoice in an authorized warehouse.", "finance.read", domain="finance"),
+    "mail.inbox.read": Tool(InboxLookup, "Read recent headers from the employee's own inbox.", "mail.read", domain="mail", personal=True),
+    "decision.warehouse.summary": Tool(WarehouseSummary, "Read open shipment counts in an authorized warehouse.",
+                                       "decision.read", domain="decision"),
+    "utility.calculate": Tool(Calculate, "Compute decimal arithmetic with +, -, *, / and parentheses.", None, domain="internal"),
+    "utility.time": Tool(ZonedTime, "Get current time or convert an offset-qualified instant to an IANA timezone.", None, domain="internal"),
+    "calendar.agenda.read": Tool(CalendarAgenda, "Read the employee's own internal calendar in a window up to 14 days.",
+                                 "agent.calendar_read", domain="internal", personal=True),
+    "tasks.submitted.read": Tool(SubmittedProposals, "List the employee's own submitted proposals and their status.",
+                                 "agent.tasks_read", domain="internal", personal=True),
+    "knowledge.search": Tool(KnowledgeSearch, "Find internal sources in one explicitly selected authorized warehouse.",
+                              "agent.knowledge_read", domain="knowledge"),
 }
+TOOL_IDS_BY_FUNCTION = {name.replace(".", "_"): name for name in TOOLS}
 
 REF = r"([A-Za-z0-9_-]{1,64})"
 PATTERNS = (
@@ -142,6 +206,21 @@ class DecisionRecord(Strict):
     view: DecisionView
 
 
+class KnowledgeHit(Strict):
+    tenant: Identifier
+    warehouse: Identifier
+    source_id: Identifier
+    title: Annotated[str, StringConstraints(min_length=1, max_length=120, strip_whitespace=True)]
+    section: Annotated[str, StringConstraints(min_length=1, max_length=80, strip_whitespace=True)]
+    excerpt: Annotated[str, StringConstraints(min_length=1, max_length=400, strip_whitespace=True)]
+
+
+class KnowledgeRecord(Strict):
+    tenant: Identifier
+    warehouse: Identifier
+    subject: Annotated[str, Field(min_length=1, max_length=150)]
+    hits: Annotated[list[KnowledgeHit], Field(max_length=5)]
+
 class WorkData(Protocol):
     """Only implement with a scope-aware client and read-only delegated credentials."""
 
@@ -178,6 +257,22 @@ class SyntheticWorkData:
         return DecisionRecord(tenant=actor.tenant, view=DecisionView(
             warehouse=call.warehouse, open_shipments=figures[key], as_of=date(2026, 11, 20),
         ))
+
+    def knowledge(self, actor: Actor, call: KnowledgeSearch) -> KnowledgeRecord:
+        # Synthetic records exercise warehouse-scoped retrieval without a customer connector.
+        sample = {
+            ("harbour", "HK01"): KnowledgeHit(
+                tenant="harbour", warehouse="HK01", source_id="SOP-HK01-01", title="HK01 冷链交接 Cold-chain handoff", section="Dispatch cut-off",
+                excerpt="冷链交接须复核温度记录。The dispatch team closes handoff at 17:00 HKT.",
+            ),
+            ("harbour", "HK02"): KnowledgeHit(
+                tenant="harbour", warehouse="HK02", source_id="SOP-HK02-01", title="HK02 冷链验收入库 Cold-chain receiving", section="Warehouse acceptance",
+                excerpt="冷链入库需核对温度探头。Verify the probe before accepting chilled cargo.",
+            ),
+        }.get((actor.tenant, call.warehouse))
+        query = call.query.casefold()
+        hits = [sample] if sample and query in f"{sample.title} {sample.section} {sample.excerpt}".casefold() else []
+        return KnowledgeRecord(tenant=actor.tenant, subject=actor.subject, warehouse=call.warehouse, hits=hits)
 
 
 def scoped_data(data: WorkData, actor: Actor, call: InvoiceLookup | InboxLookup | WarehouseSummary) -> dict:

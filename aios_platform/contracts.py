@@ -8,7 +8,8 @@ Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 Capability = Literal["shipment.read", "shipment.reschedule", "sales_order.create_draft"]
 Grant = Literal[
     "shipment.read", "shipment.reschedule", "order.read", "order.work", "finance.read",
-    "mail.read", "decision.read", "chat.use", "operations.manage", "agent.web_search",
+    "mail.read", "decision.read", "chat.use", "operations.manage",
+    "agent.web_search", "agent.calendar_read", "agent.tasks_read", "agent.knowledge_read",
     "workbench.access.manage", "workbench.approve.orders", "workbench.approve.shipments",
     "assurance.purchase", "assurance.incoming", "assurance.contract", "assurance.procurement",
     "assurance.finance", "assurance.quality", "assurance.legal", "assurance.audit",
@@ -26,6 +27,11 @@ class Actor(Strict):
     warehouses: frozenset[Identifier]
     grants: frozenset[Grant] = frozenset()
     module_scopes: dict[Grant, frozenset[Identifier]] = Field(default_factory=dict, exclude=True)
+
+    personal_module_grants: dict[Grant, bool] = Field(default_factory=dict, exclude=True)
+
+    def has_personal_grant(self, grant: Grant) -> bool:
+        return self.personal_module_grants.get(grant, grant in self.grants)
 
     def sites_for(self, grant: Grant) -> frozenset[str]:
         if grant in self.module_scopes:
