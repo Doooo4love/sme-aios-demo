@@ -1657,6 +1657,7 @@ class GovernanceService:
         locale: str = "zh-CN",
         requested_app: str | None = None,
         estimated_usd: float = 0.0,
+        previous_user_text: str | None = None,
     ) -> dict[str, Any] | None:
         policy = self.get_off_topic_policy(actor.tenant)
         effective_allowlist = (
@@ -1667,6 +1668,7 @@ class GovernanceService:
             text,
             requested_app=requested_app,
             app_allowlist=effective_allowlist,
+            previous_user_text=previous_user_text,
         )
         if not verdict.is_off_topic or not verdict.category:
             return None

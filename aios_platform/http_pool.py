@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 import json
 import threading
+import time
 from typing import Any
 
 import httpx
@@ -44,13 +45,22 @@ def pooled_post_json(
     pool_name: str = "default",
     timeout: float = 8.0,
     max_bytes: int = MAX_HTTP_RESPONSE_BYTES,
+    deadline_s: float | None = None,
 ) -> dict[str, Any]:
     """POST JSON via a pooled client with streaming response size enforcement."""
     client = get_http_client(pool_name, timeout=timeout)
+    deadline = None if deadline_s is None else time.monotonic() + deadline_s
     with client.stream("POST", url, json=payload, headers=headers) as response:
         response.raise_for_status()
+        if deadline is not None and time.monotonic() >= deadline:
+            raise httpx.ReadTimeout("Provider response exceeded the time limit")
+        if deadline is not None and response.headers.get("Content-Encoding", "identity").lower() != "identity":
+            raise ValueError("Provider returned an unsupported content encoding")
         chunks = bytearray()
-        for chunk in response.iter_bytes(8192):
+        # Process transport chunks directly for deadline-bound calls, including slow small chunks.
+        for chunk in response.iter_bytes(None if deadline is not None else 8192):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise httpx.ReadTimeout("Provider response exceeded the time limit")
             chunks.extend(chunk)
             if len(chunks) > max_bytes:
                 raise ValueError("Provider response exceeded the size limit")

@@ -268,7 +268,7 @@ export interface EmailDraftPayload {
 export interface AssistantMessageResult {
   kind: "message";
   reply: string;
-  mode: "chat" | "workflow_guidance" | "proactive_reminder" | "email_draft";
+  mode: "chat" | "workflow_guidance" | "proactive_reminder" | "email_draft" | "public_search";
   pending_work: PendingWorkSnapshot | null;
   suggested_actions: SuggestedAction[];
   email_draft: EmailDraftPayload | null;

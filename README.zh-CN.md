@@ -25,6 +25,32 @@
 
 ---
 
+## Agent 工作边界与公开网页搜索
+
+Access Admin 使用与其他角色一致的私人闲聊策略。后端会在调用模型或外部工具前检查明确的私人意图、企业用途和最近一条用户消息中的承接线索。日常寒暄和门店采购 PS5 之类的工作请求可以继续。私人购物、旅游、影视娱乐、健身和类似请求按现有 L1/L2/L3 流程处理。客户端提交的历史只能帮助识别追问，工具授权仍由后端决定。
+
+| 本地回归指标 | 实测 |
+|---|---:|
+| 总体准确率 | **99.25%**（133/134） |
+| 非工作内容召回率 | **98.57%**（69/70） |
+| 工作请求和寒暄的误拦率 | **本次观测 0%**（0/64） |
+| 分类器并发压测 | **20,000** 次判定、16 个线程、0 次结果漂移、**p95 0.138 ms**、约 **9,595 次/秒** |
+
+[合成测试集](fixtures/work_boundary_eval.tsv)覆盖简体中文、繁体中文及粤语、英语、四种角色层级和多轮追问。漏判的是一条缺少用途说明的英文足球赛果提问。这组用例随规则同步开发，属于 Python 3.12.14 上的本地回归结果。线上流量的准确率、端到端吞吐和真实搜索的延迟需单独测量。复现命令如下。
+
+```bash
+python scripts/work_boundary_eval.py --requests 20000 --workers 16
+python -m unittest discover -s tests -p test_public_search.py -v
+```
+
+**公开网页搜索**在助理后端通过工作边界校验后执行。租户启用且账号拥有 `agent.web_search` 时，可输入「帮我联网搜索香港冷链物流公开供应商」或「`/web 香港冷链物流公开供应商`」。后端还会核对租户供应商策略、租户共享速率限制及 FinOps 配额。它向 [DeepSeek Search API](https://api-docs.deepseek.com/api/search/) 发送限长的检索词，返回链接和来源摘要。附件、会话历史及能识别的敏感数据都不会进入搜索请求。来源摘要不会自动进入下一轮模型上下文。上游繁忙或失败时，界面返回具体状态，本次请求不自动重试。
+
+功能默认关闭。仅在助理 API 进程中配置 `AIOS_WEB_SEARCH_TENANTS`（逗号分隔）和独立密钥 `AIOS_WEB_SEARCH_API_KEY_FILE` 或 `AIOS_WEB_SEARCH_API_KEY`，同时核对租户允许的供应商区域和公开数据类别。演示预设的工具权限属于 `harbour/access-admin`，生产 OIDC 可通过经过验证的 `aios_grants` 声明逐员工分配 `agent.web_search`。开通真实流量前应配置企业配额，并在预发布环境验证搜索账号和来源。
+
+现有 harness 继续承担权限、配额和业务工具执行。[Pydantic AI](https://ai.pydantic.dev/toolsets/) 的类型化工具集适合后续多工具编排。[SearXNG](https://docs.searxng.org/dev/search_api.html) 提供 JSON API，自托管需要维护上游搜索引擎。当前版本采用托管 Search API，复用现有栈并省去一个服务。传输测试使用模拟响应。
+
+---
+
 ## 在线交互演示与界面实景
 
 立即体验已上线部署的企业演示入口：**[https://aios-demo.hk-demo.workers.dev](https://aios-demo.hk-demo.workers.dev)**

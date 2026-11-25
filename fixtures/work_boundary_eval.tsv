@@ -1,0 +1,135 @@
+expected	language	text	previous_user_text
+off_topic	zh-CN	我想去买个新的ps5，帮我深度搜索哪里比较便宜？
+off_topic	zh-CN	主要是想玩gta6	我想去买个新的ps5，帮我深度搜索哪里比较便宜？
+off_topic	zh-CN	你觉得我买光驱版还是数字版比较好？	主要是想玩gta6
+off_topic	zh-CN	我准备买个Xbox给自己玩。
+off_topic	zh-CN	我个人用的手机预算五千，应该选哪台？
+off_topic	zh-CN	帮我查私人旅行的机票和酒店。
+off_topic	zh-CN	我想给我爸妈买生日礼物，有推荐吗？
+off_topic	zh-CN	帮我为周末安排一下健身计划。
+off_topic	zh-CN	我家里想装修房间，能帮我选风格吗？
+off_topic	zh-CN	周末去哪玩？
+off_topic	zh-CN	我该不该分手？
+off_topic	zh-CN	今晚吃什么？
+off_topic	zh-CN	帮我写一封情书。
+off_topic	zh-CN	给我写个睡前故事。
+off_topic	zh-CN	明天白羊座运势怎么样？
+off_topic	zh-CN	双色球预测。
+off_topic	zh-CN	帮我查原神配队。
+off_topic	zh-CN	哪款更合适？	我个人用的手机预算五千，应该选哪台？
+off_topic	zh-CN	3000元以内	我家里想装修房间，能帮我选风格吗？
+off_topic	zh-CN	我想买台ＰＳ５自用。
+off_topic	zh-CN	我想买个PlayStation在家玩。
+off_topic	zh-CN	给我推荐今天能看的美剧。
+off_topic	zh-CN	薅电影票的个人优惠券怎么弄？
+allow	zh-CN	给门店采购 PS5，查授权经销商的公开报价。
+allow	zh-CN	请给客户安排香港行程。
+allow	zh-CN	客户的团建，推荐公司附近适合十人的餐厅。
+allow	zh-CN	帮公司挑选三台办公手机。
+allow	zh-CN	给客户的生日活动准备礼物报价。
+allow	zh-CN	给公司设计员工运动计划。
+allow	zh-CN	门店采购家用电器作展示。
+allow	zh-CN	我负责跟进公司采购的 Xbox 经销商，请查货期。
+allow	zh-CN	给门店准备光驱版和数字版的市场调研。	我想买台PS5自用
+allow	zh-CN	早安，周末愉快。
+allow	zh-CN	这个周末加班安排有变吗？
+allow	zh-CN	谢谢，下午见。
+allow	zh-CN	帮我翻译成英文。
+allow	zh-CN	把今天的交付结论整理成表格。
+allow	zh-CN	运单 SHP-1001 的延迟原因。
+allow	zh-CN	帮我看下里面有没有缺字段。
+allow	zh-CN	三号供应商和原厂哪个更好？	给门店采购 PS5
+allow	zh-CN	哪款更合适？	给门店采购 PS5 并核查进货价
+allow	zh-CN	请把内部培训时间更新到周五。
+allow	zh-CN	采购组周末值班怎么安排？
+allow	zh-CN	帮我选一家能做团队差旅预订的公司。
+off_topic	zh-HK	我諗住買部 PS5 自用。
+off_topic	zh-HK	我想買個 PlayStation，邊度平？
+off_topic	zh-HK	幫我查吓 GTA VI 幾時出。
+off_topic	zh-HK	我想買對我自己用嘅跑鞋。
+off_topic	zh-HK	幫我查下放假去大阪嘅機票。
+off_topic	zh-HK	私人旅行想訂大阪酒店。
+off_topic	zh-HK	幫我揀我女朋友生日禮物。
+off_topic	zh-HK	幫我計劃週末嘅健身。
+off_topic	zh-HK	今晚睇咩戲？
+off_topic	zh-HK	今日食乜呀？
+off_topic	zh-HK	我應唔應該分手？
+off_topic	zh-HK	可唔可以平啲？	我想買個 PlayStation，邊度平？
+off_topic	zh-HK	邊個版本好？	幫我查吓 GTA VI 幾時出
+off_topic	zh-HK	光驅版定數字版？	我想買個PlayStation，邊度平
+off_topic	zh-HK	寫段表白文案。
+off_topic	zh-HK	睇吓今日星座配對。
+off_topic	zh-HK	講一個睡前故事。
+off_topic	zh-HK	六合彩貼士。
+off_topic	zh-HK	我想戒奶茶同減肥，有咩方法？
+off_topic	zh-HK	幫我揀我屋企客廳嘅電器。
+off_topic	zh-HK	幫我搵灣仔私人瑜伽班。
+off_topic	zh-HK	好悶呀，講個笑話。
+allow	zh-HK	為門店採購 PS5，查授權經銷商。
+allow	zh-HK	幫客戶安排國際航班同酒店。
+allow	zh-HK	幫團隊安排週末團建餐廳。
+allow	zh-HK	幫員工準備運動計劃同安全指引。
+allow	zh-HK	採購部想做 PlayStation 公開市場調研。
+allow	zh-HK	想幫公司買幾部手機測試庫存程式。
+allow	zh-HK	為門店做客戶生日活動禮物清單。
+allow	zh-HK	早晨，辛苦晒。
+allow	zh-HK	午安，週末愉快。
+allow	zh-HK	幫我睇運單係咪今日到。
+allow	zh-HK	將呢份嘢整理成三點。
+allow	zh-HK	比較呢兩個版本嘅合同。
+allow	zh-HK	幫公司報銷酒店同機票。
+allow	zh-HK	查門店 PS5 庫存。	我諗住買部 PS5 自用
+allow	zh-HK	咁邊個版本好？	為門店採購 PS5
+allow	zh-HK	員工禮物採購單有未批嘅嗎？
+allow	zh-HK	匯總部門週末出貨安排。
+allow	zh-HK	我想買部打印機放客戶接待區。
+allow	zh-HK	發個會議摘要俾主管。
+allow	zh-HK	光驅版庫存表改名就得。	為門店採購 PS5
+off_topic	en	I want a PS5 for myself. Where is it cheapest?
+off_topic	en	When is the GTA VI release date?
+off_topic	en	Should I buy an Xbox Series X?
+off_topic	en	Help me plan my personal holiday in Japan.
+off_topic	en	Find the cheapest hotel for my honeymoon.
+off_topic	en	What birthday gift should I get my partner?
+off_topic	en	Recommend a phone for personal use.
+off_topic	en	Can you choose a recipe for my kid?
+off_topic	en	Find some headphones for my living room.
+off_topic	en	What should I wear on a date?
+off_topic	en	What should I cook tonight?
+off_topic	en	Who should I date?
+off_topic	en	Write a love letter.
+off_topic	en	Tell me a bedtime story.
+off_topic	en	Tell me a joke.
+off_topic	en	Give me gta cheats.
+off_topic	en	Sports betting picks for the weekend.
+off_topic	en	Which version should I buy?	I want a PS5 for myself.
+off_topic	en	Anything cheaper?	Find a hotel for my honeymoon.
+off_topic	en	Disc edition or digital edition?	Should I buy a PS5 for myself?
+off_topic	en	Who won yesterday's football game?
+off_topic	en	Find me the best mortgage rate for my personal home purchase.
+off_topic	en	I want to shop for my dog. Recommend some gifts.
+off_topic	en	I am looking to buy a PlayStation for myself.
+off_topic	en	What TV series should I binge next?
+allow	en	Find wholesale PS5 supplier prices for the store.
+allow	en	I want to buy PS5 stock for our company. Find an authorized distributor.
+allow	en	Compare disc editions and digital editions for procurement.	I want a PS5 for myself.
+allow	en	Plan a business trip to Hong Kong and book a hotel.
+allow	en	Recommend a restaurant for our client meeting.
+allow	en	Suggest a birthday gift as part of our employee benefits program.
+allow	en	Find a diet and fitness instructor for employees at our workplace.
+allow	en	Design a concert merch procurement plan.
+allow	en	Good morning. Hope your weekend went well.
+allow	en	Thanks for following up.
+allow	en	Translate that into German.
+allow	en	What's the SLA for this shipping lane?
+allow	en	Please check my weekly calendar.
+allow	en	Help me schedule my team for the holiday inventory count.
+allow	en	Which version should I pick?	I am comparing the options for store inventory.
+allow	en	What do you recommend for client dinner tonight?
+allow	en	Find an independent source for our retail pricing analysis.
+allow	en	Buy replacement headphones for the team.
+allow	en	Please help me read this invoice.
+allow	en	Schedule Friday's review meeting.
+allow	en	How long does it take to ship a video game package?
+allow	en	Recommend a fitness plan for employees as a staff training benefit.
+allow	en	Please write a social post for our film festival customer event.
