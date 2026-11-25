@@ -975,10 +975,17 @@ export function fetchProposal(id: string, signal?: AbortSignal) {
   });
 }
 
+export interface WorkbenchTextAttachment {
+  doc_id: string;
+  title: string;
+  content: string;
+}
+
 export interface WorkbenchTurnOptions {
   signal?: AbortSignal;
   locale?: string;
   conversationContext?: Array<{ role: "user" | "assistant"; text: string }>;
+  activeDocument?: WorkbenchTextAttachment;
 }
 
 function isAbortSignal(value: unknown): value is AbortSignal {
@@ -1005,6 +1012,7 @@ export function submitWorkbenchTurn(
   if (options.locale) {
     body.locale = options.locale;
   }
+  if (options.activeDocument) body.active_document = options.activeDocument;
   if (options.conversationContext && options.conversationContext.length > 0) {
     body.conversation_context = options.conversationContext.slice(-6);
   }
