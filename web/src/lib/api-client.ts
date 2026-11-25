@@ -975,6 +975,24 @@ export function fetchProposal(id: string, signal?: AbortSignal) {
   });
 }
 
+export function parseOfficeAttachment(file: File) {
+  const name = new URLSearchParams({ name: file.name });
+  return apiFetch<{ content: string; warnings: string[] }>("/v1/workbench/documents/parse?" + name, {
+    method: "POST",
+    rawBody: file,
+    contentType: "application/octet-stream",
+  });
+}
+
+export function downloadWorkbenchReport(
+  format: string, locale: string, warehouse?: string,
+) {
+  const kind = warehouse ? "warehouse-summary" : "personal-brief";
+  const params = new URLSearchParams({ kind, format, locale });
+  if (warehouse) params.set("warehouse", warehouse);
+  return apiFetchBlob("/v1/workbench/reports/export?" + params);
+}
+
 export interface WorkbenchTextAttachment {
   doc_id: string;
   title: string;

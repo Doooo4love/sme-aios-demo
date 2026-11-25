@@ -14,6 +14,8 @@ export type Grant =
   | "agent.calendar_read"
   | "agent.tasks_read"
   | "agent.knowledge_read"
+  | "agent.documents_parse"
+  | "agent.report_export"
   | "workbench.access.manage"
   | "workbench.approve.orders"
   | "workbench.approve.shipments"
@@ -66,6 +68,8 @@ export interface ToolCapability {
   warehouses: string[];
 }
 
+export type WorkbenchReportFormat = "csv" | "xlsx" | "docx" | "pdf";
+
 export interface Capabilities {
   tools: ToolCapability[];
   order_read_warehouses: string[];
@@ -74,6 +78,8 @@ export interface Capabilities {
     "shipment.reschedule": string[];
   };
   chat_available: boolean;
+  document_processing?: boolean;
+  report_formats?: WorkbenchReportFormat[];
 }
 
 export type ProposalState =
@@ -505,7 +511,8 @@ export type ModuleAccessId =
   | "approvals"
   | "agent-web"
   | "agent-collaboration"
-  | "agent-knowledge";
+  | "agent-knowledge"
+  | "agent-documents";
 
 export interface ModuleCatalogEntry {
   grants: Grant[];
