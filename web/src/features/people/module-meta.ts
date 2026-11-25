@@ -19,6 +19,7 @@ export const PREFERRED_MODULE_ORDER: readonly string[] = [
   "agent-web",
   "agent-collaboration",
   "agent-knowledge",
+  "agent-documents",
 ];
 
 /**
