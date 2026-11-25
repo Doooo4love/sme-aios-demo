@@ -1,6 +1,7 @@
 """Employee workbench. Parsed language and typed calls share one enforcement path."""
 import asyncio
 import json
+import os
 import re
 import time
 from typing import Annotated, Literal, Protocol
@@ -89,6 +90,19 @@ TurnResult = Annotated[
     Field(discriminator="kind"),
 ]
 APPROVAL_TEXT = re.compile(r"(?:approve proposal |(?:批准|审批)提案\s*)([A-Za-z0-9_-]{1,64})", re.IGNORECASE)
+SSE_HEARTBEAT_SECONDS = 15.0
+
+
+def _sse_heartbeat_seconds() -> float:
+    raw = os.getenv("AIOS_SSE_HEARTBEAT_SECONDS")
+    if raw:
+        try:
+            val = float(raw)
+            if 0.01 <= val <= 300.0:
+                return val
+        except ValueError:
+            pass
+    return SSE_HEARTBEAT_SECONDS
 
 
 def workbench_routes(runtime: Services, authenticate, refresh_actor, require_policy, visible_proposal, prepare_order,
@@ -234,11 +248,33 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
             async def empty_stream():
                 yield ": unavailable\n\n"
             return StreamingResponse(empty_stream(), media_type="text/event-stream")
+
+        def is_revoked() -> bool:
+            try:
+                refreshed = refresh_actor(current)
+            except (PermissionError, HTTPException):
+                return True
+            try:
+                if workflow.is_suspended(refreshed):
+                    return True
+            except PermissionError:
+                return True
+            if getattr(request.state, "browser_session", False):
+                sessions = getattr(request.app.state, "browser_sessions", None)
+                if sessions is not None:
+                    try:
+                        sessions.credentials(request)
+                    except HTTPException:
+                        return True
+            return False
+
         event_hub.bind_loop(asyncio.get_running_loop())
         is_admin = current.role == "admin"
         sub = event_hub.subscribe(current.tenant, current.subject, is_admin=is_admin)
         replayed = (
-            event_hub.since_event(current.tenant, current.subject, raw_last_id, is_admin=is_admin)
+            await run_in_threadpool(
+                event_hub.since_event, current.tenant, current.subject, raw_last_id, is_admin=is_admin
+            )
             if raw_last_id
             else []
         )
@@ -253,10 +289,16 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
             prefix = f"id: {event_id}\n" if event_id else ""
             return f"{prefix}event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+        revoked_frame = f"event: session_revoked\ndata: {json.dumps({'reason': 'ACCESS_REVOKED'})}\n\n"
+        heartbeat_timeout = _sse_heartbeat_seconds()
+
         async def generator():
             replayed_ids: set[str] = set()
             try:
                 yield ": connected\n\n"
+                if await run_in_threadpool(is_revoked):
+                    yield revoked_frame
+                    return
                 for item in replayed:
                     item_id = str(item.get("id", ""))
                     if item_id:
@@ -268,7 +310,10 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
                     if await request.is_disconnected():
                         break
                     try:
-                        payload = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                        payload = await asyncio.wait_for(sub.queue.get(), timeout=heartbeat_timeout)
+                        if await run_in_threadpool(is_revoked):
+                            yield revoked_frame
+                            return
                         event_id = str(payload.get("id", ""))
                         if event_id and event_id in replayed_ids:
                             replayed_ids.discard(event_id)
@@ -277,6 +322,9 @@ def workbench_routes(runtime: Services, authenticate, refresh_actor, require_pol
                     except asyncio.TimeoutError:
                         if await request.is_disconnected():
                             break
+                        if await run_in_threadpool(is_revoked):
+                            yield revoked_frame
+                            return
                         yield f"event: heartbeat\ndata: {json.dumps({'ts': time.time()})}\n\n"
             except asyncio.CancelledError:
                 pass

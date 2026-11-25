@@ -478,7 +478,7 @@ export function CalendarWorkspace() {
                   "zh-HK": "日曆檢視切換",
                   en: "Calendar view switcher",
                 })}
-                className="inline-flex rounded-sm border border-[var(--hairline)] bg-[var(--bg-inset)] p-0.5"
+                className="inline-flex rounded-full border border-[var(--hairline)] bg-[var(--bg-inset)] p-0.5"
               >
                 {(
                   [
@@ -508,7 +508,7 @@ export function CalendarWorkspace() {
                     data-testid={`calendar-view-${tab.id}`}
                     onClick={() => setViewMode(tab.id)}
                     className={[
-                      "rounded-xs px-3.5 py-1 text-[12.5px] font-medium transition-all duration-[140ms] cursor-pointer",
+                      "rounded-full px-3.5 py-1 text-[12.5px] font-medium transition-all duration-[140ms] cursor-pointer",
                       viewMode === tab.id
                         ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] font-semibold"
                         : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",

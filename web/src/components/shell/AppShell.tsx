@@ -316,7 +316,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 side="bottom"
                 align="end"
                 sideOffset={8}
-                className="z-50 w-[256px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
+                className="aios-popover-content z-50 w-[256px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
               >
                 <div className="border-b border-[var(--hairline)] px-3 py-2.5">
                   <div className="truncate text-[13.5px] font-semibold text-[var(--ink-primary)]">
@@ -420,14 +420,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Main Content + Right Slide-Over Inspector Drawer */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <main className="min-w-0 flex-1 overflow-auto">{children}</main>
+        <main className="min-w-0 flex-1 overflow-auto pb-4 lg:pb-0">{children}</main>
         <WorkbenchDrawerSlot />
       </div>
 
       {/* Mobile Workbench Bottom Navigation (< 1024px) */}
       <nav
         aria-label={t("shell.mobileNavAria")}
-        className="aios-topbar-glass flex lg:hidden h-[56px] shrink-0 items-stretch justify-around border-t border-[var(--hairline)] px-2"
+        className="aios-topbar-glass flex lg:hidden min-h-[56px] h-auto shrink-0 items-stretch justify-around border-t border-[var(--hairline)] px-2 pb-[env(safe-area-inset-bottom)]"
       >
         {workbenchTiers.map((tier) => {
           const active = tier.match(pathname);
@@ -438,7 +438,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               href={tier.href}
               aria-current={active ? "page" : undefined}
               className={[
-                "relative flex min-w-[60px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium",
+                "relative flex min-w-[60px] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10.5px] font-medium",
                 active
                   ? "text-[var(--accent-ink)]"
                   : "text-[var(--ink-muted)] hover:text-[var(--ink-primary)]",

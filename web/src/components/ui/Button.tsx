@@ -21,15 +21,15 @@ export interface ButtonProps
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    "bg-[var(--cta-bg)] text-[var(--cta-fg)] shadow-[var(--cta-shadow)] hover:bg-[var(--cta-hover)] hover:shadow-[var(--cta-shadow-hover)] active:bg-[var(--cta-active)] disabled:bg-[var(--bg-surface-subtle)] disabled:text-[var(--ink-muted)] disabled:shadow-none disabled:opacity-75",
+    "bg-[var(--cta-bg)] text-[var(--cta-fg)] shadow-[var(--cta-shadow)] hover:bg-[var(--cta-hover)] hover:shadow-[var(--cta-shadow-hover)] active:bg-[var(--cta-active)] disabled:bg-[var(--bg-surface-subtle)] disabled:text-[var(--ink-muted)] disabled:ring-1 disabled:ring-[var(--hairline)] disabled:shadow-none disabled:opacity-75",
   secondary:
-    "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface-tint)] hover:shadow-[var(--shadow-card)] disabled:opacity-45",
+    "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] hover:bg-[var(--bg-surface-tint)] hover:shadow-[var(--shadow-card)] disabled:bg-transparent disabled:text-[var(--ink-faint)] disabled:shadow-none disabled:ring-1 disabled:ring-[var(--hairline)] disabled:opacity-100",
   ghost:
-    "bg-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] disabled:opacity-45",
+    "bg-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] disabled:bg-transparent disabled:text-[var(--ink-faint)] disabled:opacity-100",
   quiet:
-    "bg-transparent text-[var(--accent-ink)] hover:bg-[var(--accent-wash)] active:bg-[var(--accent-wash-strong)] disabled:opacity-45",
+    "bg-transparent text-[var(--accent-ink)] hover:bg-[var(--accent-wash)] active:bg-[var(--accent-wash-strong)] disabled:bg-transparent disabled:text-[var(--ink-faint)] disabled:opacity-100",
   danger:
-    "bg-[var(--status-crimson-wash)] text-[var(--status-crimson)] hover:bg-[var(--status-crimson-border)] disabled:opacity-45",
+    "border border-transparent bg-[var(--status-crimson-wash)] text-[var(--status-crimson)] hover:bg-[var(--status-crimson-border)] disabled:bg-transparent disabled:text-[var(--ink-faint)] disabled:border-[var(--hairline)] disabled:opacity-100",
   "danger-solid":
     "bg-[var(--status-crimson-solid)] text-white shadow-[0_1px_2px_rgba(201,42,55,0.28)] hover:opacity-92 disabled:opacity-45",
 };

@@ -15,6 +15,8 @@ import weakref
 
 from pydantic import Field
 
+from aios_demo.storage import canonical
+
 from .contracts import Actor, Strict
 from .security_guard import normalize_user_text, scrub_secrets
 from .llm_provider import (
@@ -231,6 +233,8 @@ class EffortRouter:
 
 _ROUTING_TABLES_LOCK = threading.Lock()
 _ROUTING_TABLES_READY: weakref.WeakKeyDictionary[Any, tuple[Any, ...]] = weakref.WeakKeyDictionary()
+_ENTERPRISE_FINOPS_LOCK = threading.Lock()
+_ENTERPRISE_FINOPS_READY: weakref.WeakKeyDictionary[Any, tuple[Any, ...]] = weakref.WeakKeyDictionary()
 
 
 def _sqlite_workflow_sig(workflow) -> tuple[Any, ...]:
@@ -289,6 +293,59 @@ def _ensure_routing_tables_sqlite(workflow, run) -> None:
     with _ROUTING_TABLES_LOCK:
         try:
             _ROUTING_TABLES_READY[workflow] = sig_after
+        except TypeError:
+            pass
+
+
+def _ensure_enterprise_finops_tables_sqlite(workflow, run) -> None:
+    if getattr(workflow.db, "dsn", None):
+        return
+    sig = _sqlite_workflow_sig(workflow)
+    with _ENTERPRISE_FINOPS_LOCK:
+        try:
+            if _ENTERPRISE_FINOPS_READY.get(workflow) == sig:
+                return
+        except TypeError:
+            pass
+    run(
+        """CREATE TABLE IF NOT EXISTS aios_budget_reservation (
+               tenant TEXT NOT NULL,
+               id TEXT NOT NULL,
+               subject TEXT NOT NULL,
+               role TEXT NOT NULL,
+               day_key TEXT NOT NULL,
+               reserved_micro_usd BIGINT NOT NULL DEFAULT 0 CHECK (reserved_micro_usd >= 0),
+               actual_micro_usd BIGINT NOT NULL DEFAULT 0 CHECK (actual_micro_usd >= 0),
+               reserved_tokens BIGINT NOT NULL DEFAULT 0 CHECK (reserved_tokens >= 0),
+               actual_tokens BIGINT NOT NULL DEFAULT 0 CHECK (actual_tokens >= 0),
+               status TEXT NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved', 'settled', 'released')),
+               expires_at DOUBLE PRECISION NOT NULL,
+               created_at DOUBLE PRECISION NOT NULL,
+               settled_at DOUBLE PRECISION,
+               PRIMARY KEY (tenant, id)
+           )"""
+    )
+    run(
+        """CREATE INDEX IF NOT EXISTS aios_budget_reservation_active
+               ON aios_budget_reservation(tenant, day_key, status, expires_at)"""
+    )
+    run(
+        """CREATE TABLE IF NOT EXISTS aios_tenant_provider_policy (
+               tenant TEXT PRIMARY KEY,
+               allowed_providers_json TEXT NOT NULL,
+               allowed_regions_json TEXT NOT NULL,
+               blocked_data_classes_json TEXT NOT NULL,
+               allow_failover INTEGER NOT NULL DEFAULT 1 CHECK (allow_failover IN (0, 1)),
+               max_tier TEXT NOT NULL DEFAULT 'T3' CHECK (max_tier IN ('T0', 'T1', 'T2', 'T3')),
+               pricing_version TEXT NOT NULL DEFAULT '2026-11-official',
+               updated_by TEXT NOT NULL,
+               updated_at DOUBLE PRECISION NOT NULL
+           )"""
+    )
+    sig_after = _sqlite_workflow_sig(workflow)
+    with _ENTERPRISE_FINOPS_LOCK:
+        try:
+            _ENTERPRISE_FINOPS_READY[workflow] = sig_after
         except TypeError:
             pass
 
@@ -1051,100 +1108,119 @@ class RoutingTelemetryStore:
         since = time.time() - window_hours * 3600.0
         with self.workflow.tx(tenant, write=False, bounded=True) as run:
             _ensure_routing_tables_sqlite(self.workflow, run)
-            rows = run(
-                """SELECT subject, provider, model, tier, prompt_tokens, cache_hit_tokens,
-                          reasoning_tokens, completion_tokens, estimated_usd, latency_ms,
-                          success, error_code
+            totals_row = run(
+                """SELECT COUNT(*) AS total_calls,
+                          COALESCE(SUM(prompt_tokens), 0) AS total_prompt,
+                          COALESCE(SUM(cache_hit_tokens), 0) AS total_cache,
+                          COALESCE(SUM(reasoning_tokens), 0) AS total_reasoning,
+                          COALESCE(SUM(completion_tokens), 0) AS total_completion,
+                          COALESCE(SUM(estimated_usd), 0.0) AS total_usd,
+                          COALESCE(SUM(latency_ms), 0.0) AS total_latency,
+                          COALESCE(SUM(CASE WHEN COALESCE(success, 1) = 0 THEN 1 ELSE 0 END), 0) AS error_calls,
+                          COALESCE(SUM(CASE WHEN error_code = 'FAILOVER' OR error_code LIKE 'FAILOVER:%' THEN 1 ELSE 0 END), 0) AS failover_count
                    FROM aios_llm_telemetry
                    WHERE tenant = ? AND created_at >= ?""",
                 (tenant, since),
+            ).fetchone()
+            tier_rows = run(
+                """SELECT tier, COUNT(*) AS calls
+                   FROM aios_llm_telemetry
+                   WHERE tenant = ? AND created_at >= ?
+                   GROUP BY tier""",
+                (tenant, since),
+            ).fetchall()
+            provider_rows = run(
+                """SELECT provider,
+                          COUNT(*) AS calls,
+                          COALESCE(SUM(estimated_usd), 0.0) AS estimated_usd,
+                          COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                          COALESCE(SUM(cache_hit_tokens), 0) AS cache_hit_tokens,
+                          COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+                          COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                          COALESCE(SUM(latency_ms), 0.0) AS latency_sum
+                   FROM aios_llm_telemetry
+                   WHERE tenant = ? AND created_at >= ?
+                   GROUP BY provider
+                   ORDER BY provider ASC""",
+                (tenant, since),
+            ).fetchall()
+            subject_rows = run(
+                """SELECT subject,
+                          COUNT(*) AS calls,
+                          COALESCE(SUM(estimated_usd), 0.0) AS estimated_usd,
+                          COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                          COALESCE(SUM(cache_hit_tokens), 0) AS cache_hit_tokens,
+                          COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+                          COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                          COALESCE(SUM(latency_ms), 0.0) AS latency_sum
+                   FROM aios_llm_telemetry
+                   WHERE tenant = ? AND created_at >= ?
+                   GROUP BY subject
+                   ORDER BY subject ASC""",
+                (tenant, since),
+            ).fetchall()
+            savings_rows = run(
+                """SELECT provider, model, COALESCE(SUM(cache_hit_tokens), 0) AS cache_hit_tokens
+                   FROM aios_llm_telemetry
+                   WHERE tenant = ? AND created_at >= ? AND cache_hit_tokens > 0
+                   GROUP BY provider, model""",
+                (tenant, since),
+            ).fetchall()
+            latency_rows = run(
+                """SELECT latency_ms
+                   FROM aios_llm_telemetry
+                   WHERE tenant = ? AND created_at >= ?
+                   ORDER BY created_at DESC
+                   LIMIT 2000""",
+                (tenant, since),
             ).fetchall()
 
-        total_calls = len(rows)
-        total_prompt = 0
-        total_cache = 0
-        total_reasoning = 0
-        total_completion = 0
-        total_usd = 0.0
-        total_latency = 0.0
-        total_cache_savings_usd = 0.0
-        error_calls = 0
-        failover_count = 0
-        latencies: list[float] = []
+        total_calls = int(totals_row["total_calls"] or 0) if totals_row else 0
+        total_prompt = int(totals_row["total_prompt"] or 0) if totals_row else 0
+        total_cache = int(totals_row["total_cache"] or 0) if totals_row else 0
+        total_reasoning = int(totals_row["total_reasoning"] or 0) if totals_row else 0
+        total_completion = int(totals_row["total_completion"] or 0) if totals_row else 0
+        total_usd = float(totals_row["total_usd"] or 0.0) if totals_row else 0.0
+        total_latency = float(totals_row["total_latency"] or 0.0) if totals_row else 0.0
+        error_calls = int(totals_row["error_calls"] or 0) if totals_row else 0
+        failover_count = int(totals_row["failover_count"] or 0) if totals_row else 0
+
         by_tier: dict[str, int] = {"T0": 0, "T1": 0, "T2": 0, "T3": 0}
-        provider_buckets: dict[str, dict[str, Any]] = {}
-        subject_buckets: dict[str, dict[str, Any]] = {}
+        for row in tier_rows:
+            tier_key = str(row["tier"])
+            if tier_key in by_tier:
+                by_tier[tier_key] = int(row["calls"] or 0)
 
-        def _acc(bucket: dict[str, dict[str, Any]], key: str, row_dict: dict[str, Any]) -> None:
-            entry = bucket.setdefault(
-                key,
-                {
-                    "calls": 0,
-                    "estimated_usd": 0.0,
-                    "prompt_tokens": 0,
-                    "cache_hit_tokens": 0,
-                    "reasoning_tokens": 0,
-                    "completion_tokens": 0,
-                    "_latency_sum": 0.0,
-                },
+        total_cache_savings_usd = 0.0
+        for row in savings_rows:
+            ch = int(row["cache_hit_tokens"] or 0)
+            if ch <= 0:
+                continue
+            prof = resolve_model_profile(
+                str(row["model"] or ""),
+                provider=str(row["provider"] or "") or None,
             )
-            entry["calls"] += 1
-            entry["prompt_tokens"] += int(row_dict["prompt_tokens"] or 0)
-            entry["cache_hit_tokens"] += int(row_dict["cache_hit_tokens"] or 0)
-            entry["reasoning_tokens"] += int(row_dict["reasoning_tokens"] or 0)
-            entry["completion_tokens"] += int(row_dict["completion_tokens"] or 0)
-            entry["estimated_usd"] += float(row_dict["estimated_usd"] or 0.0)
-            entry["_latency_sum"] += float(row_dict["latency_ms"] or 0.0)
+            savings_rate = max(0.0, prof.input_per_1m - prof.cached_input_per_1m) / 1_000_000.0
+            total_cache_savings_usd += ch * savings_rate
 
-        for row in rows:
-            rd = dict(row)
-            pt = int(rd["prompt_tokens"] or 0)
-            ch = int(rd["cache_hit_tokens"] or 0)
-            rt = int(rd["reasoning_tokens"] or 0)
-            ct = int(rd["completion_tokens"] or 0)
-            usd = float(rd["estimated_usd"] or 0.0)
-            lat = float(rd["latency_ms"] or 0.0)
-            total_prompt += pt
-            total_cache += ch
-            total_reasoning += rt
-            total_completion += ct
-            total_usd += usd
-            total_latency += lat
-            latencies.append(lat)
-            if int(rd["success"] if rd.get("success") is not None else 1) == 0:
-                error_calls += 1
-            err_code = str(rd.get("error_code") or "")
-            if err_code == "FAILOVER" or err_code.startswith("FAILOVER:"):
-                failover_count += 1
-            if ch > 0:
-                prof = resolve_model_profile(
-                    str(rd.get("model") or ""),
-                    provider=str(rd.get("provider") or "") or None,
-                )
-                savings_rate = max(0.0, prof.input_per_1m - prof.cached_input_per_1m) / 1_000_000.0
-                total_cache_savings_usd += ch * savings_rate
-            tier = str(rd["tier"])
-            if tier in by_tier:
-                by_tier[tier] += 1
-            _acc(provider_buckets, str(rd["provider"]), rd)
-            _acc(subject_buckets, str(rd["subject"]), rd)
+        latencies = sorted(float(r["latency_ms"] or 0.0) for r in latency_rows)
 
-        latencies.sort()
-
-        def _finalize(buckets: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        def _format_buckets(rows: list[Any], key_col: str) -> dict[str, dict[str, Any]]:
             out: dict[str, dict[str, Any]] = {}
-            for k, v in sorted(buckets.items()):
-                calls = v["calls"]
-                b_prompt = v["prompt_tokens"]
-                b_cache = v["cache_hit_tokens"]
+            for row in rows:
+                k = str(row[key_col])
+                calls = int(row["calls"] or 0)
+                b_prompt = int(row["prompt_tokens"] or 0)
+                b_cache = int(row["cache_hit_tokens"] or 0)
+                lat_sum = float(row["latency_sum"] or 0.0)
                 out[k] = {
                     "calls": calls,
-                    "estimated_usd": round(v["estimated_usd"], 6),
+                    "estimated_usd": round(float(row["estimated_usd"] or 0.0), 6),
                     "prompt_tokens": b_prompt,
                     "cache_hit_tokens": b_cache,
-                    "reasoning_tokens": v["reasoning_tokens"],
-                    "completion_tokens": v["completion_tokens"],
-                    "avg_latency_ms": round(v["_latency_sum"] / calls, 2) if calls > 0 else 0.0,
+                    "reasoning_tokens": int(row["reasoning_tokens"] or 0),
+                    "completion_tokens": int(row["completion_tokens"] or 0),
+                    "avg_latency_ms": round(lat_sum / calls, 2) if calls > 0 else 0.0,
                     "cache_hit_ratio": round(b_cache / b_prompt, 4) if b_prompt > 0 else 0.0,
                 }
             return out
@@ -1165,9 +1241,25 @@ class RoutingTelemetryStore:
             "failover_count": failover_count,
             "estimated_cache_savings_usd": round(total_cache_savings_usd, 6),
             "by_tier": by_tier,
-            "by_provider": _finalize(provider_buckets),
-            "by_subject": _finalize(subject_buckets),
+            "by_provider": _format_buckets(provider_rows, "provider"),
+            "by_subject": _format_buckets(subject_rows, "subject"),
         }
+
+
+class BudgetReservation(Strict):
+    tenant: str
+    id: str
+    subject: str
+    role: str
+    day_key: str
+    reserved_micro_usd: int = 0
+    actual_micro_usd: int = 0
+    reserved_tokens: int = 0
+    actual_tokens: int = 0
+    status: Literal["reserved", "settled", "released"] = "reserved"
+    expires_at: float
+    created_at: float
+    settled_at: float | None = None
 
 
 class QuotaCheckResult(Strict):
@@ -1179,6 +1271,187 @@ class QuotaCheckResult(Strict):
     soft_cap_active: bool = False
     utilization_ratio: float = 0.0
     recommended_max_tier: RoutingTier | None = None
+    reservation_id: str | None = None
+
+
+class TenantProviderPolicyStore:
+    """Tenant-scoped LLM provider allowlist, data residency region, and tier policy store."""
+
+    DEFAULT_ALLOWED_PROVIDERS: tuple[str, ...] = ("deepseek", "qwen", "openai", "anthropic", "gemini")
+    DEFAULT_ALLOWED_REGIONS: tuple[str, ...] = ("global", "cn-hk", "ap-east-1", "us")
+    DEFAULT_BLOCKED_DATA_CLASSES: tuple[str, ...] = ("restricted_pii",)
+    VALID_PROVIDERS: frozenset[str] = frozenset({"deepseek", "qwen", "openai", "anthropic", "gemini", "openai_compat"})
+    VALID_TIERS: frozenset[str] = frozenset({"T0", "T1", "T2", "T3"})
+    _REGION_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+    _DATA_CLASS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+    def __init__(self, workflow):
+        self.workflow = workflow
+
+    @classmethod
+    def _default_policy(cls, tenant: str) -> dict[str, Any]:
+        return {
+            "tenant": str(tenant),
+            "allowed_providers": list(cls.DEFAULT_ALLOWED_PROVIDERS),
+            "allowed_regions": list(cls.DEFAULT_ALLOWED_REGIONS),
+            "blocked_data_classes": list(cls.DEFAULT_BLOCKED_DATA_CLASSES),
+            "allow_failover": True,
+            "max_tier": "T3",
+            "pricing_version": "2026-11-official",
+            "updated_by": "default",
+            "updated_at": None,
+        }
+
+    @staticmethod
+    def _row_to_policy(row: Any) -> dict[str, Any]:
+        return {
+            "tenant": str(row["tenant"]),
+            "allowed_providers": [str(x) for x in json.loads(row["allowed_providers_json"] or "[]")],
+            "allowed_regions": [str(x) for x in json.loads(row["allowed_regions_json"] or "[]")],
+            "blocked_data_classes": [str(x) for x in json.loads(row["blocked_data_classes_json"] or "[]")],
+            "allow_failover": bool(int(row["allow_failover"] if row["allow_failover"] is not None else 1)),
+            "max_tier": str(row["max_tier"] or "T3"),
+            "pricing_version": str(row["pricing_version"] or "2026-11-official"),
+            "updated_by": str(row["updated_by"] or "admin"),
+            "updated_at": float(row["updated_at"]) if row["updated_at"] is not None else None,
+        }
+
+    def get_policy(self, tenant_or_actor: str | Actor) -> dict[str, Any]:
+        tenant = tenant_or_actor.tenant if isinstance(tenant_or_actor, Actor) else str(tenant_or_actor)
+        with self.workflow.tx(tenant, write=False, bounded=True) as run:
+            _ensure_enterprise_finops_tables_sqlite(self.workflow, run)
+            row = run(
+                """SELECT tenant, allowed_providers_json, allowed_regions_json,
+                          blocked_data_classes_json, allow_failover, max_tier,
+                          pricing_version, updated_by, updated_at
+                   FROM aios_tenant_provider_policy
+                   WHERE tenant = ?""",
+                (tenant,),
+            ).fetchone()
+        if row is None:
+            return self._default_policy(tenant)
+        return self._row_to_policy(row)
+
+    def upsert_policy(
+        self,
+        actor_or_tenant: Actor | str,
+        *,
+        allowed_providers: list[str] | tuple[str, ...] | set[str] | None = None,
+        allowed_regions: list[str] | tuple[str, ...] | set[str] | None = None,
+        blocked_data_classes: list[str] | tuple[str, ...] | set[str] | None = None,
+        allow_failover: bool | None = None,
+        max_tier: str | None = None,
+        pricing_version: str | None = None,
+        updated_by: str | None = None,
+    ) -> dict[str, Any]:
+        if isinstance(actor_or_tenant, Actor):
+            tenant = actor_or_tenant.tenant
+            updater = updated_by or actor_or_tenant.subject
+        else:
+            tenant = str(actor_or_tenant)
+            updater = updated_by or "admin"
+
+        current = self.get_policy(tenant)
+
+        if allowed_providers is not None:
+            providers_clean = list(dict.fromkeys(str(p).strip().lower() for p in allowed_providers if str(p).strip()))
+            if not providers_clean:
+                raise ValueError("allowed_providers must not be empty")
+            for p in providers_clean:
+                if p not in self.VALID_PROVIDERS:
+                    raise ValueError(f"Unsupported provider '{p}' in allowed_providers")
+        else:
+            providers_clean = list(current["allowed_providers"])
+
+        if allowed_regions is not None:
+            regions_clean = list(dict.fromkeys(str(r).strip().lower() for r in allowed_regions if str(r).strip()))
+            if not regions_clean:
+                raise ValueError("allowed_regions must not be empty")
+            for r in regions_clean:
+                if not self._REGION_RE.fullmatch(r):
+                    raise ValueError(f"Invalid region '{r}' in allowed_regions")
+        else:
+            regions_clean = list(current["allowed_regions"])
+
+        if blocked_data_classes is not None:
+            classes_clean = list(dict.fromkeys(str(c).strip().lower() for c in blocked_data_classes if str(c).strip()))
+            for c in classes_clean:
+                if not self._DATA_CLASS_RE.fullmatch(c):
+                    raise ValueError(f"Invalid data class '{c}' in blocked_data_classes")
+        else:
+            classes_clean = list(current["blocked_data_classes"])
+
+        resolved_failover = bool(current["allow_failover"]) if allow_failover is None else bool(allow_failover)
+        resolved_tier = str(current["max_tier"]) if max_tier is None else str(max_tier).strip().upper()
+        if resolved_tier not in self.VALID_TIERS:
+            raise ValueError("max_tier must be one of T0, T1, T2, T3")
+
+        resolved_pricing = str(current["pricing_version"]) if pricing_version is None else str(pricing_version).strip()
+        if not resolved_pricing or len(resolved_pricing) > 64:
+            raise ValueError("pricing_version must be between 1 and 64 characters")
+
+        now_ts = time.time()
+        with self.workflow.tx(tenant, write=True, bounded=True) as run:
+            _ensure_enterprise_finops_tables_sqlite(self.workflow, run)
+            run(
+                """INSERT INTO aios_tenant_provider_policy
+                   (tenant, allowed_providers_json, allowed_regions_json, blocked_data_classes_json,
+                    allow_failover, max_tier, pricing_version, updated_by, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (tenant) DO UPDATE SET
+                       allowed_providers_json = excluded.allowed_providers_json,
+                       allowed_regions_json = excluded.allowed_regions_json,
+                       blocked_data_classes_json = excluded.blocked_data_classes_json,
+                       allow_failover = excluded.allow_failover,
+                       max_tier = excluded.max_tier,
+                       pricing_version = excluded.pricing_version,
+                       updated_by = excluded.updated_by,
+                       updated_at = excluded.updated_at""",
+                (
+                    tenant,
+                    json.dumps(providers_clean),
+                    json.dumps(regions_clean),
+                    json.dumps(classes_clean),
+                    1 if resolved_failover else 0,
+                    resolved_tier,
+                    resolved_pricing,
+                    updater,
+                    now_ts,
+                ),
+            )
+        return {
+            "tenant": tenant,
+            "allowed_providers": providers_clean,
+            "allowed_regions": regions_clean,
+            "blocked_data_classes": classes_clean,
+            "allow_failover": resolved_failover,
+            "max_tier": resolved_tier,
+            "pricing_version": resolved_pricing,
+            "updated_by": updater,
+            "updated_at": now_ts,
+        }
+
+    def is_provider_allowed(
+        self,
+        tenant: str,
+        profile: ModelProfile,
+        *,
+        data_class: str = "internal",
+        is_failover: bool = False,
+    ) -> bool:
+        policy = self.get_policy(tenant)
+        if is_failover and not bool(policy.get("allow_failover", True)):
+            return False
+        dc = (data_class or "internal").strip().lower()
+        if dc in {str(c).lower() for c in policy.get("blocked_data_classes", ())}:
+            return False
+        prov = (profile.provider or "").strip().lower()
+        if prov not in {str(p).lower() for p in policy.get("allowed_providers", ())}:
+            return False
+        region = (getattr(profile, "region", None) or "global").strip().lower()
+        if region not in {str(r).lower() for r in policy.get("allowed_regions", ())}:
+            return False
+        return True
 
 
 class QuotaManager:
@@ -1244,6 +1517,7 @@ class QuotaManager:
 
         with self.workflow.tx(tenant, write=True, bounded=True) as run:
             _ensure_routing_tables_sqlite(self.workflow, run)
+            _ensure_enterprise_finops_tables_sqlite(self.workflow, run)
             run(
                 """INSERT INTO aios_quota_policy
                    (tenant, scope_type, scope_key, daily_usd_limit, daily_token_limit, updated_by, updated_at)
@@ -1265,78 +1539,130 @@ class QuotaManager:
             "updated_at": now,
         }
 
-    def check_quota(self, actor: Actor, *, now: float | None = None) -> QuotaCheckResult:
-        now_ts = time.time() if now is None else now
-        day_start = datetime.fromtimestamp(now_ts, HK_TZ).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ).timestamp()
+    @staticmethod
+    def _fetch_matching_policies(run, actor: Actor) -> list[Any]:
+        return run(
+            """SELECT scope_type, scope_key, daily_usd_limit, daily_token_limit
+               FROM aios_quota_policy
+               WHERE tenant = ?
+                 AND ((scope_type = 'tenant' AND scope_key = ?)
+                   OR (scope_type = 'role' AND scope_key = ?)
+                   OR (scope_type = 'subject' AND scope_key = ?))""",
+            (actor.tenant, actor.tenant, actor.role, actor.subject),
+        ).fetchall()
 
-        with self.workflow.tx(actor.tenant, write=False, bounded=True) as run:
-            _ensure_routing_tables_sqlite(self.workflow, run)
-            policies = run(
-                """SELECT scope_type, scope_key, daily_usd_limit, daily_token_limit
-                   FROM aios_quota_policy
-                   WHERE tenant = ?
-                     AND ((scope_type = 'tenant' AND scope_key = ?)
-                       OR (scope_type = 'role' AND scope_key = ?)
-                       OR (scope_type = 'subject' AND scope_key = ?))""",
-                (actor.tenant, actor.tenant, actor.role, actor.subject),
-            ).fetchall()
-            if not policies:
-                return QuotaCheckResult(allowed=True)
-
-            agg = run(
-                """SELECT COALESCE(SUM(estimated_usd), 0) AS tenant_usd,
-                          COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tenant_toks,
-                          COALESCE(SUM(CASE WHEN role = ? THEN estimated_usd ELSE 0 END), 0) AS role_usd,
-                          COALESCE(SUM(CASE WHEN role = ? THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS role_toks,
-                          COALESCE(SUM(CASE WHEN subject = ? THEN estimated_usd ELSE 0 END), 0) AS subject_usd,
-                          COALESCE(SUM(CASE WHEN subject = ? THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS subject_toks
-                   FROM aios_llm_telemetry
-                   WHERE tenant = ? AND created_at >= ?""",
-                (actor.role, actor.role, actor.subject, actor.subject, actor.tenant, day_start),
-            ).fetchone()
-
-        usage_by_scope: dict[str, tuple[float, int]] = {
-            "tenant": (float(agg["tenant_usd"] or 0.0), int(agg["tenant_toks"] or 0)),
-            "role": (float(agg["role_usd"] or 0.0), int(agg["role_toks"] or 0)),
-            "subject": (float(agg["subject_usd"] or 0.0), int(agg["subject_toks"] or 0)),
+    @staticmethod
+    def _fetch_telemetry_usage(run, actor: Actor, day_start: float) -> dict[str, tuple[int, int]]:
+        agg = run(
+            """SELECT COALESCE(SUM(estimated_usd), 0) AS tenant_usd,
+                      COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tenant_toks,
+                      COALESCE(SUM(CASE WHEN role = ? THEN estimated_usd ELSE 0 END), 0) AS role_usd,
+                      COALESCE(SUM(CASE WHEN role = ? THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS role_toks,
+                      COALESCE(SUM(CASE WHEN subject = ? THEN estimated_usd ELSE 0 END), 0) AS subject_usd,
+                      COALESCE(SUM(CASE WHEN subject = ? THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS subject_toks
+               FROM aios_llm_telemetry
+               WHERE tenant = ? AND created_at >= ?""",
+            (actor.role, actor.role, actor.subject, actor.subject, actor.tenant, day_start),
+        ).fetchone()
+        return {
+            "tenant": (int(round(float(agg["tenant_usd"] or 0.0) * 1_000_000)), int(agg["tenant_toks"] or 0)),
+            "role": (int(round(float(agg["role_usd"] or 0.0) * 1_000_000)), int(agg["role_toks"] or 0)),
+            "subject": (int(round(float(agg["subject_usd"] or 0.0) * 1_000_000)), int(agg["subject_toks"] or 0)),
         }
 
+    @staticmethod
+    def _fetch_reservation_usage(
+        run, actor: Actor, day_key: str, now_ts: float
+    ) -> tuple[dict[str, tuple[int, int]], dict[str, tuple[int, int]]]:
+        row = run(
+            """SELECT COALESCE(SUM(CASE WHEN status = 'reserved' AND expires_at > ? THEN reserved_micro_usd ELSE 0 END), 0) AS tenant_res_micro,
+                      COALESCE(SUM(CASE WHEN status = 'reserved' AND expires_at > ? THEN reserved_tokens ELSE 0 END), 0) AS tenant_res_toks,
+                      COALESCE(SUM(CASE WHEN status = 'settled' THEN actual_micro_usd ELSE 0 END), 0) AS tenant_set_micro,
+                      COALESCE(SUM(CASE WHEN status = 'settled' THEN actual_tokens ELSE 0 END), 0) AS tenant_set_toks,
+                      COALESCE(SUM(CASE WHEN status = 'reserved' AND expires_at > ? AND role = ? THEN reserved_micro_usd ELSE 0 END), 0) AS role_res_micro,
+                      COALESCE(SUM(CASE WHEN status = 'reserved' AND expires_at > ? AND role = ? THEN reserved_tokens ELSE 0 END), 0) AS role_res_toks,
+                      COALESCE(SUM(CASE WHEN status = 'settled' AND role = ? THEN actual_micro_usd ELSE 0 END), 0) AS role_set_micro,
+                      COALESCE(SUM(CASE WHEN status = 'settled' AND role = ? THEN actual_tokens ELSE 0 END), 0) AS role_set_toks,
+                      COALESCE(SUM(CASE WHEN status = 'reserved' AND expires_at > ? AND subject = ? THEN reserved_micro_usd ELSE 0 END), 0) AS subject_res_micro,
+                      COALESCE(SUM(CASE WHEN status = 'reserved' AND expires_at > ? AND subject = ? THEN reserved_tokens ELSE 0 END), 0) AS subject_res_toks,
+                      COALESCE(SUM(CASE WHEN status = 'settled' AND subject = ? THEN actual_micro_usd ELSE 0 END), 0) AS subject_set_micro,
+                      COALESCE(SUM(CASE WHEN status = 'settled' AND subject = ? THEN actual_tokens ELSE 0 END), 0) AS subject_set_toks
+               FROM aios_budget_reservation
+               WHERE tenant = ? AND day_key = ?""",
+            (
+                now_ts,
+                now_ts,
+                now_ts,
+                actor.role,
+                now_ts,
+                actor.role,
+                actor.role,
+                actor.role,
+                now_ts,
+                actor.subject,
+                now_ts,
+                actor.subject,
+                actor.subject,
+                actor.subject,
+                actor.tenant,
+                day_key,
+            ),
+        ).fetchone()
+        reserved = {
+            "tenant": (int(row["tenant_res_micro"] or 0), int(row["tenant_res_toks"] or 0)),
+            "role": (int(row["role_res_micro"] or 0), int(row["role_res_toks"] or 0)),
+            "subject": (int(row["subject_res_micro"] or 0), int(row["subject_res_toks"] or 0)),
+        }
+        settled = {
+            "tenant": (int(row["tenant_set_micro"] or 0), int(row["tenant_set_toks"] or 0)),
+            "role": (int(row["role_set_micro"] or 0), int(row["role_set_toks"] or 0)),
+            "subject": (int(row["subject_set_micro"] or 0), int(row["subject_set_toks"] or 0)),
+        }
+        return reserved, settled
+
+    @staticmethod
+    def _evaluate_policies(
+        policies: list[Any],
+        usage_by_scope: dict[str, tuple[int, int]],
+        *,
+        est_micro_usd: int = 0,
+        est_tokens: int = 0,
+    ) -> QuotaCheckResult:
         max_ratio = 0.0
         for pol in policies:
             stype, skey = str(pol["scope_type"]), str(pol["scope_key"])
-            usd_used, toks_used = usage_by_scope[stype]
+            used_micro, used_toks = usage_by_scope[stype]
             usd_limit = pol["daily_usd_limit"]
             tok_limit = pol["daily_token_limit"]
             if usd_limit is not None:
                 lim_usd = float(usd_limit)
-                if usd_used >= lim_usd:
-                    ratio = round(usd_used / lim_usd, 4) if lim_usd > 0 else 1.0
+                lim_micro = int(round(lim_usd * 1_000_000))
+                if used_micro >= lim_micro or (est_micro_usd > 0 and (used_micro + est_micro_usd) > lim_micro):
+                    ratio = round(used_micro / lim_micro, 4) if lim_micro > 0 else 1.0
                     return QuotaCheckResult(
                         allowed=False,
                         exceeded_scope=f"{stype}:{skey}",
                         limit_kind="usd",
-                        used=round(usd_used, 6),
+                        used=round(used_micro / 1_000_000.0, 6),
                         limit=lim_usd,
                         utilization_ratio=ratio,
                     )
-                if lim_usd > 0:
-                    max_ratio = max(max_ratio, usd_used / lim_usd)
+                if lim_micro > 0:
+                    max_ratio = max(max_ratio, used_micro / lim_micro)
             if tok_limit is not None:
                 lim_tok = int(tok_limit)
-                if toks_used >= lim_tok:
-                    ratio = round(toks_used / lim_tok, 4) if lim_tok > 0 else 1.0
+                if used_toks >= lim_tok or (est_tokens > 0 and (used_toks + est_tokens) > lim_tok):
+                    ratio = round(used_toks / lim_tok, 4) if lim_tok > 0 else 1.0
                     return QuotaCheckResult(
                         allowed=False,
                         exceeded_scope=f"{stype}:{skey}",
                         limit_kind="tokens",
-                        used=float(toks_used),
+                        used=float(used_toks),
                         limit=float(lim_tok),
                         utilization_ratio=ratio,
                     )
                 if lim_tok > 0:
-                    max_ratio = max(max_ratio, toks_used / lim_tok)
+                    max_ratio = max(max_ratio, used_toks / lim_tok)
 
         soft_cap = max_ratio >= 0.80
         return QuotaCheckResult(
@@ -1345,3 +1671,127 @@ class QuotaManager:
             utilization_ratio=round(max_ratio, 4),
             recommended_max_tier="T1" if soft_cap else None,
         )
+
+    def check_quota(self, actor: Actor, *, now: float | None = None) -> QuotaCheckResult:
+        now_ts = time.time() if now is None else float(now)
+        day_start = datetime.fromtimestamp(now_ts, HK_TZ).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).timestamp()
+
+        with self.workflow.tx(actor.tenant, write=False, bounded=True) as run:
+            _ensure_routing_tables_sqlite(self.workflow, run)
+            policies = self._fetch_matching_policies(run, actor)
+            if not policies:
+                return QuotaCheckResult(allowed=True)
+            usage_by_scope = self._fetch_telemetry_usage(run, actor, day_start)
+        return self._evaluate_policies(policies, usage_by_scope)
+
+    def reserve_budget(
+        self,
+        actor: Actor,
+        *,
+        estimated_micro_usd: int,
+        estimated_tokens: int,
+        ttl_s: float = 120.0,
+        now: float | None = None,
+    ) -> QuotaCheckResult:
+        """Atomically check daily quota + active reservations and insert a bounded reservation."""
+        now_ts = time.time() if now is None else float(now)
+        dt_hk = datetime.fromtimestamp(now_ts, HK_TZ)
+        day_start = dt_hk.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        day_key = dt_hk.strftime("%Y-%m-%d")
+        est_micro = max(0, int(estimated_micro_usd))
+        est_toks = max(0, int(estimated_tokens))
+
+        with self.workflow.tx(actor.tenant, write=True, bounded=False) as run:
+            _ensure_routing_tables_sqlite(self.workflow, run)
+            _ensure_enterprise_finops_tables_sqlite(self.workflow, run)
+            if getattr(self.workflow.db, "dsn", None):
+                run("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", (canonical(["quota-reserve", actor.tenant]),))
+
+            policies = self._fetch_matching_policies(run, actor)
+            if not policies:
+                return QuotaCheckResult(allowed=True)
+
+            tel_usage = self._fetch_telemetry_usage(run, actor, day_start)
+            res_usage, set_usage = self._fetch_reservation_usage(run, actor, day_key, now_ts)
+            combined_usage: dict[str, tuple[int, int]] = {}
+            for scope in ("tenant", "role", "subject"):
+                t_micro, t_tok = tel_usage[scope]
+                s_micro, s_tok = set_usage[scope]
+                r_micro, r_tok = res_usage[scope]
+                combined_usage[scope] = (max(t_micro, s_micro) + r_micro, max(t_tok, s_tok) + r_tok)
+
+            verdict = self._evaluate_policies(
+                policies,
+                combined_usage,
+                est_micro_usd=est_micro,
+                est_tokens=est_toks,
+            )
+            if not verdict.allowed:
+                return verdict
+
+            res_id = uuid4().hex
+            expires_at = now_ts + max(1.0, float(ttl_s))
+            run(
+                """INSERT INTO aios_budget_reservation
+                   (tenant, id, subject, role, day_key, reserved_micro_usd, actual_micro_usd,
+                    reserved_tokens, actual_tokens, status, expires_at, created_at, settled_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, 'reserved', ?, ?, NULL)""",
+                (
+                    actor.tenant,
+                    res_id,
+                    actor.subject,
+                    actor.role,
+                    day_key,
+                    est_micro,
+                    est_toks,
+                    expires_at,
+                    now_ts,
+                ),
+            )
+            return verdict.model_copy(update={"reservation_id": res_id})
+
+    def settle_budget(
+        self,
+        tenant: str,
+        reservation_id: str | None,
+        *,
+        actual_micro_usd: int,
+        actual_tokens: int,
+        now: float | None = None,
+    ) -> None:
+        if not reservation_id:
+            return
+        now_ts = time.time() if now is None else float(now)
+        with self.workflow.tx(tenant, write=True, bounded=False) as run:
+            _ensure_enterprise_finops_tables_sqlite(self.workflow, run)
+            run(
+                """UPDATE aios_budget_reservation
+                   SET status = 'settled',
+                       actual_micro_usd = ?,
+                       actual_tokens = ?,
+                       settled_at = ?
+                   WHERE tenant = ? AND id = ? AND status = 'reserved'""",
+                (
+                    max(0, int(actual_micro_usd)),
+                    max(0, int(actual_tokens)),
+                    now_ts,
+                    tenant,
+                    reservation_id,
+                ),
+            )
+
+    def release_budget(self, tenant: str, reservation_id: str | None) -> None:
+        if not reservation_id:
+            return
+        now_ts = time.time()
+        with self.workflow.tx(tenant, write=True, bounded=False) as run:
+            _ensure_enterprise_finops_tables_sqlite(self.workflow, run)
+            run(
+                """UPDATE aios_budget_reservation
+                   SET status = 'released',
+                       settled_at = ?
+                   WHERE tenant = ? AND id = ? AND status = 'reserved'""",
+                (now_ts, tenant, reservation_id),
+            )

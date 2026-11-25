@@ -18,8 +18,10 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
+import { getMonogram } from "@/lib/format";
 import {
   PERSONA_LOCALIZATIONS,
+  extractDirectRoomInfo,
   formatChatMessageBody,
   formatChatRoomTitle,
   localizeContactJobTitle,
@@ -160,6 +162,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [accessError, setAccessError] = useState<ApiError | null>(null);
   const [meetingModalOpen, setMeetingModalOpen] = useState(false);
+  const [headerScrolled, setHeaderScrolled] = useState(false);
   const [profileDialogTarget, setProfileDialogTarget] =
     useState<ContactProfileDialogTarget | null>(null);
 
@@ -902,6 +905,43 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
         { id: roomId.slice(0, 8) },
       );
 
+  const dmTitleInfo = roomMeta?.title
+    ? extractDirectRoomInfo(roomMeta.title)
+    : null;
+  const fallbackDmPeerName = useMemo(() => {
+    if (
+      !dmTitleInfo ||
+      !actor ||
+      !roomMeta?.owner ||
+      roomMeta.owner === actor.subject
+    ) {
+      return null;
+    }
+    const selfName = localizePersona(actor.subject).displayName;
+    const formattedRaw = formatChatRoomTitle(roomMeta.title, locale);
+    const pointsToSelf =
+      dmTitleInfo.targetSubject === actor.subject ||
+      dmTitleInfo.targetLabel === actor.subject ||
+      formattedRaw === selfName;
+    if (!pointsToSelf) return null;
+    return resolveMemberDisplayName(
+      roomMeta.owner,
+      memberProfiles[roomMeta.owner],
+    );
+  }, [
+    dmTitleInfo,
+    actor,
+    roomMeta,
+    locale,
+    localizePersona,
+    memberProfiles,
+    resolveMemberDisplayName,
+  ]);
+
+  const headerDisplayTitle =
+    otherPeer?.name ?? fallbackDmPeerName ?? displayRoomTitle;
+  const headerInitials = getMonogram(headerDisplayTitle, "RM");
+
   const isMultiMemberGroup = members.length > 2;
 
   const headerSubtitle = otherPeer
@@ -962,9 +1002,11 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
       {/* Fluid iMessage Stream with Borderless Floating Header Overlay */}
       <div
         data-testid="room-message-feed"
+        onScroll={(e) => setHeaderScrolled(e.currentTarget.scrollTop > 8)}
         className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)]"
       >
         <ConversationHeader
+          scrolled={headerScrolled}
           leftSlot={
             <Link
               href="/inbox"
@@ -983,10 +1025,10 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
             </Link>
           }
           avatarSrc={otherPeer?.avatarSrc ?? null}
-          avatarName={otherPeer?.name || displayRoomTitle}
-          avatarFallbackText={otherPeer?.subject || roomMeta?.owner || "RM"}
+          avatarName={headerDisplayTitle}
+          avatarFallbackText={headerInitials}
           avatarStatus={otherPeer?.availability}
-          title={displayRoomTitle}
+          title={headerDisplayTitle}
           titleTestId="room-header-title"
           subtitle={headerSubtitle}
           onOpenProfile={openCenterProfile}
@@ -996,7 +1038,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
               "zh-HK": "檢視 {name} 資料",
               en: "View {name} details",
             },
-            { name: displayRoomTitle },
+            { name: headerDisplayTitle },
           )}
           rightSlot={
             <>
@@ -1056,7 +1098,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
           }
         />
 
-        <div className="mx-auto max-w-[740px] px-4 pt-[96px] pb-6 sm:px-8">
+        <div className="mx-auto max-w-[740px] px-4 pt-[112px] pb-6 sm:px-8">
           {initialLoading ? (
             <div className="py-16 text-center text-[13px] text-[var(--ink-muted)]">
               {tx({
@@ -1072,14 +1114,14 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
             >
               <Avatar
                 src={otherPeer?.avatarSrc ?? null}
-                name={otherPeer?.name || displayRoomTitle}
-                fallbackText={otherPeer?.subject || roomMeta?.owner || "RM"}
+                name={headerDisplayTitle}
+                fallbackText={headerInitials}
                 size="xl"
                 status={otherPeer?.availability}
                 className="shadow-[var(--shadow-card)]"
               />
               <h3 className="mt-4 text-[17px] font-semibold text-[var(--ink-primary)]">
-                {displayRoomTitle}
+                {headerDisplayTitle}
               </h3>
               <p className="mt-1.5 max-w-[420px] text-[13px] text-[var(--ink-muted)] leading-relaxed text-balance">
                 {tx({
@@ -1391,7 +1433,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
                   "zh-HK": "向 {room} 傳送訊息…",
                   en: "Message {room}…",
                 },
-                { room: displayRoomTitle },
+                { room: headerDisplayTitle },
               )}
               style={{ outline: "none" }}
               className="my-0 block max-h-[150px] min-h-[32px] flex-1 resize-none border-0 bg-transparent py-[5px] text-[14.5px] leading-[22px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
@@ -1439,7 +1481,7 @@ export function ChatRoomWorkspace({ roomId }: { roomId: string }) {
         open={meetingModalOpen}
         onOpenChange={setMeetingModalOpen}
         roomId={roomId}
-        roomTitle={displayRoomTitle}
+        roomTitle={headerDisplayTitle}
         members={members}
         memberProfiles={memberProfiles}
       />

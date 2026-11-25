@@ -705,6 +705,114 @@ class UserMemoryTests(unittest.TestCase):
         self.assertTrue(cli_json["dry_run"])
         self.assertEqual(cli_json["tidied_users"], 0)
 
+    def test_permanent_vs_reversible_clear_and_forget_purge(self):
+        store = UserMemoryStore(self.runtime.workflow)
+        # Seed v1 -> v2 so previous_content has sensitive line too, plus pending & discarded staging
+        v1 = self.client.put(
+            "/v1/memory",
+            headers=self.auth("operator"),
+            json={"version": 0, "content": "# MEMORY.md\n\n## Working Context\n- Secret project X99 deadline\n- Regular HK01 note"},
+        ).json()
+        v2 = self.client.put(
+            "/v1/memory",
+            headers=self.auth("operator"),
+            json={"version": v1["version"], "content": "# MEMORY.md\n\n## Working Context\n- Secret project X99 status\n- Prefer concise summaries"},
+        ).json()
+        self.assertTrue(v2["has_previous"])
+        self.assertTrue(store.stage_fact(self.operator, "Secret project X99 needs extra review"))
+        self.assertTrue(store.stage_fact(self.operator, "Regular morning standup at 09:30"))
+
+        # 1. Permanent forget strips BOTH content and previous_content, deletes matching staging, writes metadata-only audit
+        f_resp = self.client.post(
+            "/v1/memory/forget",
+            headers=self.auth("operator"),
+            json={"query": "X99", "permanent": True},
+        )
+        self.assertEqual(f_resp.status_code, 200, f_resp.text)
+        f_body = f_resp.json()
+        self.assertEqual(f_body["removed_lines"], 2)  # 1 memory line + 1 pending staging item
+        self.assertNotIn("X99", f_body["memory"]["content"])
+        self.assertIn("Prefer concise summaries", f_body["memory"]["content"])
+        self.assertEqual(f_body["memory"]["pending_staged_count"], 1)
+
+        with self.runtime.workflow.tx("harbour", write=False) as run:
+            mem_row = run(
+                "SELECT content, previous_content FROM aios_user_memory WHERE tenant = 'harbour' AND subject = 'operator'"
+            ).fetchone()
+            staging_rows = run(
+                "SELECT fact_text FROM aios_user_memory_staging WHERE tenant = 'harbour' AND subject = 'operator'"
+            ).fetchall()
+            audit_rows = run(
+                "SELECT target, event FROM aios_audit WHERE tenant = 'harbour' AND subject = 'operator' AND event = 'MEMORY_FORGET_PERMANENT'"
+            ).fetchall()
+        self.assertNotIn("X99", mem_row["content"])
+        self.assertNotIn("X99", mem_row["previous_content"] or "")
+        self.assertIn("Regular HK01 note", mem_row["previous_content"] or "")
+        self.assertEqual([r["fact_text"] for r in staging_rows], ["Regular morning standup at 09:30"])
+        self.assertEqual(len(audit_rows), 1)
+        self.assertEqual(audit_rows[0]["target"], "user-memory")
+
+        # 2. Edge case: sensitive text ONLY in previous_content (not in current content) is also purged by forget(permanent=True)
+        perm_only_prev = self.client.post(
+            "/v1/memory/forget",
+            headers=self.auth("operator"),
+            json={"query": "Regular HK01 note", "permanent": True},
+        )
+        self.assertEqual(perm_only_prev.status_code, 200, perm_only_prev.text)
+        with self.runtime.workflow.tx("harbour", write=False) as run:
+            mem_row2 = run(
+                "SELECT previous_content FROM aios_user_memory WHERE tenant = 'harbour' AND subject = 'operator'"
+            ).fetchone()
+        self.assertNotIn("Regular HK01 note", mem_row2["previous_content"] or "")
+
+        # 3. Reversible clear (permanent=False default) keeps previous_content for 1-click Undo
+        cur_ver = perm_only_prev.json()["memory"]["version"]
+        rev_clear = self.client.delete(f"/v1/memory?version={cur_ver}", headers=self.auth("operator"))
+        self.assertEqual(rev_clear.status_code, 200, rev_clear.text)
+        self.assertTrue(rev_clear.json()["has_previous"])
+        undo_res = self.client.post(
+            "/v1/memory/revert",
+            headers=self.auth("operator"),
+            json={"version": rev_clear.json()["version"]},
+        )
+        self.assertEqual(undo_res.status_code, 200)
+        self.assertIn("Prefer concise summaries", undo_res.json()["content"])
+
+        # 4. Permanent clear (DELETE /v1/memory?version=...&permanent=true) wipes content + previous_content + staging
+        perm_clear = self.client.delete(
+            f"/v1/memory?version={undo_res.json()['version']}&permanent=true",
+            headers=self.auth("operator"),
+        )
+        self.assertEqual(perm_clear.status_code, 200, perm_clear.text)
+        pc_body = perm_clear.json()
+        self.assertEqual(pc_body["content"], "")
+        self.assertFalse(pc_body["has_previous"])
+        self.assertEqual(pc_body["pending_staged_count"], 0)
+
+        # Revert now rejected 422 because previous_content is NULL
+        no_undo = self.client.post(
+            "/v1/memory/revert",
+            headers=self.auth("operator"),
+            json={"version": pc_body["version"]},
+        )
+        self.assertEqual(no_undo.status_code, 422)
+
+        with self.runtime.workflow.tx("harbour", write=False) as run:
+            mem_final = run(
+                "SELECT content, previous_content FROM aios_user_memory WHERE tenant = 'harbour' AND subject = 'operator'"
+            ).fetchone()
+            staging_final = run(
+                "SELECT id FROM aios_user_memory_staging WHERE tenant = 'harbour' AND subject = 'operator'"
+            ).fetchall()
+            purge_audits = run(
+                "SELECT target, event FROM aios_audit WHERE tenant = 'harbour' AND subject = 'operator' AND event = 'MEMORY_PURGED_PERMANENT'"
+            ).fetchall()
+        self.assertEqual(mem_final["content"], "")
+        self.assertIsNone(mem_final["previous_content"])
+        self.assertEqual(len(staging_final), 0)
+        self.assertEqual(len(purge_audits), 1)
+        self.assertEqual(purge_audits[0]["target"], "user-memory")
+
 
 if __name__ == "__main__":
     unittest.main()

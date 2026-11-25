@@ -39,6 +39,8 @@ jobs:
           python -m pip_audit -r requirements-platform.txt
       - name: OCR, routing, ledger and API tests with SQLite
         run: python -m unittest discover -s tests -v
+      - name: Run deterministic enterprise readiness evaluation harness (zero API keys)
+        run: python scripts/enterprise_eval.py --json
       - name: Exercise PostgreSQL SKIP LOCKED and outbox recovery
         env:
           AIOS_TEST_POSTGRES_DSN: postgresql://aios:local-ci@localhost:5432/aios_ci
@@ -55,6 +57,32 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_platform.py -v
           python -m unittest discover -s tests -p test_collaboration.py -v
+      - name: Apply PostgreSQL forced RLS grants and run enterprise RLS tests
+        env:
+          AIOS_PLATFORM_TEST_DSN: postgresql://aios:local-ci@localhost:5432/aios_ci
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import psycopg
+          from psycopg import sql
+
+          dsn = os.environ["AIOS_PLATFORM_TEST_DSN"]
+          with psycopg.connect(dsn) as conn:
+              conn.execute(
+                  "DO $$ BEGIN "
+                  "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aios_api') THEN CREATE ROLE aios_api LOGIN PASSWORD 'local-ci-api'; END IF; "
+                  "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aios_worker') THEN CREATE ROLE aios_worker LOGIN PASSWORD 'local-ci-worker'; END IF; "
+                  "END $$;"
+              )
+              schema = conn.execute("SELECT current_schema()").fetchone()[0]
+              conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO aios_api, aios_worker").format(sql.Identifier(schema)))
+              sql_text = Path("deploy/platform/postgres-security.sql").read_text(encoding="utf-8")
+              for stmt in sql_text.split(";"):
+                  if stmt.strip():
+                      conn.execute(stmt)
+          PY
+          python -m unittest tests.test_postgres_enterprise -v
       - name: Run the two backend reference workflows without external credentials
         run: python scripts/platform_smoke.py
       - name: Capture the live browser journey
@@ -74,3 +102,44 @@ jobs:
           name: pitch-browser-screenshots
           path: ${{ runner.temp }}/aios-browser/*.png
           if-no-files-found: error
+
+  web-ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install, typegen, typecheck, and build web console
+        run: pnpm --dir web install --frozen-lockfile && pnpm --dir web exec next typegen && pnpm --dir web run typecheck && pnpm --dir web run build
+
+  edge-mcp-ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: |
+            deploy/cloudflare-worker/pnpm-lock.yaml
+            mcp/email-server/pnpm-lock.yaml
+      - name: Typecheck and test Cloudflare Worker edge gate
+        run: pnpm --dir deploy/cloudflare-worker install --frozen-lockfile && pnpm --dir deploy/cloudflare-worker run typecheck && pnpm --dir deploy/cloudflare-worker test
+      - name: Typecheck and build Email MCP server
+        run: pnpm --dir mcp/email-server install --frozen-lockfile && pnpm --dir mcp/email-server run typecheck && pnpm --dir mcp/email-server run build

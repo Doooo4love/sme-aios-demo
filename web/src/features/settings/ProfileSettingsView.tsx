@@ -19,8 +19,8 @@ import {
   isStaleAuthError,
   type ApiError,
 } from "@/lib/api-client";
-import { sortWarehouses } from "@/lib/format";
-import { useLocale } from "@/lib/i18n";
+import { getMonogram, sortWarehouses } from "@/lib/format";
+import { PERSONA_LOCALIZATIONS, useLocale } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { Interactive3DCard } from "@/components/kinetic";
 import { AccessNoticeCard } from "@/components/ui/AccessNoticeCard";
@@ -53,7 +53,7 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
     updateAgentProfileState,
     handleAccessChanged,
   } = useSession();
-  const { locale, t, tx, localizeRole } = useLocale();
+  const { locale, t, tx, localizePersona, localizeRole } = useLocale();
 
   const isAgent = kind === "agent";
   const prefix = isAgent ? "agent" : "profile";
@@ -340,10 +340,27 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
   };
 
   const defaultAgentName = t("brand.defaultAgentName");
-  const fallbackLabel = isAgent
-    ? defaultAgentName
-    : actor?.subject || tx({ "zh-CN": "员工", "zh-HK": "員工", en: "Employee" });
-  const effectiveName = record?.display_name || fallbackLabel;
+  const knownHumanPersona = actor?.subject
+    ? PERSONA_LOCALIZATIONS[actor.subject as keyof typeof PERSONA_LOCALIZATIONS]
+    : undefined;
+  const defaultHumanName = actor?.subject
+    ? knownHumanPersona
+      ? localizePersona(actor.subject).displayName
+      : actor.subject
+    : tx({ "zh-CN": "员工", "zh-HK": "員工", en: "Employee" });
+  const rawDisplayName = record?.display_name?.trim();
+  const isCustomHumanName =
+    Boolean(rawDisplayName) &&
+    (!knownHumanPersona ||
+      (rawDisplayName !== knownHumanPersona["zh-CN"].displayName &&
+        rawDisplayName !== knownHumanPersona["zh-HK"].displayName &&
+        rawDisplayName !== knownHumanPersona.en.displayName));
+  const fallbackLabel = isAgent ? defaultAgentName : defaultHumanName;
+  const effectiveName = isAgent
+    ? rawDisplayName || fallbackLabel
+    : isCustomHumanName
+      ? (rawDisplayName as string)
+      : fallbackLabel;
   const liveAgentPreviewName = displayNameInput.trim() || defaultAgentName;
   const showPreviewAgentSuffix = !liveAgentPreviewName
     .toLowerCase()
@@ -357,17 +374,17 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
       data-testid={`${prefix}-settings-page`}
       className="min-h-full bg-[var(--bg-app)] px-4 py-8 sm:px-6"
     >
-      <div className="mx-auto max-w-[740px] space-y-5">
+      <div className="mx-auto max-w-[960px] space-y-5">
         {/* Clean Pill Sub-Navigation Switcher */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-2xl sm:rounded-full bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-subtle)]">
+          <div className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-2xl sm:rounded-full bg-[var(--bg-inset)] p-1 ring-1 ring-[var(--hairline)]">
             <Link
               href="/settings/profile"
               aria-current={!isAgent ? "page" : undefined}
               className={[
                 "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 sm:px-4 text-[13px] font-medium transition-all duration-[150ms]",
                 !isAgent
-                  ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[var(--shadow-subtle)]"
+                  ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--hairline)] font-semibold"
                   : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]",
               ].join(" ")}
             >
@@ -380,7 +397,7 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
               className={[
                 "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 sm:px-4 text-[13px] font-medium transition-all duration-[150ms]",
                 isAgent
-                  ? "bg-[var(--accent-solid)] text-[var(--accent-fg)] shadow-[var(--shadow-subtle)]"
+                  ? "bg-[var(--bg-surface)] text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--hairline)] font-semibold"
                   : "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]",
               ].join(" ")}
             >
@@ -527,22 +544,16 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
                   maxTilt={2}
                   hoverLiftPx={-1}
                   sheenIntensity="subtle"
-                  className="max-w-[296px] rounded-tile bg-[var(--bg-surface)] px-3 py-2.5 shadow-[var(--shadow-card)] ring-1 ring-[var(--accent-border)]"
+                  className="max-w-[296px] rounded-tile bg-[var(--bg-surface)] px-[9px] py-2.5 shadow-[var(--shadow-card)] ring-1 ring-[var(--accent-border)]"
                 >
-                  <div className="relative z-[3] flex items-center gap-3">
-                    <span className="relative inline-flex shrink-0">
-                      <Avatar
-                        src={avatarSrc}
-                        name={liveAgentPreviewName}
-                        fallbackText="AG"
-                        size="md"
-                        kind="agent"
-                      />
-                      <span
-                        aria-hidden="true"
-                        className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full bg-[var(--accent-solid)] ring-2 ring-[var(--bg-surface)]"
-                      />
-                    </span>
+                  <div className="relative z-[3] flex items-center gap-2.5">
+                    <Avatar
+                      src={avatarSrc}
+                      name={liveAgentPreviewName}
+                      fallbackText="AG"
+                      size="md"
+                      kind="agent"
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-1.5 min-w-0">
                         <span className="truncate text-[13.5px] font-semibold text-[var(--ink-primary)]">
@@ -642,7 +653,9 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
                   <Avatar
                     src={avatarSrc}
                     name={effectiveName}
-                    fallbackText={isAgent ? "AG" : actor?.subject || "U"}
+                    fallbackText={
+                      isAgent ? "AG" : getMonogram(effectiveName, actor?.subject || "U")
+                    }
                     size="xl"
                     kind={isAgent ? "agent" : "user"}
                     status="online"
@@ -755,17 +768,11 @@ export function ProfileSettingsView({ kind }: ProfileSettingsViewProps) {
                             en: "Default: {name}",
                           },
                           {
-                            name:
-                              actor?.subject ||
-                              tx({
-                                "zh-CN": "账号主体",
-                                "zh-HK": "帳號主體",
-                                en: "Account",
-                              }),
+                            name: defaultHumanName,
                           },
                         )
                   }
-                  className="mt-2.5 h-10 w-full max-w-[420px] rounded-sm bg-[var(--bg-surface-tint)] px-3.5 text-[14px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none transition-all"
+                  className="aios-input mt-2.5 h-10 w-full max-w-[420px] px-3.5 text-[14px]"
                 />
               </div>
 

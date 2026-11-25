@@ -4,7 +4,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
+import inspect
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -12,6 +14,7 @@ import threading
 import time
 from typing import Annotated, Any, Literal
 from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 import httpx
@@ -333,6 +336,34 @@ class QuotaPolicyUpdate(Strict):
         return self
 
 
+class ProviderPolicyUpdate(Strict):
+    allowed_providers: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=20)] | None = None
+    allowed_regions: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=20)] | None = None
+    blocked_data_classes: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=20)] | None = None
+    allow_failover: bool | None = None
+    max_tier: Literal["T0", "T1", "T2", "T3"] | None = None
+    pricing_version: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+
+
+class ExternalOutboxReserveRequest(Strict):
+    action_kind: Literal["email.send", "zoom.book"]
+    client_id: Identifier
+    request_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    lease_s: Annotated[float, Field(ge=1.0, le=3600.0)] = 60.0
+
+    @model_validator(mode="after")
+    def reject_bool_lease(self):
+        if isinstance(self.lease_s, bool) or not math.isfinite(self.lease_s):
+            raise ValueError("lease_s must be a finite number")
+        return self
+
+
+class ExternalOutboxFinalizeRequest(Strict):
+    state: Literal["SUCCEEDED", "FAILED", "UNKNOWN"]
+    external_id: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    result: dict[str, Any] | None = None
+
+
 class EmailOutboxCreate(Strict):
     client_id: Identifier
     recipients: Annotated[list[Annotated[str, Field(min_length=3, max_length=254)]], Field(min_length=1, max_length=50)]
@@ -408,6 +439,64 @@ def _scope_permitted(actor: Actor, scope_key: str) -> bool:
 
 
 _EMAIL_SIMPLE_RE = re.compile(r"^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_ENTERPRISE_HARDENING_LOCK = threading.Lock()
+_ENTERPRISE_HARDENING_READY: WeakKeyDictionary[object, tuple[Any, ...]] = WeakKeyDictionary()
+
+
+def _sqlite_workflow_sig(workflow: Workflow) -> tuple[Any, ...]:
+    db = getattr(workflow, "db", None)
+    sqlite_path = getattr(db, "sqlite_path", None)
+    if sqlite_path is not None and str(sqlite_path) != ":memory:":
+        p = Path(sqlite_path)
+        try:
+            st = p.stat()
+            return ("file", str(p.resolve()), int(st.st_dev), int(st.st_ino))
+        except OSError:
+            return ("missing", str(p))
+    return ("mem", id(db) if db is not None else id(workflow))
+
+
+def _ensure_enterprise_hardening_sqlite(workflow: Workflow, run) -> None:
+    if getattr(getattr(workflow, "db", None), "dsn", None):
+        return
+    sig = _sqlite_workflow_sig(workflow)
+    with _ENTERPRISE_HARDENING_LOCK:
+        try:
+            if _ENTERPRISE_HARDENING_READY.get(workflow) == sig:
+                return
+        except TypeError:
+            pass
+    run(
+        """CREATE TABLE IF NOT EXISTS aios_external_action_outbox (
+               tenant TEXT NOT NULL,
+               id TEXT NOT NULL,
+               subject TEXT NOT NULL,
+               action_kind TEXT NOT NULL CHECK (action_kind IN ('email.send', 'zoom.book')),
+               client_id TEXT NOT NULL,
+               request_sha256 TEXT NOT NULL,
+               state TEXT NOT NULL CHECK (state IN ('RESERVED', 'DISPATCHING', 'SUCCEEDED', 'FAILED', 'UNKNOWN')),
+               external_id TEXT,
+               result_json TEXT,
+               attempt INTEGER NOT NULL DEFAULT 1 CHECK (attempt >= 1),
+               lease_until DOUBLE PRECISION NOT NULL,
+               created_at DOUBLE PRECISION NOT NULL,
+               updated_at DOUBLE PRECISION NOT NULL,
+               PRIMARY KEY (tenant, id),
+               UNIQUE (tenant, subject, action_kind, client_id)
+           )"""
+    )
+    run(
+        """CREATE INDEX IF NOT EXISTS aios_external_outbox_state
+               ON aios_external_action_outbox(tenant, state, updated_at DESC)"""
+    )
+    sig_after = _sqlite_workflow_sig(workflow)
+    with _ENTERPRISE_HARDENING_LOCK:
+        try:
+            _ENTERPRISE_HARDENING_READY[workflow] = sig_after
+        except TypeError:
+            pass
 
 
 class GovernanceService:
@@ -1040,6 +1129,197 @@ class GovernanceService:
                 (actor.tenant, actor.subject, capped),
             ).fetchall()
         return [self._format_outbox_row(dict(row)) for row in rows]
+
+    @staticmethod
+    def _format_external_outbox_row(row: dict) -> dict:
+        raw_result = row.get("result_json")
+        return {
+            "id": row["id"],
+            "outbox_id": row["id"],
+            "subject": row["subject"],
+            "action_kind": row["action_kind"],
+            "client_id": row["client_id"],
+            "request_sha256": row["request_sha256"],
+            "state": row["state"],
+            "external_id": row["external_id"],
+            "result": json.loads(raw_result) if raw_result else None,
+            "attempt": int(row["attempt"]),
+            "lease_until": float(row["lease_until"]),
+            "created_at": float(row["created_at"]),
+            "updated_at": float(row["updated_at"]),
+        }
+
+    def reserve_external_action(
+        self,
+        actor: Actor,
+        *,
+        action_kind: str,
+        client_id: str,
+        request_sha256: str,
+        lease_s: float = 60.0,
+    ) -> dict:
+        if action_kind not in {"email.send", "zoom.book"}:
+            raise ValueError("Unsupported external action kind")
+        clean_client_id = (client_id or "").strip()
+        if not _CLIENT_ID_RE.fullmatch(clean_client_id):
+            raise ValueError("Invalid client_id")
+        clean_sha = (request_sha256 or "").strip().lower()
+        if not _SHA256_RE.fullmatch(clean_sha):
+            raise ValueError("Invalid request_sha256")
+        if isinstance(lease_s, bool) or not math.isfinite(lease_s) or lease_s <= 0.0:
+            raise ValueError("lease_s must be positive")
+        bounded_lease = min(float(lease_s), 3600.0)
+
+        with subject_tx(self.workflow, actor, write=True) as run:
+            _ensure_enterprise_hardening_sqlite(self.workflow, run)
+            if self.workflow.db.dsn:
+                lock_key = canonical(["external-outbox-v1", actor.tenant, actor.subject, action_kind, clean_client_id])
+                run("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", (lock_key,))
+
+            now = time.time()
+            prior = run(
+                """SELECT id, request_sha256, state, external_id, result_json, attempt, lease_until
+                   FROM aios_external_action_outbox
+                   WHERE tenant = ? AND subject = ? AND action_kind = ? AND client_id = ?""",
+                (actor.tenant, actor.subject, action_kind, clean_client_id),
+            ).fetchone()
+
+            if prior is None:
+                outbox_id = uuid4().hex
+                lease_until = now + bounded_lease
+                run(
+                    """INSERT INTO aios_external_action_outbox
+                       (tenant, id, subject, action_kind, client_id, request_sha256,
+                        state, external_id, result_json, attempt, lease_until, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 'RESERVED', NULL, NULL, 1, ?, ?, ?)""",
+                    (
+                        actor.tenant,
+                        outbox_id,
+                        actor.subject,
+                        action_kind,
+                        clean_client_id,
+                        clean_sha,
+                        lease_until,
+                        now,
+                        now,
+                    ),
+                )
+                self.workflow._audit(
+                    run,
+                    actor.tenant,
+                    actor.subject,
+                    outbox_id,
+                    f"EXTERNAL_OUTBOX_RESERVED:{action_kind}",
+                )
+                return {
+                    "status": "reserved",
+                    "outbox_id": outbox_id,
+                    "attempt": 1,
+                    "cached_result": None,
+                }
+
+            if str(prior["request_sha256"]) != clean_sha:
+                raise Conflict("Idempotency key already bound to a different request payload")
+
+            state = str(prior["state"])
+            outbox_id = str(prior["id"])
+            attempt = int(prior["attempt"])
+
+            if state == "SUCCEEDED":
+                return {
+                    "status": "replay",
+                    "outbox_id": outbox_id,
+                    "attempt": attempt,
+                    "cached_result": json.loads(prior["result_json"] or "{}"),
+                }
+
+            if state == "UNKNOWN":
+                raise Conflict(
+                    "Previous external dispatch outcome is UNKNOWN; manual verification required before retry"
+                )
+
+            if state in {"RESERVED", "DISPATCHING"} and float(prior["lease_until"]) > now:
+                raise Conflict("External dispatch is already in progress")
+
+            next_attempt = attempt + 1
+            lease_until = now + bounded_lease
+            run(
+                """UPDATE aios_external_action_outbox
+                   SET state = 'RESERVED', attempt = ?, lease_until = ?, updated_at = ?
+                   WHERE tenant = ? AND id = ?""",
+                (next_attempt, lease_until, now, actor.tenant, outbox_id),
+            )
+            self.workflow._audit(
+                run,
+                actor.tenant,
+                actor.subject,
+                outbox_id,
+                f"EXTERNAL_OUTBOX_RETRIED:{action_kind}",
+            )
+            return {
+                "status": "reserved",
+                "outbox_id": outbox_id,
+                "attempt": next_attempt,
+                "cached_result": None,
+            }
+
+    def finalize_external_action(
+        self,
+        actor: Actor,
+        outbox_id: str,
+        *,
+        state: str,
+        external_id: str | None = None,
+        result: dict | None = None,
+    ) -> dict:
+        if state not in {"SUCCEEDED", "FAILED", "UNKNOWN"}:
+            raise ValueError("state must be SUCCEEDED, FAILED, or UNKNOWN")
+        clean_outbox_id = (outbox_id or "").strip()
+        if not _CLIENT_ID_RE.fullmatch(clean_outbox_id):
+            raise ValueError("Invalid outbox_id")
+
+        with subject_tx(self.workflow, actor, write=True) as run:
+            _ensure_enterprise_hardening_sqlite(self.workflow, run)
+            prior = run(
+                "SELECT * FROM aios_external_action_outbox WHERE tenant = ? AND id = ?",
+                (actor.tenant, clean_outbox_id),
+            ).fetchone()
+            if prior is None:
+                raise KeyError(clean_outbox_id)
+            if str(prior["subject"]) != actor.subject and actor.role != "admin":
+                raise PermissionError("External outbox entry belongs to another subject")
+            if str(prior["state"]) == "SUCCEEDED" and state != "SUCCEEDED":
+                raise Conflict("Completed external outbox action cannot regress")
+
+            now = time.time()
+            clean_external_id = (
+                external_id.strip()[:256]
+                if isinstance(external_id, str) and external_id.strip()
+                else prior["external_id"]
+            )
+            result_text = (
+                json.dumps(result, ensure_ascii=False)
+                if result is not None
+                else prior["result_json"]
+            )
+            run(
+                """UPDATE aios_external_action_outbox
+                   SET state = ?, external_id = ?, result_json = ?, updated_at = ?
+                   WHERE tenant = ? AND id = ?""",
+                (state, clean_external_id, result_text, now, actor.tenant, clean_outbox_id),
+            )
+            self.workflow._audit(
+                run,
+                actor.tenant,
+                actor.subject,
+                clean_outbox_id,
+                f"EXTERNAL_OUTBOX_{state}",
+            )
+            updated = run(
+                "SELECT * FROM aios_external_action_outbox WHERE tenant = ? AND id = ?",
+                (actor.tenant, clean_outbox_id),
+            ).fetchone()
+        return self._format_external_outbox_row(dict(updated))
 
     def _ensure_off_topic_tables(self, run) -> None:
         if self.workflow.db.dsn:
@@ -1740,6 +2020,92 @@ def governance_routes(governance: GovernanceService, workflow: Workflow, authent
             )
         except PermissionError as error:
             raise HTTPException(403, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.get("/operations/provider-policy")
+    def get_provider_policy_route(actor: Actor = Depends(require_admin)):
+        try:
+            from .routing_context import TenantProviderPolicyStore
+        except ImportError as error:
+            raise HTTPException(503, "Provider policy store unavailable") from error
+        return TenantProviderPolicyStore(workflow).get_policy(actor.tenant)
+
+    @router.put("/operations/provider-policy")
+    def put_provider_policy_route(
+        body: ProviderPolicyUpdate,
+        actor: Actor = Depends(require_admin),
+    ):
+        try:
+            from .routing_context import TenantProviderPolicyStore
+        except ImportError as error:
+            raise HTTPException(503, "Provider policy store unavailable") from error
+        store = TenantProviderPolicyStore(workflow)
+        updates = body.model_dump(exclude_none=True)
+        try:
+            sig = inspect.signature(store.upsert_policy)
+            params = list(sig.parameters.values())
+            accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+            named_params = {p.name for p in params}
+            if accepts_kwargs or any(k in named_params for k in updates):
+                return store.upsert_policy(actor, **updates)
+            return store.upsert_policy(actor, updates)
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.post("/workbench/external-outbox/reserve")
+    def reserve_external_outbox_route(
+        body: ExternalOutboxReserveRequest,
+        actor: Actor = Depends(authenticate),
+    ):
+        current = refresh_actor(actor)
+        try:
+            return governance.reserve_external_action(
+                current,
+                action_kind=body.action_kind,
+                client_id=body.client_id,
+                request_sha256=body.request_sha256,
+                lease_s=body.lease_s,
+            )
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except Conflict as error:
+            msg = str(error)
+            if "UNKNOWN" in msg:
+                code = "OUTCOME_UNKNOWN"
+            elif "already in progress" in msg:
+                code = "DISPATCH_IN_PROGRESS"
+            elif "different request payload" in msg:
+                code = "IDEMPOTENCY_CONFLICT"
+            else:
+                code = "CONFLICT"
+            raise HTTPException(409, {"code": code, "message": msg}) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.post("/workbench/external-outbox/{outbox_id}/finalize")
+    def finalize_external_outbox_route(
+        outbox_id: Identifier,
+        body: ExternalOutboxFinalizeRequest,
+        actor: Actor = Depends(authenticate),
+    ):
+        current = refresh_actor(actor)
+        try:
+            return governance.finalize_external_action(
+                current,
+                outbox_id,
+                state=body.state,
+                external_id=body.external_id,
+                result=body.result,
+            )
+        except KeyError as error:
+            raise HTTPException(404, "Outbox entry not found") from error
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 

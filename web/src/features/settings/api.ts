@@ -211,17 +211,24 @@ export function tidyUserMemory(
 
 export function forgetUserMemory(
   query: string,
+  permanent = false,
 ): Promise<UserMemoryForgetResponse> {
   return runMemoryRequest(() =>
     apiFetch<UserMemoryForgetResponse>("/v1/memory/forget", {
       method: "POST",
-      body: { query },
+      body: permanent ? { query, permanent: true } : { query },
     }),
   );
 }
 
-export function clearUserMemory(version: number): Promise<UserMemoryState> {
+export function clearUserMemory(
+  version: number,
+  permanent = false,
+): Promise<UserMemoryState> {
   const sp = new URLSearchParams({ version: String(version) });
+  if (permanent) {
+    sp.set("permanent", "true");
+  }
   return runMemoryRequest(() =>
     apiFetch<UserMemoryState>(`/v1/memory?${sp.toString()}`, {
       method: "DELETE",

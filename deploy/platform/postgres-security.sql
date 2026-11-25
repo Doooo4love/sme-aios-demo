@@ -241,3 +241,229 @@ GRANT UPDATE (title, starts_at, ends_at, revision, cancelled) ON aios_calendar_e
 GRANT UPDATE (read_at) ON aios_internal_notice TO aios_api;
 GRANT DELETE ON aios_browser_session TO aios_api;
 GRANT INSERT ON aios_internal_notice TO aios_worker;
+
+-- Governance, prompt policy, security ledger, and email outbox (0009).
+ALTER TABLE aios_prompt_policy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_prompt_policy FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_prompt_policy_tenant ON aios_prompt_policy;
+CREATE POLICY aios_prompt_policy_tenant ON aios_prompt_policy TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_prompt_policy FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_prompt_policy TO aios_api;
+GRANT UPDATE (title, directive, guardrail_rules, updated_by, updated_at, version) ON aios_prompt_policy TO aios_api;
+
+ALTER TABLE aios_security_event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_security_event FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_security_event_select ON aios_security_event;
+DROP POLICY IF EXISTS aios_security_event_update ON aios_security_event;
+DROP POLICY IF EXISTS aios_security_event_insert ON aios_security_event;
+CREATE POLICY aios_security_event_select ON aios_security_event FOR SELECT TO aios_api
+    USING (tenant = current_setting('aios.tenant', true));
+CREATE POLICY aios_security_event_update ON aios_security_event FOR UPDATE TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+CREATE POLICY aios_security_event_insert ON aios_security_event FOR INSERT TO aios_api, aios_worker
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_security_event FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_security_event TO aios_api;
+GRANT UPDATE (status, resolved_by, resolved_at, resolution_note) ON aios_security_event TO aios_api;
+GRANT INSERT ON aios_security_event TO aios_worker;
+
+ALTER TABLE aios_email_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_email_outbox FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_email_outbox_tenant ON aios_email_outbox;
+CREATE POLICY aios_email_outbox_tenant ON aios_email_outbox TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_email_outbox FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_email_outbox TO aios_api;
+
+-- Chat read receipts and enterprise channels (0010).
+ALTER TABLE aios_chat_read_receipt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_chat_read_receipt FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_chat_read_receipt_read ON aios_chat_read_receipt;
+CREATE POLICY aios_chat_read_receipt_read ON aios_chat_read_receipt FOR SELECT TO aios_api USING (
+    tenant = current_setting('aios.tenant', true) AND EXISTS (
+        SELECT 1 FROM aios_chat_member AS m
+        WHERE m.tenant = aios_chat_read_receipt.tenant
+          AND m.room_id = aios_chat_read_receipt.room_id
+          AND m.subject = current_setting('aios.subject', true)
+    )
+);
+DROP POLICY IF EXISTS aios_chat_read_receipt_insert ON aios_chat_read_receipt;
+CREATE POLICY aios_chat_read_receipt_insert ON aios_chat_read_receipt FOR INSERT TO aios_api WITH CHECK (
+    tenant = current_setting('aios.tenant', true)
+    AND subject = current_setting('aios.subject', true)
+    AND EXISTS (
+        SELECT 1 FROM aios_chat_member AS m
+        WHERE m.tenant = aios_chat_read_receipt.tenant
+          AND m.room_id = aios_chat_read_receipt.room_id
+          AND m.subject = current_setting('aios.subject', true)
+    )
+);
+DROP POLICY IF EXISTS aios_chat_read_receipt_update ON aios_chat_read_receipt;
+CREATE POLICY aios_chat_read_receipt_update ON aios_chat_read_receipt FOR UPDATE TO aios_api
+    USING (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true))
+    WITH CHECK (
+        tenant = current_setting('aios.tenant', true)
+        AND subject = current_setting('aios.subject', true)
+        AND EXISTS (
+            SELECT 1 FROM aios_chat_member AS m
+            WHERE m.tenant = aios_chat_read_receipt.tenant
+              AND m.room_id = aios_chat_read_receipt.room_id
+              AND m.subject = current_setting('aios.subject', true)
+        )
+    );
+DROP POLICY IF EXISTS aios_chat_read_receipt_delete ON aios_chat_read_receipt;
+CREATE POLICY aios_chat_read_receipt_delete ON aios_chat_read_receipt FOR DELETE TO aios_api USING (
+    tenant = current_setting('aios.tenant', true) AND (
+        subject = current_setting('aios.subject', true)
+        OR EXISTS (
+            SELECT 1 FROM aios_chat_room AS r
+            WHERE r.tenant = aios_chat_read_receipt.tenant
+              AND r.id = aios_chat_read_receipt.room_id
+              AND r.owner = current_setting('aios.subject', true)
+        )
+    )
+);
+REVOKE ALL ON aios_chat_read_receipt FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, DELETE ON aios_chat_read_receipt TO aios_api;
+GRANT UPDATE (last_read_seq, read_at) ON aios_chat_read_receipt TO aios_api;
+
+ALTER TABLE aios_channel_event_dedup ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_channel_event_dedup FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_channel_event_dedup_tenant ON aios_channel_event_dedup;
+CREATE POLICY aios_channel_event_dedup_tenant ON aios_channel_event_dedup TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_channel_event_dedup FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_channel_event_dedup TO aios_api;
+
+ALTER TABLE aios_channel_binding ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_channel_binding FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_channel_binding_tenant ON aios_channel_binding;
+CREATE POLICY aios_channel_binding_tenant ON aios_channel_binding TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_channel_binding FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, DELETE ON aios_channel_binding TO aios_api;
+GRANT UPDATE (external_user_id, display_handle, verified, updated_at) ON aios_channel_binding TO aios_api;
+
+ALTER TABLE aios_channel_outbound_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_channel_outbound_log FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_channel_outbound_log_tenant ON aios_channel_outbound_log;
+CREATE POLICY aios_channel_outbound_log_tenant ON aios_channel_outbound_log TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_channel_outbound_log FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_channel_outbound_log TO aios_api;
+
+-- Routing telemetry, quota policies, agent session state, and off-topic escalation (0011).
+ALTER TABLE aios_llm_telemetry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_llm_telemetry FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_llm_telemetry_tenant ON aios_llm_telemetry;
+CREATE POLICY aios_llm_telemetry_tenant ON aios_llm_telemetry TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_llm_telemetry FROM PUBLIC, aios_api, aios_worker;
+REVOKE UPDATE, DELETE, TRUNCATE ON aios_llm_telemetry FROM aios_api;
+GRANT SELECT, INSERT ON aios_llm_telemetry TO aios_api;
+
+ALTER TABLE aios_quota_policy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_quota_policy FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_quota_policy_tenant ON aios_quota_policy;
+CREATE POLICY aios_quota_policy_tenant ON aios_quota_policy TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_quota_policy FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, UPDATE ON aios_quota_policy TO aios_api;
+
+-- ContextManager uses workflow.tx (tenant-scoped); enforce tenant and optional subject isolation.
+ALTER TABLE aios_agent_session_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_agent_session_state FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_agent_session_state_tenant ON aios_agent_session_state;
+CREATE POLICY aios_agent_session_state_tenant ON aios_agent_session_state TO aios_api
+    USING (
+        tenant = current_setting('aios.tenant', true)
+        AND (NULLIF(current_setting('aios.subject', true), '') IS NULL
+             OR subject = current_setting('aios.subject', true))
+    )
+    WITH CHECK (
+        tenant = current_setting('aios.tenant', true)
+        AND (NULLIF(current_setting('aios.subject', true), '') IS NULL
+             OR subject = current_setting('aios.subject', true))
+    );
+REVOKE ALL ON aios_agent_session_state FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON aios_agent_session_state TO aios_api;
+
+ALTER TABLE aios_off_topic_policy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_off_topic_policy FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_off_topic_policy_tenant ON aios_off_topic_policy;
+CREATE POLICY aios_off_topic_policy_tenant ON aios_off_topic_policy TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_off_topic_policy FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, UPDATE ON aios_off_topic_policy TO aios_api;
+
+-- Per-user long-term MEMORY.md and passive staging (0012): strictly tenant + subject isolated.
+ALTER TABLE aios_user_memory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_user_memory FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_user_memory_subject ON aios_user_memory;
+CREATE POLICY aios_user_memory_subject ON aios_user_memory TO aios_api
+    USING (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true));
+REVOKE ALL ON aios_user_memory FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON aios_user_memory TO aios_api;
+
+ALTER TABLE aios_user_memory_staging ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_user_memory_staging FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_user_memory_staging_subject ON aios_user_memory_staging;
+CREATE POLICY aios_user_memory_staging_subject ON aios_user_memory_staging TO aios_api
+    USING (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true) AND subject = current_setting('aios.subject', true));
+REVOKE ALL ON aios_user_memory_staging FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON aios_user_memory_staging TO aios_api;
+
+-- Enterprise hardening: budget reservations, durable events, external outbox, and provider policy (0013).
+ALTER TABLE aios_budget_reservation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_budget_reservation FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_budget_reservation_tenant ON aios_budget_reservation;
+CREATE POLICY aios_budget_reservation_tenant ON aios_budget_reservation TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_budget_reservation FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, UPDATE ON aios_budget_reservation TO aios_api;
+
+ALTER TABLE aios_durable_event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_durable_event FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_durable_event_select ON aios_durable_event;
+DROP POLICY IF EXISTS aios_durable_event_insert ON aios_durable_event;
+CREATE POLICY aios_durable_event_select ON aios_durable_event FOR SELECT TO aios_api
+    USING (tenant = current_setting('aios.tenant', true));
+CREATE POLICY aios_durable_event_insert ON aios_durable_event FOR INSERT TO aios_api, aios_worker
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_durable_event FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_durable_event TO aios_api;
+GRANT INSERT ON aios_durable_event TO aios_worker;
+
+ALTER TABLE aios_external_action_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_external_action_outbox FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_external_outbox_tenant ON aios_external_action_outbox;
+CREATE POLICY aios_external_outbox_tenant ON aios_external_action_outbox TO aios_api, aios_worker
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_external_action_outbox FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT ON aios_external_action_outbox TO aios_api;
+GRANT UPDATE (state, external_id, result_json, attempt, lease_until, updated_at) ON aios_external_action_outbox TO aios_api;
+GRANT SELECT ON aios_external_action_outbox TO aios_worker;
+GRANT UPDATE (state, external_id, result_json, attempt, lease_until, updated_at) ON aios_external_action_outbox TO aios_worker;
+
+ALTER TABLE aios_tenant_provider_policy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aios_tenant_provider_policy FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aios_tenant_provider_policy_tenant ON aios_tenant_provider_policy;
+CREATE POLICY aios_tenant_provider_policy_tenant ON aios_tenant_provider_policy TO aios_api
+    USING (tenant = current_setting('aios.tenant', true))
+    WITH CHECK (tenant = current_setting('aios.tenant', true));
+REVOKE ALL ON aios_tenant_provider_policy FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT, INSERT, UPDATE ON aios_tenant_provider_policy TO aios_api;

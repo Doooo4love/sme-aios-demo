@@ -91,7 +91,9 @@ export function MemoryEditorView() {
   const [forgetting, setForgetting] = useState<boolean>(false);
   const [clearing, setClearing] = useState<boolean>(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState<boolean>(false);
+  const [clearPermanent, setClearPermanent] = useState<boolean>(false);
   const [forgetQuery, setForgetQuery] = useState<string>("");
+  const [forgetPermanent, setForgetPermanent] = useState<boolean>(false);
 
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
@@ -123,6 +125,7 @@ export function MemoryEditorView() {
         applyServerState(fresh);
         setConflictNotice(null);
         setConfirmClearOpen(false);
+        setClearPermanent(false);
         return fresh;
       } catch (err) {
         if (isStaleAuthError(err)) return null;
@@ -397,20 +400,31 @@ export function MemoryEditorView() {
       setForgetting(true);
       clearBanners();
       setConfirmClearOpen(false);
+      setClearPermanent(false);
       try {
-        const res = await forgetUserMemory(trimmed);
+        const res = await forgetUserMemory(trimmed, forgetPermanent);
         applyServerState(res.memory);
         setForgetQuery("");
+        setForgetPermanent(false);
         setSuccessNotice(
           res.removed_lines > 0
-            ? tx(
-                {
-                  "zh-CN": "已遗忘并移除 {count} 条匹配的记忆记录。",
-                  "zh-HK": "已遺忘並移除 {count} 條符合的記憶紀錄。",
-                  en: "Forgot and removed {count} matching memory entry/entries.",
-                },
-                { count: res.removed_lines },
-              )
+            ? forgetPermanent
+              ? tx(
+                  {
+                    "zh-CN": "已永久擦除 {count} 条匹配的记忆记录（不可撤销）。",
+                    "zh-HK": "已永久抹除 {count} 條符合的記憶紀錄（不可撤銷）。",
+                    en: "Permanently erased {count} matching memory entry/entries (no Undo).",
+                  },
+                  { count: res.removed_lines },
+                )
+              : tx(
+                  {
+                    "zh-CN": "已遗忘并移除 {count} 条匹配的记忆记录。",
+                    "zh-HK": "已遺忘並移除 {count} 條符合的記憶紀錄。",
+                    en: "Forgot and removed {count} matching memory entry/entries.",
+                  },
+                  { count: res.removed_lines },
+                )
             : tx({
                 "zh-CN": "未找到匹配的记忆条目，MEMORY.md 保持不变。",
                 "zh-HK": "未找到符合的記憶條目，MEMORY.md 保持不變。",
@@ -427,6 +441,7 @@ export function MemoryEditorView() {
       record,
       isBusy,
       forgetQuery,
+      forgetPermanent,
       clearBanners,
       applyServerState,
       tx,
@@ -439,25 +454,45 @@ export function MemoryEditorView() {
     setClearing(true);
     clearBanners();
     try {
-      const updated = await clearUserMemory(record.version);
+      const updated = await clearUserMemory(record.version, clearPermanent);
       applyServerState(updated);
       setConfirmClearOpen(false);
+      setClearPermanent(false);
       setSuccessNotice(
-        tx(
-          {
-            "zh-CN": "已清空 MEMORY.md（v{ver}），您仍可通过“撤销上一版”恢复。",
-            "zh-HK": "已清空 MEMORY.md（v{ver}），您仍可透過「撤銷上一版」恢復。",
-            en: "Cleared MEMORY.md (v{ver}). You can still restore the previous snapshot via Undo.",
-          },
-          { ver: updated.version },
-        ),
+        clearPermanent
+          ? tx(
+              {
+                "zh-CN":
+                  "已永久清除 MEMORY.md（v{ver}），历史快照与待整理队列已彻底移除（不可撤回）。",
+                "zh-HK":
+                  "已永久清除 MEMORY.md（v{ver}），歷史快照與待整理佇列已徹底移除（不可撤回）。",
+                en: "Permanently cleared MEMORY.md (v{ver}); previous snapshot and pending cues were erased.",
+              },
+              { ver: updated.version },
+            )
+          : tx(
+              {
+                "zh-CN": "已清空 MEMORY.md（v{ver}），您仍可通过“撤销上一版”恢复。",
+                "zh-HK": "已清空 MEMORY.md（v{ver}），您仍可透過「撤銷上一版」恢復。",
+                en: "Cleared MEMORY.md (v{ver}). You can still restore the previous snapshot via Undo.",
+              },
+              { ver: updated.version },
+            ),
       );
     } catch (err) {
       handleServerError(err);
     } finally {
       setClearing(false);
     }
-  }, [record, isBusy, clearBanners, applyServerState, tx, handleServerError]);
+  }, [
+    record,
+    isBusy,
+    clearPermanent,
+    clearBanners,
+    applyServerState,
+    tx,
+    handleServerError,
+  ]);
 
   const handleInsertTemplate = useCallback(() => {
     setDraftContent(STRUCTURED_MEMORY_TEMPLATE);
@@ -503,7 +538,7 @@ export function MemoryEditorView() {
       <div className="mx-auto max-w-[960px] space-y-5">
         {/* Clean Pill Sub-Navigation Switcher */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex flex-wrap items-center gap-0.5 rounded-2xl sm:rounded-full bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-subtle)]">
+          <div className="inline-flex flex-wrap items-center gap-0.5 rounded-2xl sm:rounded-full bg-[var(--bg-inset)] p-1 ring-1 ring-[var(--hairline)]">
             <Link
               href="/settings/profile"
               className="inline-flex h-8 items-center gap-1.5 rounded-full px-4 text-[13px] font-medium text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition-all duration-[150ms]"
@@ -527,7 +562,7 @@ export function MemoryEditorView() {
             <Link
               href="/settings/memory"
               aria-current="page"
-              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-4 text-[13px] font-medium text-[var(--accent-fg)] shadow-[var(--shadow-subtle)] transition-all duration-[150ms]"
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-4 text-[13px] font-semibold text-[var(--accent-ink)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--hairline)] transition-all duration-[150ms]"
             >
               <BookOpen className="h-3.5 w-3.5" strokeWidth={1.85} />
               <span>
@@ -758,7 +793,7 @@ export function MemoryEditorView() {
               {/* Subtle Neutral Budget Bar (Amber >= 80%, Crimson >= 100%) */}
               <div
                 aria-hidden="true"
-                className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-inset)]"
+                className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--hairline-strong)]"
               >
                 <div
                   className={[
@@ -1000,7 +1035,7 @@ export function MemoryEditorView() {
 
             {/* Action Buttons */}
             <div className="flex flex-wrap items-center gap-2">
-              {draftContent.trim().length === 0 && (
+              {draftContent.trim().length === 0 && viewMode === "edit" && (
                 <Button
                   type="button"
                   size="sm"
@@ -1081,14 +1116,31 @@ export function MemoryEditorView() {
                   </span>
                 </Button>
               ) : (
-                <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2 py-0.5">
-                  <span className="pl-1.5 text-[11.5px] font-medium text-[var(--status-crimson)]">
+                <div className="inline-flex flex-wrap items-center gap-1.5 rounded-full border border-[var(--status-crimson-border)] bg-[var(--status-crimson-wash)] px-2.5 py-0.5">
+                  <span className="pl-1 text-[11.5px] font-medium text-[var(--status-crimson)]">
                     {tx({
                       "zh-CN": "确认清空？",
                       "zh-HK": "確認清空？",
                       en: "Confirm clear?",
                     })}
                   </span>
+                  <label className="inline-flex cursor-pointer items-center gap-1 px-1 text-[11px] font-medium text-[var(--status-crimson)] select-none">
+                    <input
+                      type="checkbox"
+                      checked={clearPermanent}
+                      disabled={clearing}
+                      data-testid="memory-clear-permanent-checkbox"
+                      onChange={(e) => setClearPermanent(e.target.checked)}
+                      className="h-4 w-4 rounded-xs border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] accent-[var(--accent-solid)] cursor-pointer"
+                    />
+                    <span>
+                      {tx({
+                        "zh-CN": "永久清除（不可撤回）",
+                        "zh-HK": "永久清除（不可撤回）",
+                        en: "Permanent erase (no Undo)",
+                      })}
+                    </span>
+                  </label>
                   <Button
                     type="button"
                     size="sm"
@@ -1114,7 +1166,10 @@ export function MemoryEditorView() {
                     disabled={clearing}
                     data-testid="memory-clear-cancel-btn"
                     className="h-6 px-2 text-[11.5px]"
-                    onClick={() => setConfirmClearOpen(false)}
+                    onClick={() => {
+                      setConfirmClearOpen(false);
+                      setClearPermanent(false);
+                    }}
                   >
                     {t("common.cancel")}
                   </Button>
@@ -1217,7 +1272,15 @@ export function MemoryEditorView() {
                       en: "Live Markdown Preview",
                     })}
                   </span>
-                  <span className="font-mono-code">Zone 1.2</span>
+                  <span className="font-mono-code tabular-nums">
+                    {draftContent.trim().length > 0
+                      ? `Markdown · ${liveChars} ${tx({
+                          "zh-CN": "字符",
+                          "zh-HK": "字元",
+                          en: "chars",
+                        })}`
+                      : "Markdown"}
+                  </span>
                 </div>
                 <div
                   data-testid="memory-preview-pane"
@@ -1246,6 +1309,7 @@ export function MemoryEditorView() {
                         variant="secondary"
                         pill
                         disabled={isBusy}
+                        data-testid="memory-insert-template-btn"
                         className="mt-3"
                         onClick={handleInsertTemplate}
                       >
@@ -1301,7 +1365,7 @@ export function MemoryEditorView() {
                 <Button
                   type="button"
                   size="sm"
-                  variant="primary"
+                  variant="secondary"
                   pill
                   loading={tidyingMode === "deterministic"}
                   disabled={!record || isBusy}
@@ -1436,7 +1500,7 @@ export function MemoryEditorView() {
                       "zh-HK": "例如：供應商 B、週報格式…",
                       en: "e.g. Supplier B, report format…",
                     })}
-                    className="h-9 min-w-0 flex-1 rounded-sm bg-[var(--bg-surface-tint)] px-3 text-[13px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none transition-all"
+                    className="aios-input min-w-0 flex-1"
                   />
                   <Button
                     type="submit"
@@ -1458,6 +1522,30 @@ export function MemoryEditorView() {
                   </Button>
                 </div>
               </div>
+
+              <label className="inline-flex cursor-pointer items-center gap-2 text-[12px] text-[var(--ink-secondary)] select-none">
+                <input
+                  type="checkbox"
+                  checked={forgetPermanent}
+                  disabled={!record || isBusy}
+                  data-testid="memory-forget-permanent-checkbox"
+                  onChange={(e) => setForgetPermanent(e.target.checked)}
+                  className="h-4 w-4 rounded-xs border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] accent-[var(--accent-solid)] cursor-pointer"
+                />
+                <span
+                  className={
+                    forgetPermanent
+                      ? "font-medium text-[var(--status-crimson)]"
+                      : ""
+                  }
+                >
+                  {tx({
+                    "zh-CN": "永久擦除（不可撤销）",
+                    "zh-HK": "永久抹除（不可撤銷）",
+                    en: "Permanent erase (no Undo)",
+                  })}
+                </span>
+              </label>
 
               <p className="text-[11.5px] leading-relaxed text-[var(--ink-muted)]">
                 {tx({

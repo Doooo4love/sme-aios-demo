@@ -481,20 +481,24 @@ class ObservabilityAndApiResilienceTests(unittest.TestCase):
 
     def test_prometheus_genai_collectors_and_optional_otel_bridge(self):
         # Must NEVER raise before instrument() or without opentelemetry installed
-        record_llm_metric(
-            provider="deepseek",
-            model="deepseek-chat",
-            tier="T1",
-            status="ok",
-            prompt_tokens=100,
-            cache_hit_tokens=50,
-            completion_tokens=20,
-            estimated_usd=0.0012,
-        )
-        record_cache_metric(cache_layer="l1", outcome="hit")
-        set_circuit_breaker_metric(provider="deepseek", state="open")
-        record_rate_limit_metric(bucket="api")
-        self.assertFalse(otel_genai_enabled())
+        with (
+            patch.dict(sys.modules, {"opentelemetry": None, "opentelemetry.trace": None}),
+            patch("importlib.util.find_spec", return_value=None),
+        ):
+            record_llm_metric(
+                provider="deepseek",
+                model="deepseek-chat",
+                tier="T1",
+                status="ok",
+                prompt_tokens=100,
+                cache_hit_tokens=50,
+                completion_tokens=20,
+                estimated_usd=0.0012,
+            )
+            record_cache_metric(cache_layer="l1", outcome="hit")
+            set_circuit_breaker_metric(provider="deepseek", state="open")
+            record_rate_limit_metric(bucket="api")
+            self.assertFalse(otel_genai_enabled())
 
         app = build_app(self.runtime, self.identity, DemoPlanner(), metrics_token=self.metrics_token)
         with TestClient(app) as client:
@@ -533,7 +537,11 @@ class ObservabilityAndApiResilienceTests(unittest.TestCase):
                 recorded_attrs[key] = val
 
         fake_otel = SimpleNamespace(trace=SimpleNamespace(get_current_span=lambda: FakeSpan(), get_tracer=MagicMock()))
-        with patch.dict(sys.modules, {"opentelemetry": fake_otel, "opentelemetry.trace": fake_otel.trace}):
+        with (
+            patch.dict(os.environ, {"AIOS_OTEL_GENAI": "1"}),
+            patch.dict(sys.modules, {"opentelemetry": fake_otel, "opentelemetry.trace": fake_otel.trace}),
+            patch("importlib.util.find_spec", return_value=SimpleNamespace(name="opentelemetry")),
+        ):
             self.assertTrue(otel_genai_enabled())
             record_llm_metric(
                 provider="openai",
@@ -545,6 +553,8 @@ class ObservabilityAndApiResilienceTests(unittest.TestCase):
             )
             self.assertEqual(recorded_attrs["gen_ai.system"], "openai")
             self.assertEqual(recorded_attrs["gen_ai.request.model"], "gpt-5-mini")
+            with patch.dict(os.environ, {"AIOS_OTEL_GENAI": "0"}):
+                self.assertFalse(otel_genai_enabled())
 
     def test_lifespan_shutdown_system_health_rbac_and_known_actors_locking(self):
         fake_assistant = MagicMock()

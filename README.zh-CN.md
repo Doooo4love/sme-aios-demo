@@ -8,19 +8,20 @@
 
 ## 高管架构概览与实测评分卡（Measured Enterprise Scorecard）
 
-安全防线、KV 前缀字节不变性、FinOps 成本压缩、SQLite WAL 高并发、跨厂商故障转移与 SSE 断线重放均已通过零外部 API 密钥的确定性评测引擎 [`scripts/enterprise_eval.py`](scripts/enterprise_eval.py) 与全量自动化测试套件完成实测验证：
+安全防线、KV 前缀字节不变性、FinOps 成本压缩、SQLite WAL 高并发、跨厂商故障转移、SSE 断线重放与 P0/P1 企业控制面均已通过零外部 API 密钥的确定性评测引擎 [`scripts/enterprise_eval.py`](scripts/enterprise_eval.py) 与全量自动化测试套件完成实测验证：
 
-- **企业就绪度评测（[`scripts/enterprise_eval.py --json`](scripts/enterprise_eval.py)）**：**`6 / 6` 核心门禁全数通过**，耗时 `0.727s`（`zero_api_keys_required: true`，`litellm_absent: true`）。
-- **全栈自动化验证套件**：Python 后端 **`166` 项测试**（`unittest discover -s tests`：`163` 通过、`3` 项需真实 Postgres DSN 跳过、`0` 失败）；`web/` 严格模式 `next typegen && tsc --noEmit && next build`（`0` TS 错误、`14/14` 路由及 `26/26` Playwright 端到端回归）；`mcp/email-server` 编译通过；Cloudflare Worker 类型检查与单元测试全通过。
+- **企业就绪度评测（[`scripts/enterprise_eval.py --json`](scripts/enterprise_eval.py)）**：**`7 / 7` 核心门禁全数通过**，耗时 `0.908s`（`zero_api_keys_required: true`，`litellm_absent: true`）。
+- **全栈自动化验证套件与扩展 CI 矩阵（[`.github/workflows/demo.yml`](.github/workflows/demo.yml)）**：Python 后端 **`192` 项测试**（`unittest discover -s tests`：`187` 通过、`5` 项需真实 Postgres DSN / 可选套件跳过、`0` 失败）；PostgreSQL 16 强制 RLS 角色核验（`test_postgres_enterprise`）；`web/` 严格模式 `next typegen && tsc --noEmit && next build`（`0` TS 错误、`14/14` 静态页 / `31` 路由及 `26/26` Playwright 端到端回归）；`mcp/email-server` 编译通过；Cloudflare Worker 类型检查与 **`20/20`** 单元测试全通过。
 
 | 评测门禁 / 工程域 | 实测指标（`scripts/enterprise_eval.py --json`） | 核心工程机制与源码路径 |
 |---|---|---|
 | **1. 安全护栏、密封 `SOUL.md` 与防记忆投毒** | **`100%` 拦截召回率（`44 / 44` 全阻断、`0` 漏报、`3` 项正常业务对照 `0` 误报）**；`403 SYSTEM_POLICY_IMMUTABLE`；投毒样本落库保持为空 | 覆盖 `27` 条对抗对话、`14` 条 `MEMORY.md` 投毒载荷与 `3` 条输出泄露探针（[`security_guard.py`](aios_platform/security_guard.py)、[`governance.py`](aios_platform/governance.py)、[`user_memory.py`](aios_platform/user_memory.py)） |
 | **2. KV 缓存 `Zone 1` 字节不变性** | **`100%` 前缀与工具 Schema 字节一致（`72 / 72` 次组装、`0` 次失配）**，跨 `2` 租户、`6` 主体、`4` 角色及动态切换 `MEMORY.md`（`Zone 1.2`）与 `ActiveDocumentRef`（`Zone 1.5`） | 密封 `SOUL.md` 与字典序 `zone1_tool_schemas` 严格锁定在 `Zone 1`，隔离于 `Zone 1.2` XML 围栏与 `Zone 1.5` 之前（[`ContextManager`](aios_platform/routing_context.py)） |
-| **3. FinOps 成本与 Token 压缩** | **L1 响应缓存**：`31.776 ms -> 0.664 ms`（**提速 `47.86x`**、**边际美元降本 `100.0%`**、省 `6,720` tokens）；**工具结果紧凑化**：`25,487 -> 3,740` 字符（**缩减 `85.33%` 字符 / `85.31%` Token**）；**80% 软预算降档**：`0.85` 利用率单次 SQL 触发 `T3 (8,192 tok) -> T1 (1,200 tok)`（`0` 热路径 DDL）；**Anthropic 防惩罚**：`< 3,600` 字符跳过 `cache_control` | [`BoundedResponseCache`](aios_platform/response_cache.py)、[`compact_tool_observation`](aios_platform/response_cache.py)、[`QuotaManager`](aios_platform/routing_context.py) 与 [`AnthropicAdapter`](aios_platform/llm_provider.py) |
-| **4. 跨厂商故障转移与熔断恢复** | 自动完成 `deepseek/deepseek-chat -> openai` 无缝切换（`3` 次主路径 + `3` 次备路径 HTTP）；准确记录 `open` 短路 -> `half_open` 探测 -> `closed` 恢复 | 纯 `httpx + pydantic` [`LLMProvider`](aios_platform/llm_provider.py) 与 [`ProviderCircuitBreaker`](aios_platform/llm_provider.py)（零 `litellm`） |
-| **5. 16 线程 SQLite WAL 并发压测** | `sqlite-wal-pooled`（`wal` 模式）：**`480` 次并发操作**（`16` 线程 `240` 写 + `240` 读），**`0` 次 `SQLITE_BUSY` 报错**，**`P50 = 0.054 ms`**、**`P95 = 2.206 ms`**、吞吐 **`3,028.2 ops/sec`** | 线程局部连接池 + `(st_dev, st_ino)` 失效重连 + PostgreSQL `psycopg_pool`（[`aios_demo/storage.py`](aios_demo/storage.py)） |
+| **3. FinOps 成本与 Token 压缩** | **L1 响应缓存**：`24.277 ms -> 0.488 ms`（**提速 `49.75x`**、**边际美元降本 `100.0%`**、省 `6,720` tokens）；**工具结果紧凑化**：`25,487 -> 3,740` 字符（**缩减 `85.33%` 字符 / `85.31%` Token**）；**80% 软预算降档**：`0.85` 利用率单次 SQL 触发 `T3 (8,192 tok) -> T1 (1,200 tok)`（`0` 热路径 DDL）；**Anthropic 防惩罚**：`< 3,600` 字符跳过 `cache_control` | [`BoundedResponseCache`](aios_platform/response_cache.py)、[`compact_tool_observation`](aios_platform/response_cache.py)、[`QuotaManager`](aios_platform/routing_context.py) 与 [`AnthropicAdapter`](aios_platform/llm_provider.py) |
+| **4. 跨厂商故障转移与熔断恢复** | 自动完成 `deepseek -> openai` 无缝切换（`3` 次主路径 + `3` 次备路径 HTTP）；准确记录 `open` 短路 -> `half_open` 探测 -> `closed` 恢复 | 纯 `httpx + pydantic` [`LLMProvider`](aios_platform/llm_provider.py)（默认 `deepseek-flash` / `deepseek-v4-pro` 升级）与 [`ProviderCircuitBreaker`](aios_platform/llm_provider.py)（零 `litellm`） |
+| **5. 16 线程 SQLite WAL 并发压测** | `sqlite-wal-pooled`（`wal` 模式）：**`480` 次并发操作**（`16` 线程 `240` 写 + `240` 读），**`0` 次 `SQLITE_BUSY` 报错**，**`P50 = 0.041 ms`**、**`P95 = 2.338 ms`**、吞吐 **`6,620.3 ops/sec`** | 线程局部连接池 + `(st_dev, st_ino)` 失效重连 + PostgreSQL `psycopg_pool`（[`aios_demo/storage.py`](aios_demo/storage.py)） |
 | **6. 可观测性、请求体封顶与 SSE 重放** | `/v1/workbench/turns` 放行 `180,000 B` 大文档负载（`2 MiB` 上限）并拦截超限（`413`）；其余接口强制 `65,536 B` 上限（`/v1/memory`、`/v1/actions`、`/v1/tasks` 均返回 `413`）；透传 `X-Request-Id` 与 `traceparent`；`Last-Event-ID` 精确重放漏帧 | [`RequestEnvelope`](aios_platform/observability.py)、[`EventHub.since_event`](aios_platform/events.py) 与 [`events_stream`](aios_platform/workbench.py) |
+| **7. P0/P1 企业级并发与隔离控制** | **并发定点 `micro-USD` 封顶**：`8` 线程并发抢占 `$0.010`（`10,000` `micro-USD`）上限 -> `2` 放行 / `6` 拒批（实际结算 `8,000 <= 10,000`）；**Reserve-First 外部 Outbox**：拦截并发冲突 `409`、重放 `SUCCEEDED` 缓存并阻断 `UNKNOWN` 盲目重试；**厂商/驻留策略**：`PROVIDER_POLICY_DENIED` 阻断越权区域备选（`0` 次外呼）；**跨进程 SSE 重放与吊销**：双 Hub 共享 DB 重放 + 吊销实时发送 `session_revoked` 关流；**永久记忆擦除**：清空 `previous_content` 与 `0` 条暂存残留 | [`QuotaManager.reserve_budget`](aios_platform/routing_context.py)、[`GovernanceService.reserve_external_action`](aios_platform/governance.py)、[`TenantProviderPolicyStore`](aios_platform/routing_context.py)、[`EventHub.bind_workflow`](aios_platform/events.py) 与 [`UserMemoryStore.clear(..., permanent=True)`](aios_platform/user_memory.py) |
 
 ---
 
@@ -49,8 +50,8 @@
 |---|---|---|---|
 | **Tier 0** | **OCR 采购单接单起点** | [`aios_demo/`](aios_demo/) · 本地 Tesseract OCR + 按需裁剪视觉复核 + SQLite/PostgreSQL Outbox | 低门槛快速见效：用像素级 OCR 证据框、确定性箱件与金额规则、以及丢回复可恢复的 ERP 写后核对取代手工录单（`http://127.0.0.1:8758`）。 |
 | **Tier 1** | **企业团队协作工作台** | [`web/`](web/) + [`aios_platform/`](aios_platform/)（`workflow.py`、`module_access.py`、`chat.py`、`channels.py`） | 多租户多仓 RBAC、原生 macOS iMessage/WhatsApp 双栏协作（含实时已送达/已读回执）、8 渠道企业 IM 中枢、`/` 斜杠技能指令与摘要锁人工审批。 |
-| **Tier 2** | **智能路由与个人长期记忆 AIOS** | [`routing_context.py`](aios_platform/routing_context.py)、[`response_cache.py`](aios_platform/response_cache.py)、[`user_memory.py`](aios_platform/user_memory.py)、[`memory_tidy.py`](aios_platform/memory_tidy.py) | `<2ms` `EffortRouter`（`T0–T3`）、4 区 KV 缓存（`Zone 1` 不变前缀）、`L1` `BoundedResponseCache`、`compact_tool_observation`、`80%` 软预算自动降档、每用户 `MEMORY.md`（`Zone 1.2`）+ 4 层防投毒、L1/L2/L3 工作边界升级与 `aios-memory-tidy.timer`。 |
-| **Tier 3** | **全跨厂商云端/桌面企业版** | [`llm_provider.py`](aios_platform/llm_provider.py)、[`http_pool.py`](aios_platform/http_pool.py)、[`observability.py`](aios_platform/observability.py)、[`assurance.py`](aios_platform/assurance.py)、[`desktop/`](desktop/)、[`mcp/`](mcp/) | 纯 `httpx + pydantic` 多厂商适配器与熔断自动故障转移、PostgreSQL 强制 RLS + `psycopg_pool`、OTel GenAI 与 Prometheus `/metrics`、SSE `Last-Event-ID` 断点续传、Ed25519 受控预审（`:8761`）、独立 Email MCP 与零本地模型密钥 Tauri 2 桌面沙盒 CUA。 |
+| **Tier 2** | **智能路由与个人长期记忆 AIOS** | [`routing_context.py`](aios_platform/routing_context.py)、[`response_cache.py`](aios_platform/response_cache.py)、[`user_memory.py`](aios_platform/user_memory.py)、[`memory_tidy.py`](aios_platform/memory_tidy.py) | `<2ms` `EffortRouter`（`T0–T3`、默认 `deepseek-flash` / `deepseek-v4-pro` 升级）、4 区 KV 缓存（`Zone 1` 不变前缀）、`L1` 预算前命中、原子 `micro-USD` `QuotaManager` + `80%` 软预算降档、`TenantProviderPolicyStore`、每用户 `MEMORY.md`（`Zone 1.2`）+ 可撤回/`permanent=true` 永久擦除 + 4 层防投毒、L1/L2/L3 越界升级与 `aios-memory-tidy.timer`。 |
+| **Tier 3** | **全跨厂商云端/桌面企业版** | [`llm_provider.py`](aios_platform/llm_provider.py)、[`http_pool.py`](aios_platform/http_pool.py)、[`observability.py`](aios_platform/observability.py)、[`assurance.py`](aios_platform/assurance.py)、[`desktop/`](desktop/)、[`mcp/`](mcp/) | 纯 `httpx + pydantic` 多厂商适配器与熔断自动故障转移、`0013_enterprise_hardening` 全 40 表 PostgreSQL 强制 RLS（`aios_api`/`aios_worker`）+ `database_security_status` 漂移探针、Reserve-First 邮件/Zoom 外部 Outbox（`aios_external_action_outbox`）、跨进程持久 `EventHub`（`aios_durable_event` + `pg_notify`）+ 15s `session_revoked` 实时关流、OTel GenAI 与 Prometheus `/metrics`、Ed25519 受控预审（`:8761`）、独立 Email MCP 与零本地模型密钥 Tauri 2 桌面沙盒 CUA。 |
 
 ---
 
@@ -75,12 +76,12 @@ flowchart TB
     subgraph CLOUD_CORE ["Theodic 云端控制面 (aios_platform)"]
         API["FastAPI 核心网关 (:8760, lifespan, RequestEnvelope 2MiB/64KiB, 滑动限流) + 预审 (:8761)"]
         POOL["存储与连接池: SQLite WAL 池 / psycopg_pool + 共享 http_pool + OTel GenAI /metrics"]
-        RBAC["OIDC / 演示认证 + 多仓模块 RBAC + 可选 OPA + PostgreSQL 强制 RLS"]
+        RBAC["OIDC / 演示认证 + 多仓模块 RBAC + 可选 OPA + 全 40 表 PG 强制 RLS"]
         GOV["密封 SOUL.md (403 不可变) + 12 类安全护栏 + L1/L2/L3 隐私脱敏升级"]
-        MEM["每用户 MEMORY.md (Zone 1.2, 4 层防投毒) + aios-memory-tidy.timer"]
-        ROUTER["EffortRouter + BoundedResponseCache (L1) + 4 区上下文 + 纯 httpx 多厂商故障转移"]
-        SSE["EventHub (Last-Event-ID 重放) + ProactiveAgentNotifier (可见性感知 + 抖动退避)"]
-        OUTBOX["提案摘要锁 + 事务 Outbox + SIGTERM 优雅退避 aios_worker"]
+        MEM["每用户 MEMORY.md (Zone 1.2, 可撤回/永久擦除) + aios-memory-tidy.timer"]
+        ROUTER["EffortRouter (deepseek-flash/v4-pro) + L1 缓存 + 原子 micro-USD 配额 + 驻留策略"]
+        SSE["跨进程 EventHub (aios_durable_event + pg_notify + 15s session_revoked) + 通知器"]
+        OUTBOX["提案摘要锁 + Reserve-First 邮件/Zoom Outbox + SIGTERM 优雅退避 aios_worker"]
         CHHUB["8 渠道企业消息中枢 + 独立 TypeScript Email MCP (mcp/email-server)"]
     end
 
@@ -116,12 +117,13 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    TURN["员工回合 + 每用户 MEMORY.md + 挂载文档 + 工作脉冲"] --> QUOTA["QuotaManager (单次 SQL 日配额核查 + 80% 软预算 T3->T1 降档)"]
-    QUOTA --> ROUTER["EffortRouter (<2ms 确定性路由分类器)"]
+    TURN["员工回合 + 每用户 MEMORY.md + 挂载文档 + 工作脉冲"] --> ROUTER["EffortRouter (<2ms 确定性路由分类器)"]
     ROUTER -->|"T0: 安全拦截 / /memory / 记住与忘掉 / L1 提醒"| ZERO["0 次模型调用 -> 即时响应与 T0 暂存"]
-    ROUTER -->|"T1 / T2 / T3"| L1["L1 BoundedResponseCache (租户/主体/角色/语言/记忆版本/文档 SHA 隔离键)"]
-    L1 -->|"命中 (0.66ms, 100% 美元降本)"| ZERO
-    L1 -->|"未命中"| CTX["ContextManager 4 区上下文组装"]
+    ROUTER -->|"T1 / T2 / T3"| L1["L1 BoundedResponseCache (在 Planner 与预算扣减之前校验)"]
+    L1 -->|"命中 (0.49ms, 100% 美元降本)"| ZERO
+    L1 -->|"未命中"| QUOTA["QuotaManager (原子 micro-USD 预占/结算 + 失败关闭封顶 + 80% 软降档)"]
+    QUOTA --> POLICY["TenantProviderPolicyStore (厂商/区域/数据驻留/最高 Tier 门禁)"]
+    POLICY --> CTX["ContextManager 4 区上下文组装"]
 
     subgraph ZONES ["KV 缓存最优 Zone 1 / 1.2 / 1.5 / 2 / 3 分区架构"]
         Z1["Zone 1 (~3K-5K 100% 字节不变前缀): 密封 SOUL.md + 策略 + 字典序 Schema + 边界规则"]
@@ -132,15 +134,15 @@ flowchart LR
     end
 
     CTX --> Z1 --> Z12 --> Z15 --> Z2 --> Z3
-    Z15 -->|">140K 超大文档包"| MR["MapReduceDocumentAnalyzer: <=24K 分片 (T1/T2 Map) -> <=80K (T3 Reduce)"]
-    Z3 --> PROV["纯 httpx+pydantic LLMProvider (OpenAI prompt_cache_key / Anthropic >=3600 字符护栏 / Gemini)"]
+    Z15 -->|">140K 超大文档包"| MR["MapReduceDocumentAnalyzer (每租户 Semaphore(2): <=24K T1/T2 Map -> <=80K T3 Reduce)"]
+    Z3 --> PROV["纯 httpx LLMProvider (deepseek-flash 1M/200K 峰谷定价 + deepseek-v4-pro 升级)"]
     MR --> PROV
-    PROV -->|"主厂商报错或熔断开启"| CB["ProviderCircuitBreaker -> 有序备选厂商故障转移"]
+    PROV -->|"主厂商报错或策略允许的备选"| CB["ProviderCircuitBreaker -> 有序备选厂商故障转移"]
     CB --> PROV
-    PROV --> HARNESS["多步执行器 (MAX_HARNESS_STEPS=4) + compact_tool_observation"]
+    PROV --> HARNESS["55s 回合总限期执行器 (MAX_HARNESS_STEPS=4) + compact_tool_observation"]
     HARNESS -->|"T1/T2 工具调用畸形触发级联升级"| CASCADE["Cascade Escalation -> T3 (effort=high)"]
     CASCADE --> PROV
-    HARNESS -->|"最终回复 / HITL 审批提案"| TELEM["RoutingTelemetryStore (P50/P95, 缓存节省) + OTel GenAI /metrics"]
+    HARNESS -->|"最终回复 / HITL 审批提案"| TELEM["SQL GROUP BY RoutingTelemetryStore (P50/P95, 缓存节省) + OTel GenAI /metrics"]
 ```
 
 ### 3. 安全治理、密封 `SOUL.md`、L1/L2/L3 隐私分级升级与 Outbox 写后核对闭环
@@ -150,13 +152,14 @@ flowchart TD
     IN["员工输入 / 渠道 Webhook / 桌面 CUA 目标"] --> NORM["NFKC 与零宽字符 Cf 归一化 (normalize_user_text)"]
     NORM --> SEALED["维护团队密封 SOUL.md 与模块策略 (403 SYSTEM_POLICY_IMMUTABLE)"]
     NORM --> COREGUARD["10 类核心对抗护栏 (技能篡改, 策略篡改, 注入, 删库, 文件逃逸, 密钥外泄)"]
-    COREGUARD -->|"命中阻断"| SEC_LEDGER["高危/严重安全事件入账 + SHA-256 + SSE 告警 (T0)"]
+    COREGUARD -->|"命中阻断"| SEC_LEDGER["高危/严重安全事件入账 + SHA-256 + 持久化 SSE 告警 (T0)"]
     COREGUARD -->|"通过基础护栏"| BOUNDARY["evaluate_work_boundary + DEFAULT_WORK_APP_ALLOWLIST"]
     BOUNDARY -->|"私人闲聊或非工作本地自动化"| HISTORY["统计 aios_security_event 24h 与 7d 历史计数"]
     HISTORY -->|"L1 (1-2次/日) / L2 (3-4次/日或首越界应用)"| NUDGE_DENY["T0 温和提醒 (L1) 或确定性拒绝 (L2, 不推送主管)"]
     HISTORY -->|"L3 (>=5次/日, >=12次/7日, >=2次/日应用)"| REDACT["PDPO/GDPR/PIPL 硬脱敏 (REDACTED_PRIVACY_POLICY) -> 汇报链路由告警"]
-    BOUNDARY -->|"合规业务请求"| EXEC["EffortRouter + RBAC/OPA 工具执行"]
+    BOUNDARY -->|"合规业务请求"| EXEC["EffortRouter + RBAC/OPA + 15s 流中 session_revoked 吊销护栏"]
     EXEC --> SCRUB["check_output_leakage (实时剥离密钥, 服务路径与密封策略锚点)"]
+    EXEC -->|"邮件 SMTP 或 Zoom 订会"| EXTOUT["Reserve-First 外部 Outbox (RESERVED -> DISPATCHING -> SUCCEEDED / FAILED / UNKNOWN)"]
     EXEC -->|"写操作提案"| PROP["PROPOSED (SHA-256 plan_digest, 900s 有效期, Idempotency-Key)"]
     PROP --> REVIEW["独立主管复核 (前后差异视图, 拦截自我审批)"]
     REVIEW --> QUEUED["QUEUED (事务入队 + 咨询锁) -> aios_worker (SKIP LOCKED + 租约/Epoch)"]
@@ -170,20 +173,21 @@ flowchart TD
 ### 支柱一：安全治理、多仓 RBAC、密封 `SOUL.md` 与人机协同审批（HITL）
 
 - **密封不可变 `SOUL.md`（[`aios_platform/governance.py`](aios_platform/governance.py)、[`aios_platform/SOUL.md`](aios_platform/SOUL.md)）**：系统人格与角色/模块策略仅从维护团队密封的 `SOUL.md` 与服务端 `PromptScopeSpec` 加载，企业管理员与大模型均不可读写；`PUT /v1/operations/prompt-policies/{scope_key}` 与 `POST .../reset` 恒返回 `HTTP 403 SYSTEM_POLICY_IMMUTABLE`（`PolicyImmutableError`），配合 `check_output_leakage()` 在响应出口剥离密钥、服务路径与密封锚点。
-- **多仓模块 RBAC、可选 OPA 与 PostgreSQL 强制 RLS**：[`aios_platform/module_access.py`](aios_platform/module_access.py) 支持按模块/仓库动态赋权、咨询锁与乐观锁 `version` 校验（越权变更即时触发 `403 ACCESS_CHANGED`）；支持可选 OPA 策略网关（[`deploy/platform/opa.rego`](deploy/platform/opa.rego)、[`providers.py`](aios_platform/providers.py)）；[`deploy/platform/postgres-security.sql`](deploy/platform/postgres-security.sql) 对 23 张以上租户表启用 `ENABLE` + `FORCE ROW LEVEL SECURITY`，并由 [`database_security.py`](aios_platform/database_security.py) 在启动阶段核验 `aios_api` 与 `aios_worker` 权限分离。
+- **多仓模块 RBAC、可选 OPA 与全 40 表 PostgreSQL 强制 RLS**：[`aios_platform/module_access.py`](aios_platform/module_access.py) 支持按模块/仓库动态赋权、咨询锁与乐观锁 `version` 校验（越权变更即时触发 `403 ACCESS_CHANGED`）；支持可选 OPA 策略网关（[`deploy/platform/opa.rego`](deploy/platform/opa.rego)、[`providers.py`](aios_platform/providers.py)）；[`migrations/env.py`](migrations/env.py) 在 PostgreSQL 16 下于 [`0013_enterprise_hardening`](migrations/versions/0013_enterprise_hardening.py) 迁移前自动将 `alembic_version.version_num` 扩宽至 `VARCHAR(64)`；[`deploy/platform/postgres-security.sql`](deploy/platform/postgres-security.sql) 对**全部 `40` 张租户表**（`EXPECTED_RLS_TABLES`）启用 `ENABLE` + `FORCE ROW LEVEL SECURITY`、严格仅追加 `aios_llm_telemetry`（`REVOKE UPDATE, DELETE, TRUNCATE`）及 `aios_api` / `aios_worker` 最小权限分离，并由 [`database_security.py`](aios_platform/database_security.py)（`verify_database` 与无异常漂移探针 `database_security_status()`，直通 `/v1/operations/system-health`）持续核验。
 - **12 类确定性护栏与 L1/L2/L3 PDPO/GDPR/PIPL 升级（[`security_guard.py`](aios_platform/security_guard.py)、[`governance.py`](aios_platform/governance.py)）**：`normalize_user_text()` 先执行 NFKC 归一化与零宽字符 `Cf` 剥离，覆盖 10 类对抗安全事件（`SKILL_TAMPER_ATTEMPT`、`PROMPT_TAMPER_ATTEMPT`、`DESTRUCTIVE_ACTION_ATTEMPT`、`FILESYSTEM_ESCAPE_ATTEMPT`、`PROMPT_INJECTION_ATTEMPT`、`SECRET_EXFILTRATION_ATTEMPT`、`PRIVILEGE_ESCALATION_ATTEMPT`、`CROSS_SCOPE_ACCESS_ATTEMPT`、`UNAUTHORIZED_MODULE_QUERY`、`EMAIL_POLICY_VIOLATION`）及 2 类工作边界事件（`OFF_TOPIC_PERSONAL_CHAT`、`OFF_TOPIC_LOCAL_AUTOMATION`）。`evaluate_work_boundary()` 基于 `DEFAULT_WORK_APP_ALLOWLIST` 确保正常寒暄与业务查询零误报：**L1** 走 `T0` 温和提醒（`info`/`resolved`），**L2** 确定性拒绝（`medium`/`denied`，不上报），**L3**（`>=5次/日`、`>=12次/7日` 或 `>=2次/日` 本地自动化）按汇报链自动路由（`operator -> [manager]`、`manager/admin -> [executive, legal]`、`executive -> [legal]`，近 7 日存在高危安全异常则抄送 `access-admin` 与 `legal`）且强制写入 `preview = "[REDACTED_PRIVACY_POLICY]"`。
-- **提案摘要锁、Outbox 与 Ed25519 受控预审（[`workflow.py`](aios_platform/workflow.py)、[`assurance.py`](aios_platform/assurance.py)）**：完整状态机（`PROPOSED -> QUEUED -> SENDING -> VERIFYING -> CHECKING -> VERIFIED` / `OUTCOME_UNKNOWN` / `NEEDS_OPERATOR` / `REJECTED`）、精确 SHA-256 `plan_digest`、禁止自我审批、PostgreSQL `SKIP LOCKED` + 租约/Epoch 栅栏（[`run_worker.py`](aios_platform/run_worker.py)）及 `LocalERP` / `OdooERP` / `ERPNext` 适配器（[`erp.py`](aios_platform/erp.py)）。独立受控预审伴生服务（`:8761`，[`assurance_policy.py`](aios_platform/assurance_policy.py)、[`assurance_gateway.py`](aios_platform/assurance_gateway.py)、[`assurance_audit.py`](aios_platform/assurance_audit.py)、[`assurance_catalog.py`](aios_platform/assurance_catalog.py)）提供单元格白名单、16 KiB 边界网关、AES-256-GCM 密文审计链与 Ed25519 签名检查点。
+- **提案摘要锁、Reserve-First 外部 Outbox 与 Ed25519 受控预审（[`workflow.py`](aios_platform/workflow.py)、[`governance.py`](aios_platform/governance.py)、[`assurance.py`](aios_platform/assurance.py)）**：完整状态机（`PROPOSED -> QUEUED -> SENDING -> VERIFYING -> CHECKING -> VERIFIED` / `OUTCOME_UNKNOWN` / `NEEDS_OPERATOR` / `REJECTED`）、精确 SHA-256 `plan_digest`、禁止自我审批、PostgreSQL `SKIP LOCKED` + 租约/Epoch 栅栏（[`run_worker.py`](aios_platform/run_worker.py)）及 `LocalERP` / `OdooERP` / `ERPNext` 适配器（[`erp.py`](aios_platform/erp.py)）。**Reserve-First 外部动作 Outbox（`aios_external_action_outbox`）** 通过 [`GovernanceService.reserve_external_action`](aios_platform/governance.py) 与 `finalize_external_action`（`RESERVED`/`DISPATCHING`/`SUCCEEDED`/`FAILED`/`UNKNOWN`，载荷哈希冲突 `409`、在途租约冲突 `409`、`UNKNOWN` 阻塞盲目重试 `409` 及 `SUCCEEDED` 幂等回执重放）护航 [`email/send`](web/src/app/api/integrations/email/send/route.ts) SMTP 发信与 [`zoom/book`](web/src/app/api/integrations/zoom/book/route.ts) Zoom 订会，杜绝外部副作用重复触发。独立受控预审伴生服务（`:8761`，[`assurance_policy.py`](aios_platform/assurance_policy.py)、[`assurance_gateway.py`](aios_platform/assurance_gateway.py)、[`assurance_audit.py`](aios_platform/assurance_audit.py)、[`assurance_catalog.py`](aios_platform/assurance_catalog.py)）提供单元格白名单、16 KiB 边界网关、AES-256-GCM 密文审计链与 Ed25519 签名检查点。
 
 ### 支柱二：FinOps 成本优化与 4 区 KV 提示词缓存
 
-- **纯 `httpx + pydantic` 跨厂商 `LLMProvider`（[`aios_platform/llm_provider.py`](aios_platform/llm_provider.py)）**：**零 `litellm` SDK 依赖**，彻底消除第三方模型包装库供应链风险，同时支持通过 `base_url` 对接兼容网关。`ModelProfile` 内置 `deepseek-chat`、`deepseek-flash`、`deepseek-v4-pro`、`gpt-5.4-mini`、`claude-sonnet-4-6`、`gemini-2.5-pro` 与 `qwen-plus`，统一计算 `safe_cap_tokens = min(180_000, int(surcharge_cliff * 0.90), int(context_window * 0.60))`，实施 `MAX_LLM_RESPONSE_BYTES = 524_288` 流式字节封顶、HTTP 400 推理/缓存字段自动剥离重试、多轮 `reasoning_content` / `thinking_blocks` 透传、以及多备选厂商链式 `fallback_providers` + `ProviderCircuitBreaker` 熔断器（默认 `failure_threshold=5`、`recovery_timeout_s=30.0`）。
-- **`<2ms` `EffortRouter` 与级联升级（[`routing_context.py`](aios_platform/routing_context.py)）**：在 2 毫秒内将请求路由为 `T0`（0 次模型调用）、`T1`（`effort="none"`，`1,200` tokens / `15s`）、`T2`（`effort="low"`，`2,400` tokens / `22s`）或 `T3`（`effort="high"`，`8,192` tokens / `55s`），保持同模型前缀缓存温度，并在 `T1/T2` 出现工具调用畸形时自动触发 **Cascade Escalation** 升级至 `T3`。
-- **`L1` `BoundedResponseCache` 与 `compact_tool_observation`（[`aios_platform/response_cache.py`](aios_platform/response_cache.py)）**：线程安全的 LRU + TTL 一级响应缓存（默认 `max_entries=512`、`ttl_seconds=180.0`），按 `(tenant, subject, role, locale, memory_version, active_doc_sha, normalized_query_hash)` 严格隔离纯只读问答（实测提速 **`47.86x`**、边际美元节省 **`100%`**），并在 `/memory` 变更时调用 `invalidate_subject()` 精准失效。在 `MAX_HARNESS_STEPS = 4` 多步循环内，[`compact_tool_observation`](aios_platform/response_cache.py)（`max_chars=2400`）先剥离空字段（保留 `False`/`0`）、按上限截断列表并保留 `ESSENTIAL_BUSINESS_KEYS`，将冗长 JSON 载荷稳定压缩 **`85.33%`** 字符（**`85.31%`** Token）。
-- **80% 软预算降档与厂商写惩罚护栏**：[`QuotaManager.check_quota()`](aios_platform/routing_context.py) 以**单次 SQL 聚合查询**评估租户/角色/主体日配额（配合缓存 `_ensure_routing_tables_sqlite` 实现 `0` 热路径 DDL），当利用率 `>= 80%` 时置位 `soft_cap_active=True`，自动将 `T2/T3` 降档为 `T1`（`effort="none"`，`1,200` tokens）而不中断业务；[`AnthropicAdapter`](aios_platform/llm_provider.py) 强制校验 `ANTHROPIC_PROMPT_CACHE_MIN_CHARS = 3600` 避免短提示触发 25% 缓存写入溢价；[`OpenAICompatAdapter`](aios_platform/llm_provider.py) 为 OpenAI 自动注入确定性 `prompt_cache_key`。
+- **纯 `httpx + pydantic` 跨厂商 `LLMProvider`（[`aios_platform/llm_provider.py`](aios_platform/llm_provider.py)）**：**零 `litellm` SDK 依赖**，彻底消除第三方模型包装库供应链风险，同时支持通过 `base_url` 对接兼容网关。已退役 `deepseek-chat`（标记 `deprecated=True`）由 **`deepseek-flash`**（`1M` 上下文、`200K` 阶梯阈值、2026 官方峰谷定价：工作日 `01:00–04:00` 与 `06:00–10:00` UTC 峰值 `$0.30/$0.006/$1.20`、非峰值半价 `$0.15/$0.003/$0.60`/百万 Token、`cn-hk`）作为 `DEFAULT_LLM_MODEL` 全面接棒，并内置 **`deepseek-v4-pro`**（`1M` 上下文、`200K` 阈值、峰值 `$1.32/$0.044/$3.96` / 谷值 `$0.66/$0.022/$1.98`、`AIOS_LLM_PRO_MODEL`）供 T3 升级，兼容 `gpt-5.4-mini`、`claude-sonnet-4-6`、`gemini-2.5-pro` 与 `qwen-plus`，支持 `AIOS_MODEL_PRICING_JSON` 动态覆写、`estimate_cost_micro_usd()`、`safe_cap_tokens = min(180_000, int(surcharge_cliff * 0.90), int(context_window * 0.60))`、`MAX_LLM_RESPONSE_BYTES = 524_288` 流式封顶、HTTP 400 自动剥离重试、多轮 `reasoning_content` / `thinking_blocks` 透传以及 `ProviderCircuitBreaker` 熔断器。
+- **租户厂商 / 数据驻留策略（`aios_tenant_provider_policy`）**：[`TenantProviderPolicyStore`](aios_platform/routing_context.py)（`GET/PUT /v1/operations/provider-policy`）在主路径与备选故障转移链路同步校验 `allowed_providers`、`allowed_regions`、`blocked_data_classes`、`allow_failover` 与 `max_tier`，越权调用在发包前即失败关闭并拦截为 `HTTP 403 PROVIDER_POLICY_DENIED`。
+- **`<2ms` `EffortRouter`、`55s` 回合总限期与级联升级（[`routing_context.py`](aios_platform/routing_context.py)、[`assistant_agent.py`](aios_platform/assistant_agent.py)）**：在 2 毫秒内将请求路由为 `T0`（0 次模型调用）、`T1`（`effort="none"`，`1,200` tokens / `15s`）、`T2`（`effort="low"`，`2,400` tokens / `22s`）或 `T3`（`effort="high"`，`8,192` tokens / `55s`），保持同模型前缀缓存温度，在 `T1/T2` 工具调用畸形时触发 **Cascade Escalation** 升级至 `T3`，并执行 `AIOS_TURN_DEADLINE_SECONDS=55` 回合总超时与每租户 `threading.Semaphore(2)` `MapReduce` 并发限流。
+- **`L1` 预算前 `BoundedResponseCache` 与 `compact_tool_observation`（[`aios_platform/response_cache.py`](aios_platform/response_cache.py)）**：在安全护栏与工作边界放行后、**先于 Planner 与预算扣减执行校验**；按 `(tenant, subject, role, locale, memory_version, active_doc_sha, normalized_query_hash)` 隔离纯只读问答（实测提速 **`49.75x`**、边际美元节省 **`100%`**），并在 `/memory` 变更时调用 `invalidate_subject()` 精准失效。在 `MAX_HARNESS_STEPS = 4` 多步循环内，[`compact_tool_observation`](aios_platform/response_cache.py)（`max_chars=2400`）保留 `ESSENTIAL_BUSINESS_KEYS`，将冗长 JSON 稳定压缩 **`85.33%`** 字符（**`85.31%`** Token）。
+- **原子定点 `micro-USD` 预算预占、失败关闭配额与 SQL `GROUP BY` 遥测**：`QuotaManager`（`aios_budget_reservation`）通过 SQLite `BEGIN IMMEDIATE` / PostgreSQL `pg_advisory_xact_lock` 实现原子 `reserve_budget` / `settle_budget` / `release_budget` 与**失败关闭（fail-closed）**配额封顶，同时保留 `>= 80%` `soft_cap_active` 自动降档（`T3 -> T1`，单次 SQL、`0` 热路径 DDL）；`RoutingTelemetryStore.summary()` 全量采用 SQL `SUM`/`COUNT`/`GROUP BY` 聚合。`AnthropicAdapter` 保持 `ANTHROPIC_PROMPT_CACHE_MIN_CHARS = 3600` 防护，`OpenAICompatAdapter` 为 OpenAI 自动注入确定性 `prompt_cache_key`。
 - **4 区 KV 提示词缓存结构（`ContextManager` 与 `MapReduceDocumentAnalyzer`）**：
   1. **`Zone 1`（~3K–5K 全局字节不变前缀）**：仅包含密封 `SOUL.md`、模块策略、字典序 `zone1_tool_schemas` 与 1 句静态记忆边界说明——**全租户全员 100% 字节一致**。
   2. **`Zone 1.2`（`<= 1,200` Tokens）**：非空个人 `MEMORY.md` 包裹于 `<user_long_term_memory trust="user_editable_facts_only">` 紧随 `Zone 1` 注入（空文件零注入）。
-  3. **`Zone 1.5`（`<= 140K` 且 `<= safe_cap - 38K`）**：单文档挂载槽，切换文档时自动卸载为 `<= 2,000` Token 结构化摘要；超 `140K` 文档包自动进入 `MapReduceDocumentAnalyzer`（`<= 24K` 并发 `T1/T2` Map 抽取 -> `<= 80K` `T3` Reduce 综合）。
+  3. **`Zone 1.5`（`<= 140K` 且 `<= safe_cap - 38K`）**：单文档挂载槽，切换文档时自动卸载为 `<= 2,000` Token 结构化摘要；超 `140K` 文档包自动进入并发信号量限流的 `MapReduceDocumentAnalyzer`（`<= 24K` 并发 `T1/T2` Map 抽取 -> `<= 80K` `T3` Reduce 综合）。
   4. **`Zone 2`（`32K` 轨迹桶）与 `Zone 3`（瞬态尾部）**：工具结果入桶前裁剪至 `<= 1,500` Token，`>= 28,000` Token 滞回压缩至 `~7,000`，闲置 `> 60m` 自动压缩；实时 `pulse_summary` 仅作为 `Zone 3` 瞬态尾部附着当前请求。
 
 ### 支柱三：每用户可编辑长期记忆（`MEMORY.md`）与夜间自动整洁
@@ -193,22 +197,22 @@ flowchart TD
   1. `NFKC` + 零宽字符 `Cf` 剥离 + `scrub_secrets()` 抹除密钥。
   2. 保存期确定性校验拦截 `SOUL.md` 覆盖、RBAC/仓库提权、`SKILL.md` 篡改、提示词边界注入标签及 Shell/文件系统逃逸（`HTTP 422 MEMORY_POLICY_VIOLATION` / `MEMORY_TOKEN_LIMIT_EXCEEDED`），所有门控 `T2` 整理结果亦需复检通过方可落库。
   3. `Zone 1.2` 非信任 XML 围栏隔离与 `Zone 1` 静态边界免疫。
-  4. `(tenant, subject)` `subject_tx` / PostgreSQL 强制 RLS 行级隔离、`HTTP 409 Conflict` 乐观版本锁，以及 `previous_content` 快照一键撤回（`POST /v1/memory/revert`）。
+  4. `(tenant, subject)` `subject_tx` / PostgreSQL 强制 RLS 行级隔离、`HTTP 409 Conflict` 乐观版本锁，以及默认的 `previous_content` 快照一键撤回（`POST /v1/memory/revert`）与可选 **`permanent=true` 永久擦除**（`DELETE /v1/memory?permanent=true` 与 `POST /v1/memory/forget` 传入 `permanent=true` 时直接清空 `previous_content = NULL`、硬删除 `aios_user_memory_staging` 待归并记录、失效 L1 缓存并记录仅含元数据的 `MEMORY_PURGED_PERMANENT` / `MEMORY_FORGET_PERMANENT` 审计日志）。
 - **`T0` 零开销捕获、`/v1/memory*` 与夜间 `systemd` 定时任务**：支持 `/memory [view|add|forget|tidy]`、中英自然语言（`"记住..."`、`"忘掉..."`、`"remember that..."`）、`fact_sha256` 去重被动暂存、完整 `/v1/memory*` REST 接口（`GET/PUT/DELETE /v1/memory`、`POST /v1/memory/{tidy,revert,forget}`），以及加固版夜间定时器（[`aios-memory-tidy.service`](deploy/integrai/systemd/aios-memory-tidy.service) 与 [`aios-memory-tidy.timer`](deploy/integrai/systemd/aios-memory-tidy.timer)：每日 `19:15:00 UTC` / `03:15 HKT` 触发，`RandomizedDelaySec=120`、`Persistent=true`、`MemoryMax=256M`、`ProtectSystem=strict`）。
 
 ### 支柱四：生产级高可用、存储连接池与全链路可观测性
 
 - **SQLite WAL 线程连接池与 PostgreSQL `psycopg_pool`（[`aios_demo/storage.py`](aios_demo/storage.py)、[`requirements-postgres.txt`](requirements-postgres.txt)）**：SQLite 采用线程局部连接池（`check_same_thread=False` + 弱引用注册表退出自动关闭）、按 `(resolved_path, inode)` 加锁一次性初始化 `WAL` / `SYNCHRONOUS=NORMAL` / `TEMP_STORE=MEMORY` / `cache_size=-16000`、`(st_dev, st_ino)` 失效文件句柄自动重连及 `:memory:` 豁免；PostgreSQL 路径启用懒加载 `psycopg_pool.ConnectionPool`（`min_size=1`、`max_size=16`、`timeout=5.0`），对外暴露 `engine_mode`（如 `sqlite-wal-pooled`、`postgres-pooled`）。
 - **共享 `http_pool` 与进程优雅生命周期（[`aios_platform/http_pool.py`](aios_platform/http_pool.py)、[`api.py`](aios_platform/api.py)、[`run_worker.py`](aios_platform/run_worker.py)）**：`providers.py`、`browser.py`、`channels.py`、`governance.py` 复用 `get_http_client()`（`max_connections=32`、`max_keepalive_connections=16`、`keepalive_expiry=30.0`、`follow_redirects=False`、`trust_env=False`）。FastAPI `lifespan` 在退出时统一释放 `assistant_agent`、`close_all_http_clients()` 与数据库连接；`run_worker.py` 捕获 `SIGTERM`/`SIGINT` 并实施按租户隔离的 `0.5s -> 5.0s` 指数退避。
-- **SSE `Last-Event-ID` 断点续传与可见性感知重连（[`events.py`](aios_platform/events.py)、[`workbench.py`](aios_platform/workbench.py)、[`ProactiveAgentNotifier.tsx`](web/src/components/shell/ProactiveAgentNotifier.tsx)）**：`EventHub.since_event` 与 `/v1/workbench/events/stream` 按时间序精确重放断线期间漏发的可见事件并做帧 ID 去重；前端 `ProactiveAgentNotifier` 在标签页不可见时暂停轮询、切回可见即刻补拉并通过 `1.5s -> 30s`（`±25%` 抖动）指数退避重连。
-- **请求体封顶、滑动窗口限流、W3C 链路追踪与 OTel GenAI / Prometheus（[`observability.py`](aios_platform/observability.py)）**：`RequestEnvelope` 将 `/v1/workbench/turns` 限制在 `2,097,152` 字节（`2 MiB`）、其余 `/v1/` 写接口限制在 `65,536` 字节（超限返回 `413`，保留二进制上传通道）；`SlidingWindowRateLimiter` 强制 `AIOS_API_RATE_LIMIT_RPM=600` 与 `AIOS_TURNS_RATE_LIMIT_RPM=120`（`429 RATE_LIMITED` + `Retry-After`）；校验并回传 `X-Request-Id` 与 W3C `traceparent` 至 `contextvars`（协同 Next.js BFF [`proxy.ts`](web/src/lib/bff/proxy.ts) 的 `65s`/`15s` `AbortController` 超时控制）；在 Bearer 鉴权的 `/metrics` 输出 `aios_http_requests`、`aios_http_duration_seconds`、`aios_llm_calls_total`、`aios_llm_tokens_total`、`aios_llm_cost_usd_total`、`aios_llm_cache_events_total`、`aios_circuit_breaker_state` 与 `aios_rate_limit_rejections_total`，同步输出 `gen_ai.*` 结构化日志与可选 `opentelemetry.trace` Span（`AIOS_OTEL_GENAI=1`），并开放管理员专属健康检查接口 `GET /v1/operations/system-health`。
+- **跨进程持久 `EventHub`（`aios_durable_event` + `pg_notify`）、`Last-Event-ID` 重放与 `15s` 流中吊销（[`events.py`](aios_platform/events.py)、[`workbench.py`](aios_platform/workbench.py)、[`ProactiveAgentNotifier.tsx`](web/src/components/shell/ProactiveAgentNotifier.tsx)）**：`EventHub.bind_workflow(workflow)` 将发布事件原子写入 `aios_durable_event`（租户维度顺序 `seq`）并在 PostgreSQL 上执行 `SELECT pg_notify('aios_events', ?)`，使 `since_event()` 与 `recent()` 在多 API 进程或重启后仍可无缝续传；`/v1/workbench/events/stream` 在回放前及每 `15s` 心跳周期内执行 `is_revoked()`（复核 `refresh_actor`、`workflow.is_suspended` 与 `app.state.browser_sessions`），一旦停权或注销即刻推送 `event: session_revoked`（`{"reason": "ACCESS_REVOKED"}`）并强制断流。前端 `ProactiveAgentNotifier` 在标签页不可见时暂停轮询、切回可见即刻补拉并通过 `1.5s -> 30s`（`±25%` 抖动）指数退避重连。
+- **请求体封顶、滑动窗口限流、W3C 链路追踪与 OTel GenAI / Prometheus（[`observability.py`](aios_platform/observability.py)）**：`RequestEnvelope` 将 `/v1/workbench/turns` 限制在 `2,097,152` 字节（`2 MiB`）、其余 `/v1/` 写接口限制在 `65,536` 字节（超限返回 `413`，保留二进制上传通道）；`SlidingWindowRateLimiter` 强制 `AIOS_API_RATE_LIMIT_RPM=600` 与 `AIOS_TURNS_RATE_LIMIT_RPM=120`（`429 RATE_LIMITED` + `Retry-After`）；校验并回传 `X-Request-Id` 与 W3C `traceparent` 至 `contextvars`（协同 Next.js BFF [`proxy.ts`](web/src/lib/bff/proxy.ts) 的 `65s`/`15s` `AbortController` 超时控制）；在 Bearer 鉴权的 `/metrics` 输出 `aios_http_requests`、`aios_http_duration_seconds`、`aios_llm_calls_total`、`aios_llm_tokens_total`、`aios_llm_cost_usd_total`、`aios_llm_cache_events_total`、`aios_circuit_breaker_state` 与 `aios_rate_limit_rejections_total`，同步输出 `gen_ai.*` 结构化日志与可选 `opentelemetry.trace` Span（`AIOS_OTEL_GENAI=1`），并在管理员专属接口 `GET /v1/operations/system-health` 中同步输出 `schema_security`（`database_security_status()`）与 `provider_policy`。
 
 ### 支柱五：编辑级浅/深双主题 iMessage 协作界面、全渠道中枢与 FinOps 管理台
 
-- **Warm Museum Alabaster（`#FAF8F5`）与 Warm Carbon Obsidian（`#111110`）（[`web/src/styles/tokens.css`](web/src/styles/tokens.css)、[`layout.tsx`](web/src/app/layout.tsx)、[`globals.css`](web/src/app/globals.css)）**：基于 Next.js 16（App Router）、React 19、TypeScript 5.9（`strict`、`noUncheckedIndexedAccess`）、Tailwind CSS v4 与 Radix UI；服务端 Cookie 持久化 `aios_locale`/`aios_theme` 实现零闪烁首屏（**零 `localStorage`**）、`:lang(zh-HK)` 港繁字形优先、外科级钴蓝强调色（浅色 `#1B4F9C` / 深色 `#6EA3F2`）、双墨色几何品牌标识 [`TheodicBrand.tsx`](web/src/components/ui/TheodicBrand.tsx) 与克制物理动效（[`ArchitecturalRelayCanvas.tsx`](web/src/components/kinetic/ArchitecturalRelayCanvas.tsx)、[`Interactive3DCard.tsx`](web/src/components/kinetic/Interactive3DCard.tsx)、[`BriefProgressChain.tsx`](web/src/components/kinetic/BriefProgressChain.tsx)、[`ExecutionTopologyRibbon.tsx`](web/src/components/kinetic/ExecutionTopologyRibbon.tsx)、[`StatePulseBeacon.tsx`](web/src/components/kinetic/StatePulseBeacon.tsx)）。
-- **原生 macOS iMessage / WhatsApp 协作与 `/settings/memory` 编辑台**：悬浮 `88px` 对话顶栏 + `112px` 渐进磨砂面纱（[`ConversationHeader.tsx`](web/src/components/chat/ConversationHeader.tsx)）、有机堆叠气泡（`20px`/`6px`/`10px` 圆角与 SVG 尾翼，[`bubble-group.tsx`](web/src/features/inbox/bubble-group.tsx)）、实时 **已送达 / 已读** 回执（[`ChatRoomWorkspace.tsx`](web/src/features/chat/ChatRoomWorkspace.tsx)）、企业通讯录与名片弹窗（[`ContactsDirectoryModal.tsx`](web/src/features/inbox/ContactsDirectoryModal.tsx)、[`ContactProfileDialog.tsx`](web/src/components/chat/ContactProfileDialog.tsx)）、安全 GFM 渲染（[`MarkdownMessage.tsx`](web/src/components/ui/MarkdownMessage.tsx)）、`cmdk` `/` 斜杠面板（[`SlashCommandPalette.tsx`](web/src/features/inbox/SlashCommandPalette.tsx)）、右侧滑出抽屉（`⌘.`，[`WorkbenchDrawerSlot.tsx`](web/src/components/shell/WorkbenchDrawerSlot.tsx)）及 `/settings/memory`（[`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx)：编辑/分栏/预览、Token 仪表、待归并队列、Quick Forget 与一键撤回）。
-- **8 渠道企业中枢与 FinOps / 系统韧性监控台**：[`ChannelsHubPanel.tsx`](web/src/features/admin/ChannelsHubPanel.tsx) 与 [`channels.py`](aios_platform/channels.py) 统一打通 **WhatsApp Business、企业微信 WeCom、飞书/Lark、钉钉 DingTalk、Slack Enterprise、Microsoft Teams、Telegram Business、LINE Official/WORKS**（含签名验证与防重放）；[`SecurityMonitorPanel.tsx`](web/src/features/admin/SecurityMonitorPanel.tsx) 集成 12 类脱敏安全审计流、非工作行为升级策略编辑器、**智能路由与 KV 缓存遥测**（`T0–T3` 占比、`P50`/`P95` 时延、`Est. Cache Savings` 预估缓存节省、日配额治理）以及管理员专属 **`admin-system-resilience-card`**（展示 `db_engine_mode`、厂商熔断状态、`l1_cache` 命中统计、SSE 活跃连接数、限流拦截次数与 OTel GenAI 状态），配合 [`AdminOpsOverview.tsx`](web/src/features/admin/AdminOpsOverview.tsx) 与 [`PromptGovernancePanel.tsx`](web/src/features/admin/PromptGovernancePanel.tsx) 构成完整运维控制台。
-- **同源脱敏 BFF 与 Streamable MCP 日历/Zoom 订会**：白名单代理（[`proxy.ts`](web/src/lib/bff/proxy.ts)、[`route.ts`](web/src/app/v1/[...path]/route.ts)、[`sanitize.ts`](web/src/lib/bff/sanitize.ts)）剥离内部 `planner`/模型键、强制 `Cache-Control: no-store`、按 `authGeneration` 丢弃跨账号迟到响应，接入三语自然语言 Zoom 订会与 MCP 日历同步（[`web/src/lib/mcp/`](web/src/lib/mcp/)），并仅在 Tauri 2 环境下挂载 [`DesktopHarnessOverlay.tsx`](web/src/components/desktop/DesktopHarnessOverlay.tsx)。
+- **Warm Museum Alabaster（`#FAF8F5`）与 Warm Carbon Obsidian（`#111110`）（[`web/src/styles/tokens.css`](web/src/styles/tokens.css)、[`layout.tsx`](web/src/app/layout.tsx)、[`globals.css`](web/src/app/globals.css)）**：基于 Next.js 16（App Router）、React 19、TypeScript 5.9（`strict`、`noUncheckedIndexedAccess`）、Tailwind CSS v4 与 Radix UI；服务端 Cookie 持久化 `aios_locale`/`aios_theme` 实现零闪烁首屏（**零 `localStorage`**）、`:lang(zh-HK)` 港繁字形优先、外科级钴蓝强调色（浅色 `#1B4F9C` / 深色 `#6EA3F2`）、浅/深对称发送气泡（浅色 `#1D1C1A` / 深色暖瓷釉 `#ECE8E1` 配 `--bubble-sent-ink`）、统一 `.aios-input` / `.aios-select` 控件、严格 `prefers-reduced-motion` 动效退场安全、双墨色几何品牌标识 [`TheodicBrand.tsx`](web/src/components/ui/TheodicBrand.tsx) 与克制物理动效（[`ArchitecturalRelayCanvas.tsx`](web/src/components/kinetic/ArchitecturalRelayCanvas.tsx)、[`Interactive3DCard.tsx`](web/src/components/kinetic/Interactive3DCard.tsx)、[`BriefProgressChain.tsx`](web/src/components/kinetic/BriefProgressChain.tsx)、[`ExecutionTopologyRibbon.tsx`](web/src/components/kinetic/ExecutionTopologyRibbon.tsx)、[`StatePulseBeacon.tsx`](web/src/components/kinetic/StatePulseBeacon.tsx)）。
+- **原生 macOS iMessage / WhatsApp 协作与 `/settings/memory` 编辑台**：悬浮 `88px` 对话顶栏 + `112px` 滚动响应 `blur(20px)` 渐进磨砂面纱（[`ConversationHeader.tsx`](web/src/components/chat/ConversationHeader.tsx)）、统一 1:1 私聊对端身份解析（[`InboxShell.tsx`](web/src/features/inbox/InboxShell.tsx) 与 [`ChatRoomWorkspace.tsx`](web/src/features/chat/ChatRoomWorkspace.tsx)）、有机堆叠气泡（`20px`/`6px`/`10px` 圆角与 SVG 尾翼，[`bubble-group.tsx`](web/src/features/inbox/bubble-group.tsx)）、实时 **已送达 / 已读** 回执、企业通讯录与名片弹窗（[`ContactsDirectoryModal.tsx`](web/src/features/inbox/ContactsDirectoryModal.tsx)、[`ContactProfileDialog.tsx`](web/src/components/chat/ContactProfileDialog.tsx)）、安全 GFM 渲染（[`MarkdownMessage.tsx`](web/src/components/ui/MarkdownMessage.tsx)）、`cmdk` `/` 斜杠面板（[`SlashCommandPalette.tsx`](web/src/features/inbox/SlashCommandPalette.tsx)）、右侧滑出抽屉（`⌘.`，[`WorkbenchDrawerSlot.tsx`](web/src/components/shell/WorkbenchDrawerSlot.tsx)）、移动端底部安全区适配（[`AppShell.tsx`](web/src/components/shell/AppShell.tsx)）及 `/settings/memory`（[`MemoryEditorView.tsx`](web/src/features/settings/MemoryEditorView.tsx)：编辑/分栏/预览、Token 仪表、待归并队列、Quick Forget、一键撤回与内联 `permanent=true` 永久擦除选项）。
+- **8 渠道企业中枢与 FinOps / 系统韧性监控台**：[`ChannelsHubPanel.tsx`](web/src/features/admin/ChannelsHubPanel.tsx) 与 [`channels.py`](aios_platform/channels.py) 统一打通 **WhatsApp Business、企业微信 WeCom、飞书/Lark、钉钉 DingTalk、Slack Enterprise、Microsoft Teams、Telegram Business、LINE Official/WORKS**（含签名验证与防重放）；[`SecurityMonitorPanel.tsx`](web/src/features/admin/SecurityMonitorPanel.tsx) 集成 390px 零横向溢出自适应筛选项、12 类脱敏安全审计流、非工作行为升级策略编辑器、**智能路由与 KV 缓存遥测**（`T0–T3` 占比、`P50`/`P95` 时延、`Est. Cache Savings` 预估缓存节省、日配额治理）以及管理员专属 **`admin-system-resilience-card`**（展示 `db_engine_mode`、`schema_security`、`provider_policy`、厂商熔断状态、`l1_cache` 命中统计、SSE 活跃连接数、限流拦截次数与 OTel GenAI 状态），配合 [`AdminOpsOverview.tsx`](web/src/features/admin/AdminOpsOverview.tsx) 与 [`PromptGovernancePanel.tsx`](web/src/features/admin/PromptGovernancePanel.tsx) 构成完整运维控制台。
+- **同源脱敏 BFF、Reserve-First 集成路线与 Streamable MCP 日历/Zoom 订会**：白名单代理（[`proxy.ts`](web/src/lib/bff/proxy.ts)、[`route.ts`](web/src/app/v1/[...path]/route.ts)、[`sanitize.ts`](web/src/lib/bff/sanitize.ts)）剥离内部 `planner`/模型键、强制 `Cache-Control: no-store`、按 `authGeneration` 丢弃跨账号迟到响应，为 [`email/send`](web/src/app/api/integrations/email/send/route.ts) 与 [`zoom/book`](web/src/app/api/integrations/zoom/book/route.ts) 接入 Reserve-First Outbox 幂等护栏（载荷冲突/在途/`UNKNOWN` 统一拦截 `409`），接入三语自然语言 Zoom 订会与 MCP 日历同步（[`web/src/lib/mcp/`](web/src/lib/mcp/)），并仅在 Tauri 2 环境下挂载 [`DesktopHarnessOverlay.tsx`](web/src/components/desktop/DesktopHarnessOverlay.tsx)。
 
 ### 支柱六：Tauri 2 跨平台桌面端、沙盒化工作区 MCP 与独立 Email MCP
 
@@ -320,7 +324,7 @@ flowchart LR
 
 # 方式 B：双端口云端大模型（:8760）+ 受控预审（:8761）
 export AIOS_LLM_BASE_URL="https://api.deepseek.com"
-export AIOS_LLM_MODEL="deepseek-chat"
+export AIOS_LLM_MODEL="deepseek-flash"
 export AIOS_LLM_API_KEY="sk-your-server-only-key"
 ./deploy/demo/start-local-demo.sh --mode dual
 
@@ -336,10 +340,10 @@ export AIOS_LLM_API_KEY="sk-your-server-only-key"
 
 | 环境变量 | 默认值 / 作用域 | 用途说明 |
 |---|---|---|
-| `AIOS_PROFILE` / `AIOS_PLATFORM_DSN` | `oidc` / `demo` 模式回退 SQLite | 切换 `demo` 与 `oidc`（PostgreSQL `psycopg_pool` + 强制 RLS）运行模式 |
-| `AIOS_LLM_PROVIDER` / `AIOS_LLM_MODEL` / `AIOS_LLM_BASE_URL` / `AIOS_LLM_API_KEY` | `deepseek-chat`（`https://api.deepseek.com`） | 主路径纯 `httpx + pydantic` 大模型适配器配置 |
-| `AIOS_LLM_FALLBACK_PROVIDER` / `AIOS_LLM_FALLBACK_MODEL` / `AIOS_LLM_FALLBACK_BASE_URL` / `AIOS_LLM_FALLBACK_API_KEY` | 可选 | 配置有序故障转移备选模型，自动注入 `LLMProvider.with_fallbacks(...)` 与熔断器 |
-| `AIOS_API_RATE_LIMIT_RPM` / `AIOS_TURNS_RATE_LIMIT_RPM` | `600` / `120` | 按客户端滑动窗口写限流（超限返回 `429 RATE_LIMITED` 与 `Retry-After`） |
+| `AIOS_PROFILE` / `AIOS_PLATFORM_DSN` | `oidc` / `demo` 模式回退 SQLite | 切换 `demo` 与 `oidc`（PostgreSQL `psycopg_pool` + 全 40 表强制 RLS）运行模式 |
+| `AIOS_LLM_PROVIDER` / `AIOS_LLM_MODEL` / `AIOS_LLM_PRO_MODEL` / `AIOS_LLM_BASE_URL` / `AIOS_LLM_API_KEY` | `deepseek-flash`（`https://api.deepseek.com`） | 主路径纯 `httpx + pydantic` 大模型适配器（默认 `deepseek-flash`，可选 `deepseek-v4-pro` T3 升级）及 `AIOS_MODEL_PRICING_JSON` 价格覆写 |
+| `AIOS_LLM_FALLBACK_PROVIDER` / `AIOS_LLM_FALLBACK_MODEL` / `AIOS_LLM_FALLBACK_BASE_URL` / `AIOS_LLM_FALLBACK_API_KEY` | 可选 | 配置有序故障转移备选模型，受 `TenantProviderPolicyStore` 驻留门禁约束并注入熔断器 |
+| `AIOS_TURN_DEADLINE_SECONDS` / `AIOS_API_RATE_LIMIT_RPM` / `AIOS_TURNS_RATE_LIMIT_RPM` | `55` / `600` / `120` | 单回合工具循环总超时与按客户端滑动窗口写限流（超限返回 `429 RATE_LIMITED` 与 `Retry-After`） |
 | `AIOS_OTEL_GENAI` / `AIOS_METRICS_TOKEN` | `1` / 可选（`>=32` 字符） | 控制 `opentelemetry.trace` GenAI Span 桥接及 Bearer 鉴权的 Prometheus `/metrics` |
 | `AIOS_BROWSER_ORIGIN` / `AIOS_BROWSER_SESSION_KEY` / `AIOS_DEMO_SECRET` | 同源 BFF 会话 | `__Host-aios_session` 加密签名、CSRF 与浏览器 Origin 校验 |
 | `AIOS_SMTP_HOST` / `AIOS_SMTP_PORT` / `AIOS_SMTP_USER` / `AIOS_SMTP_PASS` / `AIOS_SMTP_FROM` | 端口 `587`（TLS/STARTTLS） | [`mcp/email-server/`](mcp/email-server/) 邮件连接池传输配置 |
@@ -348,18 +352,18 @@ export AIOS_LLM_API_KEY="sk-your-server-only-key"
 ### 3. 企业就绪度评测、自动化回归、迁移与夜间 `systemd` 定时任务
 
 ```bash
-# 运行零外部 API 密钥的 6 门禁企业就绪度评测基准
+# 运行零外部 API 密钥的 7 门禁企业就绪度评测基准
 python scripts/enterprise_eval.py --json
 
-# 运行后端全量单元测试与集成测试（166 项）
+# 运行后端全量单元测试与集成测试（192 项）
 python -m unittest discover -s tests -v
 
-# 运行企业就绪度、FinOps 故障转移、存储/可观测韧性、MEMORY.md、路由、桌面与越界专项测试
+# 运行企业就绪度、FinOps 故障转移、Outbox/SSE 吊销、PG RLS、MEMORY.md、路由、桌面与越界专项测试
 python -m unittest tests.test_enterprise_readiness tests.test_finops_and_failover tests.test_infra_resilience -v
-python -m unittest tests.test_migrations tests.test_user_memory tests.test_routing_provider_context tests.test_assistant_and_sse -v
-python -m unittest tests.test_desktop_workspace_harness tests.test_off_topic_escalation tests.test_governance_and_guard -v
+python -m unittest tests.test_outbox_and_revocation tests.test_postgres_enterprise tests.test_migrations tests.test_user_memory -v
+python -m unittest tests.test_routing_provider_context tests.test_assistant_and_sse tests.test_desktop_workspace_harness tests.test_off_topic_escalation tests.test_governance_and_guard -v
 
-# 执行 Alembic 数据库迁移至 0012_user_long_term_memory
+# 执行 Alembic 数据库迁移至 0013_enterprise_hardening（PG 自动安全扩宽 alembic_version 至 VARCHAR(64)）
 python -m alembic upgrade head
 
 # 手动运行夜间 MEMORY.md 整理任务（默认 0-Token 确定性归并；附加 --use-llm 启用门控 T2）
@@ -375,10 +379,12 @@ pnpm --dir web run typecheck
 pnpm --dir web run build
 pnpm --dir web run test:e2e
 
-# 独立 Email MCP 与 Cloudflare Worker 类型及单元测试
+# 独立 Email MCP 与 Cloudflare Worker 类型及单元测试（与 .github/workflows/demo.yml 矩阵一致）
 pnpm --dir mcp/email-server run typecheck && pnpm --dir mcp/email-server run build
 pnpm --dir deploy/cloudflare-worker run typecheck && pnpm --dir deploy/cloudflare-worker run test
 ```
+
+CI 流水线（[`.github/workflows/demo.yml`](.github/workflows/demo.yml) 与 [`.github/workflows/deepseek-smoke.yml`](.github/workflows/deepseek-smoke.yml)）已覆盖全量 `192` 项 Python 测试、`enterprise_eval.py`（`7/7` 门禁）、PostgreSQL 16 幂等迁移与 `aios_api`/`aios_worker` 强制 RLS 角色验证（`test_postgres_enterprise`）、Next.js `web-ci`、`edge-mcp-ci`（Cloudflare Worker + Email MCP）以及 `deepseek-flash` 冒烟验证。
 
 ### 4. Tauri 2 桌面端（`desktop/`）与本地工作区 MCP（`mcp/workspace-server/`）
 

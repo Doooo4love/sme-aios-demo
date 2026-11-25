@@ -11,6 +11,7 @@ import {
   BookOpen,
   Calendar,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   Clock,
   Compass,
@@ -264,13 +265,14 @@ export function AssistantWorkspace() {
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const paletteRef = useRef<SlashCommandPaletteHandle | null>(null);
+  const [headerScrolled, setHeaderScrolled] = useState(false);
   const [dismissedSlashQuery, setDismissedSlashQuery] = useState<string | null>(
     null,
   );
   const autoResizeTextarea = useCallback((el: HTMLTextAreaElement | null) => {
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(160, Math.max(28, el.scrollHeight))}px`;
+    el.style.height = `${Math.min(160, Math.max(24, el.scrollHeight))}px`;
   }, []);
 
   useEffect(() => {
@@ -1232,9 +1234,11 @@ export function AssistantWorkspace() {
       {/* Main Breathable Conversation Stream with Borderless Floating Header Overlay */}
       <div
         data-testid="assistant-feed"
+        onScroll={(e) => setHeaderScrolled(e.currentTarget.scrollTop > 8)}
         className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-sheet)]"
       >
         <ConversationHeader
+          scrolled={headerScrolled}
           leftSlot={
             <Link
               href="/inbox"
@@ -1295,7 +1299,7 @@ export function AssistantWorkspace() {
           }
         />
 
-        <div className="mx-auto max-w-[740px] px-4 pt-[96px] pb-6 sm:px-8">
+        <div className="mx-auto max-w-[740px] px-4 pt-[112px] pb-6 sm:px-8">
           {/* Whisper-Quiet Centered History Pill */}
           {historyItems.length > 0 && (
             <div className="mb-4 flex justify-center">
@@ -1490,13 +1494,22 @@ export function AssistantWorkspace() {
               );
             }
 
+            const usesOwnBubbleAnimation =
+              (turn.sourceKind === "proactive_alert" &&
+                Boolean(turn.proactiveAlert)) ||
+              (turn.status === "done" &&
+                (turn.result?.kind === "message" ||
+                  turn.result?.kind === "clarification"));
+
             return (
               <React.Fragment key={item.key}>
                 {burstBanner}
                 <div
                   data-testid={`assistant-turn-${turn.clientId}`}
                   className={[
-                    "aios-row-in flex flex-col items-start pl-1.5",
+                    usesOwnBubbleAnimation
+                      ? "flex flex-col items-start pl-1.5"
+                      : "aios-row-in flex flex-col items-start pl-1.5",
                     idx === 0 || showBurstTs
                       ? ""
                       : isGroupStart
@@ -2041,8 +2054,8 @@ export function AssistantWorkspace() {
           )}
 
           {/* Muse Floating Capsule Composer (24px Organic Pill Radius — STRICTLY TWO CONTROLS: + 添加上下文 & ↑ Send) */}
-          <div className="rounded-[var(--radius-composer)] border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
-            <div className="px-4 pt-3.5 pb-1.5">
+          <div className="rounded-[var(--radius-composer)] border border-[var(--hairline)] bg-[var(--bg-surface)] shadow-[var(--shadow-composer)] focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-composer-focus)] transition-all duration-[200ms]">
+            <div className="px-4 pt-2.5 pb-1">
               <textarea
                 ref={textareaRef}
                 data-composer-input
@@ -2061,11 +2074,11 @@ export function AssistantWorkspace() {
                   { name: agentDisplayName },
                 )}
                 style={{ outline: "none" }}
-                className="block max-h-[160px] min-h-[28px] w-full resize-none border-0 bg-transparent text-[14.5px] leading-[1.5] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
+                className="block max-h-[160px] min-h-[24px] w-full resize-none border-0 bg-transparent text-[14.5px] leading-[24px] text-[var(--ink-primary)] placeholder:text-[var(--ink-faint)] focus:outline-none focus:ring-0"
               />
             </div>
 
-            <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1">
+            <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-0.5">
               <Popover.Root
                 open={contextMenuOpen}
                 onOpenChange={setContextMenuOpen}
@@ -2097,7 +2110,7 @@ export function AssistantWorkspace() {
                     side="top"
                     align="start"
                     sideOffset={10}
-                    className="z-50 w-[296px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-2 shadow-[var(--shadow-popover)] focus:outline-none"
+                    className="aios-popover-content z-50 w-[296px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-2 shadow-[var(--shadow-popover)] focus:outline-none"
                   >
                     <div className="space-y-0.5">
                       {canCreateOrder && (
@@ -2527,29 +2540,36 @@ export function AssistantWorkspace() {
                 en: "Tool",
               })}
             </label>
-            <select
-              value={selectedToolId}
-              onChange={(e) => setSelectedToolId(e.target.value)}
-              className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent)] focus:outline-none"
-            >
-              {availableTools.map((tool) => (
-                <option key={tool.id} value={tool.id}>
-                  {localizeTool(tool.id)} · {tool.id} (
-                  {tool.mode === "proposal"
-                    ? tx({
-                        "zh-CN": "提案",
-                        "zh-HK": "提案",
-                        en: "Proposal",
-                      })
-                    : tx({
-                        "zh-CN": "只读",
-                        "zh-HK": "唯讀",
-                        en: "Read",
-                      })}
-                  )
-                </option>
-              ))}
-            </select>
+            <div className="relative mt-1.5">
+              <select
+                value={selectedToolId}
+                onChange={(e) => setSelectedToolId(e.target.value)}
+                className="aios-select h-10 w-full text-[13px]"
+              >
+                {availableTools.map((tool) => (
+                  <option key={tool.id} value={tool.id}>
+                    {localizeTool(tool.id)} · {tool.id} (
+                    {tool.mode === "proposal"
+                      ? tx({
+                          "zh-CN": "提案",
+                          "zh-HK": "提案",
+                          en: "Proposal",
+                        })
+                      : tx({
+                          "zh-CN": "只读",
+                          "zh-HK": "唯讀",
+                          en: "Read",
+                        })}
+                    )
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                strokeWidth={1.85}
+                aria-hidden="true"
+              />
+            </div>
           </div>
 
           {selectedToolMeta && selectedToolMeta.warehouses.length > 0 && (
@@ -2561,17 +2581,24 @@ export function AssistantWorkspace() {
                   en: "Warehouse",
                 })}
               </label>
-              <select
-                value={toolWarehouse}
-                onChange={(e) => setToolWarehouse(e.target.value)}
-                className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent)] focus:outline-none"
-              >
-                {sortWarehouses(selectedToolMeta.warehouses).map((wh) => (
-                  <option key={wh} value={wh}>
-                    {wh}
-                  </option>
-                ))}
-              </select>
+              <div className="relative mt-1.5">
+                <select
+                  value={toolWarehouse}
+                  onChange={(e) => setToolWarehouse(e.target.value)}
+                  className="aios-select h-10 w-full font-mono-code text-[13px]"
+                >
+                  {sortWarehouses(selectedToolMeta.warehouses).map((wh) => (
+                    <option key={wh} value={wh}>
+                      {wh}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                  strokeWidth={1.85}
+                  aria-hidden="true"
+                />
+              </div>
             </div>
           )}
 

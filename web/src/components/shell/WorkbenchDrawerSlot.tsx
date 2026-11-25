@@ -453,7 +453,7 @@ export function WorkbenchDrawerSlot() {
         <div
           aria-hidden="true"
           onClick={() => closeDrawer({ restoreFocus: true })}
-          className="fixed inset-0 z-30 bg-[var(--scrim)] backdrop-blur-[3px] transition-opacity duration-[180ms] xl:hidden"
+          className="aios-modal-scrim fixed inset-0 z-30 bg-[var(--scrim)] backdrop-blur-[3px] xl:hidden"
         />
       )}
 
@@ -463,11 +463,11 @@ export function WorkbenchDrawerSlot() {
         data-testid="workbench-drawer"
         className={[
           "aios-drawer-transition flex flex-col bg-[var(--bg-surface)]/95 backdrop-blur-2xl overflow-hidden",
-          // Frosted Porcelain / Obsidian Slide-Over (380-420px): floating below xl, docked with crisp hairline border >= xl
-          "fixed bottom-2.5 right-2.5 top-2.5 z-40 rounded-card border border-[var(--hairline-strong)] xl:static xl:z-auto xl:top-auto xl:bottom-auto xl:right-auto xl:h-full xl:rounded-none xl:border-y-0 xl:border-r-0 xl:border-l xl:border-[var(--hairline)]",
+          // Frosted Porcelain / Obsidian Slide-Over (380-420px): floating below xl (pure GPU transform), docked with crisp hairline border >= xl
+          "fixed bottom-2.5 right-2.5 top-2.5 z-40 w-[min(420px,calc(100vw-20px))] rounded-card border border-[var(--hairline-strong)] xl:static xl:z-auto xl:top-auto xl:bottom-auto xl:right-auto xl:h-full xl:rounded-none xl:border-y-0 xl:border-r-0 xl:border-l xl:border-[var(--hairline)]",
           drawerOpen
-            ? "w-[min(420px,calc(100vw-20px))] xl:w-[clamp(380px,30vw,420px)] translate-x-0 opacity-100 shadow-[var(--shadow-modal)] xl:shadow-[var(--shadow-floating)]"
-            : "w-0 translate-x-[calc(100%+16px)] xl:translate-x-0 opacity-0 pointer-events-none xl:border-l-0",
+            ? "visible xl:w-[clamp(380px,30vw,420px)] translate-x-0 opacity-100 shadow-[var(--shadow-modal)] xl:shadow-[var(--shadow-floating)]"
+            : "invisible xl:visible xl:w-0 translate-x-[calc(100%+16px)] xl:translate-x-0 opacity-0 pointer-events-none xl:border-l-0",
         ].join(" ")}
       >
         {/* Frosted Drawer Header */}

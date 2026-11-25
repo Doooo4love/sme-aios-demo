@@ -572,7 +572,7 @@ export const SlashCommandPalette = forwardRef<
   return (
     <div
       data-testid="slash-command-palette"
-      className="mb-2 overflow-hidden rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-floating)]"
+      className="aios-popover-content mb-2 overflow-hidden rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-floating)]"
     >
       <Command
         label={tx({
@@ -635,7 +635,7 @@ export const SlashCommandPalette = forwardRef<
           </div>
         )}
 
-        <Command.List className="max-h-[280px] overflow-y-auto p-1.5 space-y-1.5">
+        <Command.List className="aios-list-feather-bottom max-h-[296px] overflow-y-auto p-1.5 pb-2 space-y-1.5">
           {flatSelectable.length === 0 ? (
             <Command.Empty className="px-4 py-6 text-center text-[12.5px] text-[var(--ink-muted)]">
               {tx({
@@ -739,10 +739,10 @@ export const SlashCommandPalette = forwardRef<
                         </div>
                       </div>
 
-                      <div className="hidden md:flex shrink-0 items-center gap-1.5">
+                      <div className="hidden sm:inline-flex shrink-0 items-center gap-1.5">
                         <code
                           title={skill.usage}
-                          className="max-w-[210px] truncate rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]"
+                          className="max-w-[200px] lg:max-w-[260px] truncate rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 font-mono-code text-[10.5px] text-[var(--ink-secondary)]"
                         >
                           {skill.usage}
                         </code>

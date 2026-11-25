@@ -42,6 +42,7 @@ from aios_platform.llm_provider import (
     AnthropicAdapter,
     ChatResult,
     LLMProvider,
+    LLMProviderError,
     ProviderCircuitBreaker,
     UsageMetrics,
 )
@@ -53,6 +54,7 @@ from aios_platform.routing_context import (
     ContextManager,
     QuotaManager,
     RoutingTelemetryStore,
+    TenantProviderPolicyStore,
     approx_tokens,
 )
 from aios_platform.security_guard import (
@@ -63,6 +65,7 @@ from aios_platform.security_guard import (
 from aios_platform.service import services
 from aios_platform.user_memory import MemoryPolicyError, UserMemoryStore, validate_memory_content
 from aios_platform.workbench import ActiveDocumentRef
+from aios_platform.workflow import Conflict
 
 _CLEAN_ENV_OVERRIDES = {
     "AIOS_PROFILE": "demo",
@@ -1132,8 +1135,363 @@ def _eval_gate6_observability_bounds_and_sse_replay() -> dict[str, Any]:
             obs_mod._ACTIVE_METRICS = prev_bundle
 
 
+def _eval_gate7_p0_p1_enterprise_controls() -> dict[str, Any]:
+    """Gate 7: Atomic 8-thread budget reservation, reserve-first outbox/UNKNOWN, residency block, durable SSE revocation, permanent memory purge."""
+    prev_bundle = getattr(obs_mod, "_ACTIVE_METRICS", None)
+    try:
+        with _isolated_demo_runtime() as (runtime, identity, secret, _hub, _governance):
+            operator = identity.directory_actor("harbour", "operator")
+            admin = identity.directory_actor("harbour", "admin")
+            island_manager = identity.directory_actor("island", "island-manager")
+            assert operator and admin and island_manager
+
+            # 7a. 8-thread concurrent $0.010 QuotaManager.reserve_budget stays <= $0.010
+            quota = QuotaManager(runtime.workflow)
+            quota.upsert_policy(
+                admin,
+                "subject",
+                "operator",
+                daily_usd_limit=0.010,
+                daily_token_limit=500_000,
+            )
+            workers = 8
+            barrier = threading.Barrier(workers)
+            reserve_results: list[tuple[bool, str | None]] = []
+            reserve_errors: list[str] = []
+            res_lock = threading.Lock()
+
+            def _reserve_worker() -> None:
+                barrier.wait(timeout=5.0)
+                try:
+                    verdict = quota.reserve_budget(
+                        operator,
+                        estimated_micro_usd=4_000,
+                        estimated_tokens=1_000,
+                        ttl_s=60.0,
+                    )
+                    if verdict.allowed and verdict.reservation_id:
+                        quota.settle_budget(
+                            "harbour",
+                            verdict.reservation_id,
+                            actual_micro_usd=4_000,
+                            actual_tokens=1_000,
+                        )
+                    with res_lock:
+                        reserve_results.append((bool(verdict.allowed), verdict.reservation_id))
+                except Exception as exc:
+                    with res_lock:
+                        reserve_errors.append(f"{type(exc).__name__}: {exc}")
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(lambda _i: _reserve_worker(), range(workers)))
+
+            with runtime.workflow.tx("harbour", write=False) as run:
+                row_q = run(
+                    """SELECT COALESCE(SUM(actual_micro_usd), 0) AS total_micro,
+                              COUNT(*) AS settled_count
+                       FROM aios_budget_reservation
+                       WHERE tenant = 'harbour' AND subject = 'operator' AND status = 'settled'"""
+                ).fetchone()
+            settled_micro_usd = int(row_q["total_micro"] or 0)
+            settled_count = int(row_q["settled_count"] or 0)
+            approved_threads = sum(1 for allowed, _ in reserve_results if allowed)
+            rejected_threads = sum(1 for allowed, _ in reserve_results if not allowed)
+            quota_atomic_ok = (
+                not reserve_errors
+                and len(reserve_results) == workers
+                and approved_threads == 2
+                and rejected_threads == 6
+                and settled_count == 2
+                and settled_micro_usd <= 10_000
+            )
+
+            # 7b. GovernanceService.reserve_external_action + UNKNOWN state prevents duplicate external send
+            hub_a = EventHub(history_limit=2, workflow=runtime.workflow)
+            gov = GovernanceService(runtime.workflow, hub_a, known_subject=identity.known_subject)
+            email_sha = sha256(b"eval-outbox-email-v1").hexdigest()
+            res_mail = gov.reserve_external_action(
+                operator,
+                action_kind="email.send",
+                client_id="eval-outbox-email-1",
+                request_sha256=email_sha,
+            )
+            in_flight_blocked = False
+            try:
+                gov.reserve_external_action(
+                    operator,
+                    action_kind="email.send",
+                    client_id="eval-outbox-email-1",
+                    request_sha256=email_sha,
+                )
+            except Conflict:
+                in_flight_blocked = True
+
+            cached_receipt = {"phase": "sent", "message_id": "<eval-1@harbour.local>"}
+            fin_ok = gov.finalize_external_action(
+                operator,
+                res_mail["outbox_id"],
+                state="SUCCEEDED",
+                external_id="<eval-1@harbour.local>",
+                result=cached_receipt,
+            )
+            replay_res = gov.reserve_external_action(
+                operator,
+                action_kind="email.send",
+                client_id="eval-outbox-email-1",
+                request_sha256=email_sha,
+            )
+            unknown_sha = sha256(b"eval-outbox-unknown-v1").hexdigest()
+            res_unknown = gov.reserve_external_action(
+                operator,
+                action_kind="email.send",
+                client_id="eval-outbox-unknown-1",
+                request_sha256=unknown_sha,
+            )
+            fin_unknown = gov.finalize_external_action(
+                operator,
+                res_unknown["outbox_id"],
+                state="UNKNOWN",
+                external_id="ambig-eval-1",
+            )
+            unknown_retry_blocked = False
+            try:
+                gov.reserve_external_action(
+                    operator,
+                    action_kind="email.send",
+                    client_id="eval-outbox-unknown-1",
+                    request_sha256=unknown_sha,
+                )
+            except Conflict as err:
+                unknown_retry_blocked = "UNKNOWN" in str(err).upper()
+
+            outbox_unknown_guard_ok = (
+                res_mail["status"] == "reserved"
+                and in_flight_blocked
+                and fin_ok["state"] == "SUCCEEDED"
+                and replay_res["status"] == "replay"
+                and replay_res["cached_result"] == cached_receipt
+                and fin_unknown["state"] == "UNKNOWN"
+                and unknown_retry_blocked
+            )
+
+            # 7c. TenantProviderPolicyStore blocks disallowed failover region/provider
+            policy_store = TenantProviderPolicyStore(runtime.workflow)
+            policy_store.upsert_policy(
+                admin,
+                allowed_providers=["deepseek"],
+                allowed_regions=["cn-hk"],
+                allow_failover=True,
+                max_tier="T2",
+            )
+            primary_allowed = policy_store.is_provider_allowed(
+                "harbour", MODEL_PROFILES["deepseek-flash"], is_failover=False
+            )
+            failover_policy_allowed = policy_store.is_provider_allowed(
+                "harbour", MODEL_PROFILES["gpt-5.4-mini"], is_failover=True
+            )
+            fallback_p = LLMProvider(
+                api_key="sk-eval-oai-blocked",
+                model="gpt-5.4-mini",
+                max_retries=0,
+                retry_backoff_base=0.0,
+            )
+            primary_p = LLMProvider(
+                api_key="sk-eval-ds-policy",
+                model="deepseek-flash",
+                max_retries=0,
+                retry_backoff_base=0.0,
+            ).with_fallbacks([fallback_p])
+            failover_http_calls = {"openai": 0}
+            policy_denied_code = None
+
+            class _ErrResp:
+                def __init__(self, status_code: int):
+                    self.status_code = status_code
+                    self.headers: dict[str, str] = {}
+                    self._bytes = b'{"error":"unavailable"}'
+
+                def iter_bytes(self, chunk_size: int = 8192):
+                    yield self._bytes
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, _exc_type, _exc, _tb):
+                    return False
+
+            def policy_fake_stream(_self, _method, url, **_kwargs):
+                if "openai.com" in url:
+                    failover_http_calls["openai"] += 1
+                return _ErrResp(503)
+
+            try:
+                with patch("httpx.Client.stream", autospec=True, side_effect=policy_fake_stream):
+                    try:
+                        primary_p.chat(
+                            [{"role": "user", "content": "Check shipment SHP-1001"}],
+                            effort="none",
+                            provider_policy_check=lambda prof, is_fo: policy_store.is_provider_allowed(
+                                "harbour", prof, is_failover=is_fo
+                            ),
+                        )
+                    except LLMProviderError as err:
+                        policy_denied_code = err.error_code
+            finally:
+                primary_p.close()
+
+            residency_failover_blocked_ok = (
+                primary_allowed
+                and not failover_policy_allowed
+                and policy_denied_code == "PROVIDER_POLICY_DENIED"
+                and failover_http_calls["openai"] == 0
+            )
+
+            # 7e. UserMemoryStore.clear(..., permanent=True) purges previous_content & aios_user_memory_staging
+            mem = UserMemoryStore(runtime.workflow)
+            mem.save(operator, version=0, content="# MEMORY.md\n\n- Check HK01 cutoff first.")
+            mem.save(operator, version=1, content="# MEMORY.md\n\n- Check HK01 cutoff first.\n- Quote in HKD.")
+            staged_ok = mem.stage_fact(operator, "Always include invoice reference in summaries")
+            cleared = mem.clear(operator, version=2, permanent=True)
+            with runtime.workflow.tx("harbour", write=False) as run:
+                mem_row = run(
+                    "SELECT content, previous_content FROM aios_user_memory WHERE tenant = 'harbour' AND subject = 'operator'"
+                ).fetchone()
+                staging_count = int(
+                    run(
+                        "SELECT COUNT(*) AS n FROM aios_user_memory_staging WHERE tenant = 'harbour' AND subject = 'operator'"
+                    ).fetchone()["n"]
+                )
+                purge_audit_count = int(
+                    run(
+                        "SELECT COUNT(*) AS n FROM aios_audit WHERE tenant = 'harbour' AND subject = 'operator' AND event = 'MEMORY_PURGED_PERMANENT'"
+                    ).fetchone()["n"]
+                )
+            permanent_purge_ok = (
+                staged_ok
+                and cleared.content == ""
+                and not cleared.has_previous
+                and mem_row is not None
+                and mem_row["content"] == ""
+                and mem_row["previous_content"] is None
+                and staging_count == 0
+                and purge_audit_count >= 1
+            )
+
+            # 7d. Durable cross-instance EventHub replay across 2 hubs sharing 1 DB + mid-stream session_revoked SSE close
+            e1 = hub_a.publish("harbour", ["operator"], {"id": "g7-evt-1", "kind": "work_alert", "title": "First"})
+            e2 = hub_a.publish("harbour", ["operator"], {"id": "g7-evt-2", "kind": "work_alert", "title": "Second"})
+            e3 = hub_a.publish("harbour", ["operator"], {"id": "g7-evt-3", "kind": "security_alert", "title": "Third"})
+
+            hub_b = EventHub(history_limit=10)
+            hub_b.bind_workflow(runtime.workflow)
+            cross_hub_replayed_ids = [item["id"] for item in hub_b.since_event("harbour", "operator", e1["id"])]
+            cross_tenant_empty = hub_b.since_event("island", island_manager.subject, e1["id"]) == []
+            durable_cross_hub_replay_ok = (
+                cross_hub_replayed_ids == [e2["id"], e3["id"]]
+                and cross_tenant_empty
+            )
+
+            app = build_app(
+                runtime,
+                identity,
+                DemoPlanner(),
+                event_hub=hub_b,
+                governance=gov,
+            )
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+
+            server = uvicorn.Server(
+                uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", timeout_graceful_shutdown=1)
+            )
+            thread = threading.Thread(target=server.run, daemon=True)
+            thread.start()
+            sse_revoked_ok = False
+            try:
+                deadline = time.monotonic() + 5.0
+                while not server.started:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("Uvicorn server failed to start for Gate 7 SSE revocation eval")
+                    time.sleep(0.02)
+
+                with (
+                    patch.dict(os.environ, {"AIOS_SSE_HEARTBEAT_SECONDS": "0.05"}),
+                    httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=5.0) as stream_client,
+                ):
+                    with stream_client.stream(
+                        "GET",
+                        "/v1/workbench/events/stream",
+                        headers={"Authorization": f"Bearer {secret}.operator"},
+                    ) as sse_resp:
+                        if sse_resp.status_code == 200:
+                            lines = sse_resp.iter_lines()
+                            connected = next(lines) == ": connected" and next(lines) == ""
+                            runtime.workflow.set_suspension(admin, "operator", True)
+                            sse_lines = list(lines)
+                            joined = "\n".join(sse_lines)
+                            sse_revoked_ok = (
+                                connected
+                                and "event: session_revoked" in joined
+                                and '"ACCESS_REVOKED"' in joined
+                            )
+            finally:
+                server.should_exit = True
+                thread.join(timeout=5.0)
+
+            passed = (
+                quota_atomic_ok
+                and outbox_unknown_guard_ok
+                and residency_failover_blocked_ok
+                and durable_cross_hub_replay_ok
+                and sse_revoked_ok
+                and permanent_purge_ok
+            )
+            return {
+                "passed": passed,
+                "concurrent_budget": {
+                    "ok": quota_atomic_ok,
+                    "threads": workers,
+                    "cap_micro_usd": 10_000,
+                    "settled_micro_usd": settled_micro_usd,
+                    "approved_threads": approved_threads,
+                    "rejected_threads": rejected_threads,
+                    "settled_count": settled_count,
+                },
+                "external_outbox": {
+                    "ok": outbox_unknown_guard_ok,
+                    "in_flight_blocked": in_flight_blocked,
+                    "replay_status": replay_res["status"],
+                    "unknown_retry_blocked": unknown_retry_blocked,
+                },
+                "provider_policy": {
+                    "ok": residency_failover_blocked_ok,
+                    "primary_allowed": primary_allowed,
+                    "failover_policy_allowed": failover_policy_allowed,
+                    "policy_denied_code": policy_denied_code,
+                    "blocked_failover_http_calls": failover_http_calls["openai"],
+                },
+                "durable_events_and_sse_revocation": {
+                    "ok": durable_cross_hub_replay_ok and sse_revoked_ok,
+                    "cross_hub_replayed_ids": cross_hub_replayed_ids,
+                    "cross_tenant_empty": cross_tenant_empty,
+                    "sse_revoked_closed": sse_revoked_ok,
+                },
+                "permanent_memory_purge": {
+                    "ok": permanent_purge_ok,
+                    "staged_before_purge": staged_ok,
+                    "previous_content_cleared": mem_row is not None and mem_row["previous_content"] is None,
+                    "staging_rows_after_purge": staging_count,
+                    "audit_events": purge_audit_count,
+                },
+            }
+    finally:
+        with obs_mod._ACTIVE_METRICS_LOCK:
+            obs_mod._ACTIVE_METRICS = prev_bundle
+
+
 def run_enterprise_eval() -> dict[str, Any]:
-    """Run all 6 deterministic enterprise readiness gates and return structured scorecard."""
+    """Run all 7 deterministic enterprise readiness gates and return structured scorecard."""
     started = perf_counter()
     gates = {
         "security_seal_antipoisoning": _eval_gate1_security_seal_antipoisoning(),
@@ -1142,6 +1500,7 @@ def run_enterprise_eval() -> dict[str, Any]:
         "multi_provider_failover_and_breaker": _eval_gate4_multi_provider_failover_and_breaker(),
         "sqlite_wal_16_thread_contention": _eval_gate5_sqlite_wal_16_thread_contention(),
         "observability_bounds_and_sse_replay": _eval_gate6_observability_bounds_and_sse_replay(),
+        "p0_p1_enterprise_controls": _eval_gate7_p0_p1_enterprise_controls(),
     }
     litellm_absent = "litellm" not in sys.modules
     all_passed = litellm_absent and all(bool(gate.get("passed")) for gate in gates.values())
@@ -1182,6 +1541,11 @@ def _format_human_summary(report: dict[str, Any]) -> str:
         f"6. Observability/Bounds/SSE: 2MB_turns={g['observability_bounds_and_sse_replay']['large_turn_accepted_200']}, "
         f"65KB_413={g['observability_bounds_and_sse_replay']['standard_routes_413_enforced']}, "
         f"sse_replay={g['observability_bounds_and_sse_replay']['sse_last_event_id_replay_ok']}",
+        f"7. P0/P1 Enterprise Controls: quota_micro_usd={g['p0_p1_enterprise_controls']['concurrent_budget']['settled_micro_usd']}/10000, "
+        f"outbox_unknown={g['p0_p1_enterprise_controls']['external_outbox']['unknown_retry_blocked']}, "
+        f"residency_block={g['p0_p1_enterprise_controls']['provider_policy']['policy_denied_code']}, "
+        f"sse_revoked={g['p0_p1_enterprise_controls']['durable_events_and_sse_revocation']['sse_revoked_closed']}, "
+        f"perm_purge={g['p0_p1_enterprise_controls']['permanent_memory_purge']['ok']}",
     ]
     return "\n".join(lines)
 

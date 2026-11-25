@@ -234,6 +234,32 @@ export function isDirectRoomTitle(rawTitle: string): boolean {
   return DM_PREFIX_RE.test(rawTitle.trim());
 }
 
+export function extractDirectRoomInfo(rawTitle: string): {
+  targetSubject: string | null;
+  targetLabel: string | null;
+} | null {
+  const dmMatch = rawTitle.trim().match(DM_PREFIX_RE);
+  if (!dmMatch) return null;
+  const rest = dmMatch[1]!.trim();
+  const parenMatch = rest.match(/^(.+?)\s*\(([A-Za-z0-9._-]+)\)\s*$/);
+  if (parenMatch) {
+    return {
+      targetLabel: parenMatch[1]!.trim() || null,
+      targetSubject: parenMatch[2]!.trim() || null,
+    };
+  }
+  if (rest in PERSONA_LOCALIZATIONS) {
+    return {
+      targetSubject: rest,
+      targetLabel: null,
+    };
+  }
+  return {
+    targetSubject: null,
+    targetLabel: rest || null,
+  };
+}
+
 export function isMeetingRoomTitle(rawTitle: string): boolean {
   return MEETING_PREFIX_RE.test(rawTitle.trim());
 }

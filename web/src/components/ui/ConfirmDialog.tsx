@@ -48,7 +48,7 @@ export function ConfirmDialog({
   return (
     <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="aios-modal-scrim fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-[6px]" />
+        <AlertDialog.Overlay className="aios-modal-scrim fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-[4px]" />
         <AlertDialog.Content
           className={[
             "aios-modal-content fixed left-1/2 top-1/2 z-50 w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2",

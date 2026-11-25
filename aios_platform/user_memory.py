@@ -124,6 +124,7 @@ class MemoryTidyRequest(Strict):
 
 class MemoryForgetRequest(Strict):
     query: Annotated[str, Field(min_length=1, max_length=300)]
+    permanent: bool = False
 
 
 class MemoryTidyResponse(Strict):
@@ -508,6 +509,18 @@ def _matches_forget_query(line: str, query_lower: str, tokens: list[str]) -> boo
     return False
 
 
+def _strip_matching_lines(text: str, query_lower: str, tokens: list[str]) -> tuple[str, int]:
+    kept_lines: list[str] = []
+    removed = 0
+    for line in (text or "").splitlines():
+        if _matches_forget_query(line, query_lower, tokens):
+            removed += 1
+        else:
+            kept_lines.append(line)
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
+    return cleaned, removed
+
+
 def _ensure_user_memory_tables_sqlite(workflow, run) -> None:
     if getattr(workflow.db, "dsn", None):
         return
@@ -543,8 +556,15 @@ def _ensure_user_memory_tables_sqlite(workflow, run) -> None:
 class UserMemoryStore:
     """Strictly (tenant, subject)-isolated store for per-user MEMORY.md and passive staging."""
 
-    def __init__(self, workflow):
+    def __init__(self, workflow, *, response_cache=None):
         self.workflow = workflow
+        self.response_cache = response_cache
+
+    def _invalidate_cache(self, actor: Actor) -> None:
+        cache = getattr(self, "response_cache", None)
+        inv = getattr(cache, "invalidate_subject", None) if cache is not None else None
+        if callable(inv):
+            inv(actor.tenant, actor.subject)
 
     def _fetch_pending(self, run, tenant: str, subject: str) -> tuple[int, list[UserMemoryPendingItem]]:
         count_row = run(
@@ -668,7 +688,9 @@ class UserMemoryStore:
                 )
             if changed.rowcount != 1:
                 raise Conflict("MEMORY.md version changed")
-            return self._build_response(run, actor.tenant, actor.subject)
+            resp = self._build_response(run, actor.tenant, actor.subject)
+        self._invalidate_cache(actor)
+        return resp
 
     def revert(self, actor: Actor, *, version: int, now: float | None = None) -> UserMemoryResponse:
         ts = time.time() if now is None else now
@@ -709,9 +731,18 @@ class UserMemoryStore:
             )
             if changed.rowcount != 1:
                 raise Conflict("MEMORY.md version changed")
-            return self._build_response(run, actor.tenant, actor.subject)
+            resp = self._build_response(run, actor.tenant, actor.subject)
+        self._invalidate_cache(actor)
+        return resp
 
-    def clear(self, actor: Actor, *, version: int, now: float | None = None) -> UserMemoryResponse:
+    def clear(
+        self,
+        actor: Actor,
+        *,
+        version: int,
+        permanent: bool = False,
+        now: float | None = None,
+    ) -> UserMemoryResponse:
         ts = time.time() if now is None else now
         with subject_tx(self.workflow, actor, write=True) as run:
             _ensure_user_memory_tables_sqlite(self.workflow, run)
@@ -728,7 +759,7 @@ class UserMemoryStore:
                 if int(existing["version"]) != version:
                     raise Conflict("MEMORY.md version changed")
                 old_content = str(existing["content"] or "")
-                new_prev = old_content if old_content else existing["previous_content"]
+                new_prev = None if permanent else (old_content if old_content else existing["previous_content"])
                 changed = run(
                     """UPDATE aios_user_memory
                        SET content = '', previous_content = ?, version = version + 1,
@@ -738,15 +769,34 @@ class UserMemoryStore:
                 )
                 if changed.rowcount != 1:
                     raise Conflict("MEMORY.md version changed")
-            run(
-                """UPDATE aios_user_memory_staging
-                   SET status = 'discarded', processed_at = ?
-                   WHERE tenant = ? AND subject = ? AND status = 'pending'""",
-                (ts, actor.tenant, actor.subject),
-            )
-            return self._build_response(run, actor.tenant, actor.subject)
+            if permanent:
+                run(
+                    """DELETE FROM aios_user_memory_staging
+                       WHERE tenant = ? AND subject = ?""",
+                    (actor.tenant, actor.subject),
+                )
+                audit_fn = getattr(self.workflow, "_audit", None)
+                if callable(audit_fn):
+                    audit_fn(run, actor.tenant, actor.subject, "user-memory", "MEMORY_PURGED_PERMANENT")
+            else:
+                run(
+                    """UPDATE aios_user_memory_staging
+                       SET status = 'discarded', processed_at = ?
+                       WHERE tenant = ? AND subject = ? AND status = 'pending'""",
+                    (ts, actor.tenant, actor.subject),
+                )
+            resp = self._build_response(run, actor.tenant, actor.subject)
+        self._invalidate_cache(actor)
+        return resp
 
-    def forget(self, actor: Actor, *, query: str, now: float | None = None) -> MemoryForgetResponse:
+    def forget(
+        self,
+        actor: Actor,
+        *,
+        query: str,
+        permanent: bool = False,
+        now: float | None = None,
+    ) -> MemoryForgetResponse:
         clean_query = sanitize_memory_text(query)
         if not clean_query:
             raise HTTPException(422, "Forget query must not be empty")
@@ -760,21 +810,40 @@ class UserMemoryStore:
             _ensure_user_memory_tables_sqlite(self.workflow, run)
             lock_subjects(self.workflow, run, actor.tenant, "user-memory-v1", [actor.subject])
             existing = run(
-                """SELECT content, version FROM aios_user_memory
+                """SELECT content, previous_content, version FROM aios_user_memory
                    WHERE tenant = ? AND subject = ?""",
                 (actor.tenant, actor.subject),
             ).fetchone()
             removed_memory_lines = 0
             if existing is not None:
                 old_content = str(existing["content"] or "")
-                kept_lines: list[str] = []
-                for line in old_content.splitlines():
-                    if _matches_forget_query(line, query_lower, tokens):
-                        removed_memory_lines += 1
+                new_content, removed_memory_lines = _strip_matching_lines(old_content, query_lower, tokens)
+                if permanent:
+                    old_prev = existing["previous_content"]
+                    removed_prev_lines = 0
+                    if old_prev is not None:
+                        cleaned_prev, removed_prev_lines = _strip_matching_lines(str(old_prev), query_lower, tokens)
+                        new_prev: str | None = cleaned_prev if cleaned_prev else None
                     else:
-                        kept_lines.append(line)
-                if removed_memory_lines > 0:
-                    new_content = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
+                        new_prev = None
+                    if removed_memory_lines > 0 or removed_prev_lines > 0:
+                        token_count = approx_tokens(new_content)
+                        run(
+                            """UPDATE aios_user_memory
+                               SET content = ?, previous_content = ?, version = version + 1,
+                                   token_count = ?, updated_by = ?, updated_at = ?
+                               WHERE tenant = ? AND subject = ?""",
+                            (
+                                new_content,
+                                new_prev,
+                                token_count,
+                                actor.subject,
+                                ts,
+                                actor.tenant,
+                                actor.subject,
+                            ),
+                        )
+                elif removed_memory_lines > 0:
                     token_count = approx_tokens(new_content)
                     run(
                         """UPDATE aios_user_memory
@@ -792,27 +861,48 @@ class UserMemoryStore:
                         ),
                     )
 
-            pending_rows = run(
-                """SELECT id, fact_text FROM aios_user_memory_staging
-                   WHERE tenant = ? AND subject = ? AND status = 'pending'""",
-                (actor.tenant, actor.subject),
-            ).fetchall()
-            removed_staged = 0
-            for row in pending_rows:
-                if _matches_forget_query(str(row["fact_text"]), query_lower, tokens):
-                    run(
-                        """UPDATE aios_user_memory_staging
-                           SET status = 'discarded', processed_at = ?
-                           WHERE tenant = ? AND subject = ? AND id = ?""",
-                        (ts, actor.tenant, actor.subject, str(row["id"])),
-                    )
-                    removed_staged += 1
+            if permanent:
+                staging_rows = run(
+                    """SELECT id, fact_text, status FROM aios_user_memory_staging
+                       WHERE tenant = ? AND subject = ?""",
+                    (actor.tenant, actor.subject),
+                ).fetchall()
+                removed_staged = 0
+                for row in staging_rows:
+                    if _matches_forget_query(str(row["fact_text"]), query_lower, tokens):
+                        run(
+                            """DELETE FROM aios_user_memory_staging
+                               WHERE tenant = ? AND subject = ? AND id = ?""",
+                            (actor.tenant, actor.subject, str(row["id"])),
+                        )
+                        if str(row["status"]) == "pending":
+                            removed_staged += 1
+                audit_fn = getattr(self.workflow, "_audit", None)
+                if callable(audit_fn):
+                    audit_fn(run, actor.tenant, actor.subject, "user-memory", "MEMORY_FORGET_PERMANENT")
+            else:
+                pending_rows = run(
+                    """SELECT id, fact_text FROM aios_user_memory_staging
+                       WHERE tenant = ? AND subject = ? AND status = 'pending'""",
+                    (actor.tenant, actor.subject),
+                ).fetchall()
+                removed_staged = 0
+                for row in pending_rows:
+                    if _matches_forget_query(str(row["fact_text"]), query_lower, tokens):
+                        run(
+                            """UPDATE aios_user_memory_staging
+                               SET status = 'discarded', processed_at = ?
+                               WHERE tenant = ? AND subject = ? AND id = ?""",
+                            (ts, actor.tenant, actor.subject, str(row["id"])),
+                        )
+                        removed_staged += 1
 
             state = self._build_response(run, actor.tenant, actor.subject)
-            return MemoryForgetResponse(
-                memory=state,
-                removed_lines=removed_memory_lines + removed_staged,
-            )
+        self._invalidate_cache(actor)
+        return MemoryForgetResponse(
+            memory=state,
+            removed_lines=removed_memory_lines + removed_staged,
+        )
 
     def stage_fact(
         self,
@@ -938,7 +1028,9 @@ class UserMemoryStore:
                         actor.subject,
                     ),
                 )
-            return self._build_response(run, actor.tenant, actor.subject), True, clean_fact
+            resp = self._build_response(run, actor.tenant, actor.subject)
+        self._invalidate_cache(actor)
+        return resp, True, clean_fact
 
     @staticmethod
     def _consolidate_with_llm(
@@ -1157,12 +1249,13 @@ class UserMemoryStore:
                 )
 
             state = self._build_response(run, actor.tenant, actor.subject)
-            return MemoryTidyResponse(
-                memory=state,
-                merged_count=merged_count,
-                used_llm=used_llm,
-                removed_duplicates=removed_duplicates,
-            )
+        self._invalidate_cache(actor)
+        return MemoryTidyResponse(
+            memory=state,
+            merged_count=merged_count,
+            used_llm=used_llm,
+            removed_duplicates=removed_duplicates,
+        )
 
 
 def memory_routes(
@@ -1171,8 +1264,9 @@ def memory_routes(
     *,
     llm_provider: LLMProvider | None = None,
     telemetry: RoutingTelemetryStore | None = None,
+    response_cache=None,
 ) -> APIRouter:
-    store = UserMemoryStore(workflow)
+    store = UserMemoryStore(workflow, response_cache=response_cache)
     router = APIRouter(prefix="/v1/memory", tags=["User Memory"])
 
     @router.get("", response_model=UserMemoryResponse, operation_id="get_user_memory")
@@ -1197,13 +1291,14 @@ def memory_routes(
 
     @router.post("/forget", response_model=MemoryForgetResponse, operation_id="forget_user_memory")
     def forget_memory(body: MemoryForgetRequest, actor: Actor = Depends(authenticate)):
-        return store.forget(actor, query=body.query)
+        return store.forget(actor, query=body.query, permanent=body.permanent)
 
     @router.delete("", response_model=UserMemoryResponse, operation_id="clear_user_memory")
     def clear_memory(
         version: QueryVersion = Query(...),
+        permanent: bool = Query(False),
         actor: Actor = Depends(authenticate),
     ):
-        return store.clear(actor, version=version)
+        return store.clear(actor, version=version, permanent=permanent)
 
     return router

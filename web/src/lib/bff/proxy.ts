@@ -7,6 +7,7 @@ import {
 import {
   sanitizeErrorPayload,
   sanitizeSuccessPayload,
+  stripForbiddenKeys,
 } from "@/lib/bff/sanitize";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -93,11 +94,14 @@ const ALLOWED_V1_PATTERNS: readonly RegExp[] = [
   /^\/v1\/operations\/off-topic-policy$/,
   /^\/v1\/operations\/llm-telemetry$/,
   /^\/v1\/operations\/quota-policies$/,
+  /^\/v1\/operations\/provider-policy$/,
   /^\/v1\/operations\/system-health$/,
   /^\/v1\/workbench\/events\/stream$/,
   /^\/v1\/workbench\/work-pulse$/,
   /^\/v1\/workbench\/skills$/,
   /^\/v1\/workbench\/email-outbox$/,
+  /^\/v1\/workbench\/external-outbox\/reserve$/,
+  /^\/v1\/workbench\/external-outbox\/[^/]+\/finalize$/,
   /^\/v1\/demo\/worker-tick$/,
 ];
 
@@ -591,6 +595,20 @@ function sanitizeSystemHealthResponse(payload: unknown): Record<string, unknown>
       ? (raw.l1_cache as Record<string, unknown>)
       : {};
 
+  const rawSchemaSec =
+    typeof raw.schema_security === "object" &&
+    raw.schema_security !== null &&
+    !Array.isArray(raw.schema_security)
+      ? (raw.schema_security as Record<string, unknown>)
+      : null;
+
+  const rawProviderPol =
+    typeof raw.provider_policy === "object" &&
+    raw.provider_policy !== null &&
+    !Array.isArray(raw.provider_policy)
+      ? (raw.provider_policy as Record<string, unknown>)
+      : null;
+
   return {
     status: raw.status === "ok" ? "ok" : "degraded",
     db_engine_mode:
@@ -613,6 +631,8 @@ function sanitizeSystemHealthResponse(payload: unknown): Record<string, unknown>
     active_sse_subscribers: asFiniteNumber(raw.active_sse_subscribers, 0),
     rate_limit_rejections: asFiniteNumber(raw.rate_limit_rejections, 0),
     otel_genai_enabled: Boolean(raw.otel_genai_enabled),
+    ...(rawSchemaSec ? { schema_security: stripForbiddenKeys(rawSchemaSec) } : {}),
+    ...(rawProviderPol ? { provider_policy: stripForbiddenKeys(rawProviderPol) } : {}),
     uptime_seconds: asFiniteNumber(raw.uptime_seconds, 0),
   };
 }

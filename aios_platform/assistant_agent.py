@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Annotated, Any, Callable, Literal
 
@@ -19,12 +20,14 @@ from pydantic import Field, ValidationError
 from .collaboration import subject_tx
 from .contracts import Actor, Identifier, Strict
 from .llm_provider import (
+    DEFAULT_LLM_MODEL,
     EFFORT_MAX_TOKENS,
     EFFORT_TIMEOUT_SECONDS,
     ChatResult,
     LLMProvider,
     LLMProviderError,
     MAX_LLM_RESPONSE_BYTES,
+    ModelProfile,
     OpenAICompatAdapter,
     resolve_fallback_llm_configs,
     resolve_model_profile,
@@ -45,6 +48,7 @@ from .routing_context import (
     RoutingDecision,
     RoutingTelemetryStore,
     RoutingTier,
+    TenantProviderPolicyStore,
     approx_tokens,
 )
 from .security_guard import check_output_leakage, evaluate_email_payload, evaluate_user_turn
@@ -56,7 +60,6 @@ from .user_memory import (
 from .workbench_tools import CALL, TOOLS, ToolCall
 
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
-DEFAULT_LLM_MODEL = "deepseek-chat"
 LLM_TIMEOUT_SECONDS = 22.0
 MAX_HARNESS_STEPS = 4
 HK_TZ = timezone(timedelta(hours=8))
@@ -327,6 +330,11 @@ def resolve_llm_api_key() -> str | None:
 
 def resolve_llm_model() -> str:
     return (os.getenv("AIOS_LLM_MODEL") or DEFAULT_LLM_MODEL).strip() or DEFAULT_LLM_MODEL
+
+
+def resolve_pro_llm_model() -> str | None:
+    raw = (os.getenv("AIOS_LLM_PRO_MODEL") or "").strip()
+    return raw or None
 
 
 def resolve_llm_provider() -> str | None:
@@ -627,14 +635,34 @@ class AssistantAgent:
         self.context_manager = ContextManager(workflow)
         self.telemetry = RoutingTelemetryStore(workflow)
         self.quota_manager = QuotaManager(workflow)
+        self.provider_policy_store = TenantProviderPolicyStore(workflow)
         self.mapreduce = MapReduceDocumentAnalyzer(self.llm_provider)
-        self.memory_store = UserMemoryStore(workflow)
+        self.memory_store = UserMemoryStore(workflow, response_cache=self.response_cache)
+        self._explicit_base_url = base_url is not None
+        self._resolved_provider_arg = resolved_provider
+        self.pro_model = resolve_pro_llm_model()
+        self.pro_llm_provider: LLMProvider | None = None
+        if self.pro_model and self.pro_model != self.llm_provider.profile.model_id and self.llm_provider.enabled:
+            self.pro_llm_provider = LLMProvider(
+                api_key=self.llm_provider.api_key,
+                model=self.pro_model,
+                base_url=self.base_url if self._explicit_base_url else resolve_llm_base_url(self.pro_model),
+                provider=resolved_provider,
+                circuit_breaker=self.llm_provider.circuit_breaker,
+                fallback_providers=self.llm_provider.fallback_providers,
+            )
+        self._mapreduce_sem_lock = threading.Lock()
+        self._mapreduce_semaphores: dict[str, threading.Semaphore] = {}
 
     def close(self) -> None:
-        """Close primary and fallback LLM provider HTTP clients cleanly."""
+        """Close primary, pro, and fallback LLM provider HTTP clients cleanly."""
         close_fn = getattr(self.llm_provider, "close", None)
         if callable(close_fn):
             close_fn()
+        if self.pro_llm_provider is not None:
+            pro_close = getattr(self.pro_llm_provider, "close", None)
+            if callable(pro_close):
+                pro_close()
         for fb in getattr(self.llm_provider, "fallback_providers", ()) or ():
             fb_close = getattr(fb, "close", None)
             if callable(fb_close):
@@ -2084,6 +2112,103 @@ class AssistantAgent:
         system_prompt = "\n\n".join(part for part in (policy_text, runtime_rules) if part)
         return system_prompt, directives
 
+    def _get_mapreduce_semaphore(self, tenant: str) -> threading.Semaphore:
+        with self._mapreduce_sem_lock:
+            sem = self._mapreduce_semaphores.get(tenant)
+            if sem is None:
+                sem = threading.Semaphore(2)
+                self._mapreduce_semaphores[tenant] = sem
+            return sem
+
+    def _get_pro_provider(self) -> LLMProvider:
+        pro_model = self.pro_model or resolve_pro_llm_model()
+        if not pro_model or pro_model == self.llm_provider.profile.model_id or not self.llm_provider.enabled:
+            return self.llm_provider
+        if "chat_with_raw" in self.llm_provider.__dict__ or "_invoke_deepseek" in self.__dict__:
+            return self.llm_provider
+        if self.pro_llm_provider is None or self.pro_llm_provider.profile.model_id != pro_model:
+            self.pro_llm_provider = LLMProvider(
+                api_key=self.llm_provider.api_key,
+                model=pro_model,
+                base_url=self.base_url if self._explicit_base_url else resolve_llm_base_url(pro_model),
+                provider=self._resolved_provider_arg,
+                circuit_breaker=self.llm_provider.circuit_breaker,
+                fallback_providers=self.llm_provider.fallback_providers,
+            )
+        return self.pro_llm_provider
+
+    def _provider_policy_check(self, actor: Actor) -> Callable[[ModelProfile, bool], bool]:
+        store = getattr(self, "provider_policy_store", None)
+        if store is None:
+            return lambda _profile, _is_failover: True
+        return lambda profile, is_failover: store.is_provider_allowed(
+            actor.tenant,
+            profile,
+            data_class="internal",
+            is_failover=is_failover,
+        )
+
+    @staticmethod
+    def _clamp_decision_to_max_tier(decision: RoutingDecision, max_tier: str) -> RoutingDecision:
+        rank = {"T0": 0, "T1": 1, "T2": 2, "T3": 3}
+        if rank.get(decision.tier, 3) <= rank.get(max_tier, 3):
+            return decision
+        if max_tier == "T1":
+            return RoutingDecision(
+                tier="T1",
+                effort="none",
+                max_tokens=EFFORT_MAX_TOKENS["none"],
+                timeout_s=EFFORT_TIMEOUT_SECONDS["none"],
+                reason=f"{decision.reason}|policy_cap_T1",
+                escalated_from_tier=decision.escalated_from_tier,
+                keep_warm_same_model=decision.keep_warm_same_model,
+            )
+        if max_tier == "T2":
+            return RoutingDecision(
+                tier="T2",
+                effort="low",
+                max_tokens=EFFORT_MAX_TOKENS["low"],
+                timeout_s=EFFORT_TIMEOUT_SECONDS["low"],
+                reason=f"{decision.reason}|policy_cap_T2",
+                escalated_from_tier=decision.escalated_from_tier,
+                keep_warm_same_model=decision.keep_warm_same_model,
+            )
+        return decision
+
+    @staticmethod
+    def _estimate_turn_budget(
+        decision: RoutingDecision,
+        profile: ModelProfile,
+        *,
+        prompt_tokens: int,
+        zone1_tokens: int,
+        is_mapreduce: bool = False,
+    ) -> tuple[int, int]:
+        if is_mapreduce:
+            est_comp = 2000
+            est_toks = max(1, int(prompt_tokens) + est_comp)
+            est_micro = max(
+                1,
+                profile.estimate_cost_micro_usd(
+                    prompt_tokens=max(0, int(prompt_tokens)),
+                    cache_hit_tokens=0,
+                    completion_tokens=est_comp,
+                ),
+            )
+            return est_micro, est_toks
+        est_comp = 150 if decision.tier == "T1" else (400 if decision.tier == "T2" else 1000)
+        cache_est = int(max(0, int(zone1_tokens)) * 0.5) if decision.tier in {"T1", "T2"} else 0
+        est_toks = max(1, int(prompt_tokens) + est_comp)
+        est_micro = max(
+            1,
+            profile.estimate_cost_micro_usd(
+                prompt_tokens=max(0, int(prompt_tokens)),
+                cache_hit_tokens=cache_est,
+                completion_tokens=est_comp,
+            ),
+        )
+        return est_micro, est_toks
+
     def _invoke_deepseek(
         self,
         actor: Actor,
@@ -2095,14 +2220,17 @@ class AssistantAgent:
         if self.api_key and self.llm_provider.api_key != self.api_key:
             self.llm_provider.api_key = self.api_key
         opts = _ACTIVE_CALL_OPTS.get() or {}
-        result, raw = self.llm_provider.chat_with_raw(
-            messages,
-            tools=tools,
-            effort=opts.get("effort", "low"),
-            max_tokens=opts.get("max_tokens", 2400),
-            timeout_s=opts.get("timeout_s", LLM_TIMEOUT_SECONDS),
-            user_tag=f"{actor.tenant}:{actor.subject}",
-        )
+        policy_check = opts.get("provider_policy_check")
+        call_kwargs: dict[str, Any] = {
+            "tools": tools,
+            "effort": opts.get("effort", "low"),
+            "max_tokens": opts.get("max_tokens", 2400),
+            "timeout_s": opts.get("timeout_s", LLM_TIMEOUT_SECONDS),
+            "user_tag": f"{actor.tenant}:{actor.subject}",
+        }
+        if policy_check is not None:
+            call_kwargs["provider_policy_check"] = policy_check
+        result, raw = self.llm_provider.chat_with_raw(messages, **call_kwargs)
         _LAST_CHAT_RESULT.set(result)
         return raw
 
@@ -2362,12 +2490,19 @@ class AssistantAgent:
         messages: list[dict[str, Any]],
         tool_schemas: list[dict[str, Any]],
         decision: RoutingDecision,
+        *,
+        target_provider: LLMProvider | None = None,
+        timeout_s: float | None = None,
+        provider_policy_check: Callable[[ModelProfile, bool], bool] | None = None,
     ) -> ChatResult:
+        provider_obj = target_provider or self.llm_provider
+        effective_timeout = timeout_s if timeout_s is not None else decision.timeout_s
         opts_token = _ACTIVE_CALL_OPTS.set(
             {
                 "effort": decision.effort,
                 "max_tokens": decision.max_tokens,
-                "timeout_s": decision.timeout_s,
+                "timeout_s": effective_timeout,
+                "provider_policy_check": provider_policy_check,
             }
         )
         res_token = _LAST_CHAT_RESULT.set(None)
@@ -2375,7 +2510,7 @@ class AssistantAgent:
         try:
             use_compat_hook = (
                 "_invoke_deepseek" in self.__dict__
-                or self.llm_provider.profile.adapter_kind == "openai_compat"
+                or (provider_obj is self.llm_provider and self.llm_provider.profile.adapter_kind == "openai_compat")
             )
             if use_compat_hook:
                 raw = self._invoke_deepseek(actor, messages, tool_schemas)
@@ -2384,14 +2519,16 @@ class AssistantAgent:
                     return captured
                 elapsed = (time.monotonic() - started) * 1000.0
                 return OpenAICompatAdapter().parse_response(raw, self.llm_provider.profile, latency_ms=elapsed)
-            result, _ = self.llm_provider.chat_with_raw(
-                messages,
-                tools=tool_schemas,
-                effort=decision.effort,
-                max_tokens=decision.max_tokens,
-                timeout_s=decision.timeout_s,
-                user_tag=f"{actor.tenant}:{actor.subject}",
-            )
+            call_kwargs: dict[str, Any] = {
+                "tools": tool_schemas,
+                "effort": decision.effort,
+                "max_tokens": decision.max_tokens,
+                "timeout_s": effective_timeout,
+                "user_tag": f"{actor.tenant}:{actor.subject}",
+            }
+            if provider_policy_check is not None:
+                call_kwargs["provider_policy_check"] = provider_policy_check
+            result, _ = provider_obj.chat_with_raw(messages, **call_kwargs)
             return result
         finally:
             _LAST_CHAT_RESULT.reset(res_token)
@@ -2565,105 +2702,13 @@ class AssistantAgent:
         if not self.llm_enabled:
             return self._offline_fallback(actor, text, locale, snapshot)
 
-        if not self.workflow.take_planner_budget(actor.tenant, planner_limit):
-            raise HTTPException(429, "Tenant planner budget exhausted", headers={"Retry-After": "60"})
-
-        try:
-            quota = self.quota_manager.check_quota(actor)
-        except Exception:
-            quota = None
-        if quota is not None and not quota.allowed:
-            self._record_telemetry_safe(
-                actor,
-                provider="quota",
-                model=self.llm_provider.profile.model_id,
-                tier="T0",
-                reasoning_effort="none",
-                success=False,
-                error_code="QUOTA_EXCEEDED",
-            )
-            return AssistantMessage(
-                kind="message",
-                reply=_localize(
-                    locale,
-                    "当前账号或部门的今日 AI 用量配额已达上限，请联系管理员调整配额后再试，或使用 `/` 快捷指令处理业务。",
-                    "目前帳號或部門的今日 AI 用量配額已達上限，請聯絡管理員調整配額後再試，或使用 `/` 快捷指令處理業務。",
-                    "Daily AI usage quota has been reached for your scope. Contact an administrator or use `/` shortcuts for deterministic actions.",
-                ),
-                mode="workflow_guidance",
-                pending_work=snapshot,
-                suggested_actions=self._suggested_actions(actor, snapshot, locale),
-                email_draft=None,
-            )
-
         doc_input = self._coerce_active_document(active_document)
         doc_pack_tokens = approx_tokens(doc_input.content) if doc_input is not None else 0
-        system_prompt, directives = self._compile_system_prompt(actor, snapshot, locale)
-
-        if doc_input is not None and doc_pack_tokens > ZONE1_5_HARD_MAX_TOKENS:
-            try:
-                mr_res = self.mapreduce.analyze(doc_input.content, question=text)
-            except (LLMProviderError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as err:
-                _emit_llm_metric(
-                    provider=self.llm_provider.profile.provider,
-                    model=self.llm_provider.profile.model_id,
-                    tier="T3",
-                    status="error",
-                )
-                self._record_telemetry_safe(
-                    actor,
-                    provider=self.llm_provider.profile.provider,
-                    model=self.llm_provider.profile.model_id,
-                    tier="T3",
-                    reasoning_effort="high",
-                    success=False,
-                    error_code=getattr(err, "error_code", type(err).__name__),
-                )
-                return self._offline_fallback(actor, text, locale, snapshot)
-
-            _emit_llm_metric(
-                provider=self.llm_provider.profile.provider,
-                model=self.llm_provider.profile.model_id,
-                tier="T3",
-                status="ok",
-                prompt_tokens=mr_res.usage.prompt_tokens,
-                cache_hit_tokens=mr_res.usage.cache_hit_tokens,
-                completion_tokens=mr_res.usage.completion_tokens,
-                estimated_usd=mr_res.usage.estimated_usd,
-            )
-            _emit_cache_metric(
-                cache_layer="provider_kv",
-                outcome="hit" if mr_res.usage.cache_hit_tokens > 0 else "miss",
-            )
-            self._record_telemetry_safe(
-                actor,
-                provider=self.llm_provider.profile.provider,
-                model=self.llm_provider.profile.model_id,
-                tier="T3",
-                reasoning_effort="high",
-                prompt_tokens=mr_res.usage.prompt_tokens,
-                cache_hit_tokens=mr_res.usage.cache_hit_tokens,
-                reasoning_tokens=mr_res.usage.reasoning_tokens,
-                completion_tokens=mr_res.usage.completion_tokens,
-                estimated_usd=mr_res.usage.estimated_usd,
-                success=True,
-            )
-            safe_mr = self._sanitize_assistant_reply(mr_res.summary, directives, locale)
-            if not safe_mr:
-                return self._offline_fallback(actor, text, locale, snapshot)
-            return AssistantMessage(
-                kind="message",
-                reply=safe_mr[:4000],
-                mode="workflow_guidance",
-                pending_work=snapshot,
-                suggested_actions=self._suggested_actions(actor, snapshot, locale),
-                email_draft=None,
-            )
-
-        pulse_summary = self._compile_pulse_summary(actor, snapshot)
-        tool_schemas = self._openai_tool_schemas(actor, offered_tools)
-        history_turns = [{"role": t.role, "content": t.text} for t in (conversation_context or [])]
-        effective_session_id = session_id or (f"doc:{actor.subject}" if doc_input is not None else None)
+        active_doc_sha = (
+            sha256(doc_input.content.encode("utf-8")).hexdigest()
+            if doc_input is not None
+            else ""
+        )
         try:
             mem_state = self.memory_store.get(actor)
             user_memory_content = mem_state.content
@@ -2675,11 +2720,6 @@ class AssistantAgent:
                 user_memory_content = ""
             memory_version = 0
 
-        active_doc_sha = (
-            sha256(doc_input.content.encode("utf-8")).hexdigest()
-            if doc_input is not None
-            else ""
-        )
         has_session_history_state = False
         if session_id and doc_input is None:
             try:
@@ -2688,18 +2728,34 @@ class AssistantAgent:
                     has_session_history_state = True
             except Exception:
                 pass
+
+        # 3a. L1 cache check BEFORE planner budget and BEFORE quota reservation (strictly after guardrail & off-topic).
         l1_eligible = (
             not task_switched
             and not conversation_context
             and not has_session_history_state
+            and doc_pack_tokens <= ZONE1_5_HARD_MAX_TOKENS
             and _is_l1_cacheable_query(text)
         )
         l1_key = ""
         if l1_eligible:
+            scope_role_key = json.dumps(
+                {
+                    "role": actor.role,
+                    "grants": sorted(actor.grants),
+                    "warehouses": sorted(actor.warehouses),
+                    "module_scopes": {
+                        str(k): sorted(v)
+                        for k, v in sorted((actor.module_scopes or {}).items(), key=lambda kv: str(kv[0]))
+                    },
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
             l1_key = self.response_cache.make_key(
                 tenant=actor.tenant,
                 subject=actor.subject,
-                role=actor.role,
+                role=scope_role_key,
                 locale=locale,
                 memory_version=memory_version,
                 active_doc_sha=active_doc_sha,
@@ -2736,29 +2792,161 @@ class AssistantAgent:
                 )
             _emit_cache_metric(cache_layer="l1", outcome="miss")
 
-        assembly = self.context_manager.assemble(
-            actor,
-            session_id=effective_session_id,
-            system_prompt=system_prompt,
-            tool_schemas=tool_schemas,
-            history_turns=history_turns,
-            user_text=text,
-            pulse_summary=pulse_summary,
-            profile=self.llm_provider.profile,
-            user_memory=user_memory_content or None,
-            active_document=doc_input,
-            task_switched=task_switched,
-        )
+        if not self.workflow.take_planner_budget(actor.tenant, planner_limit):
+            raise HTTPException(429, "Tenant planner budget exhausted", headers={"Retry-After": "60"})
 
-        decision = self.effort_router.route(
-            text,
-            active_doc_tokens=assembly.zone1_5_tokens,
-            doc_pack_tokens=doc_pack_tokens,
-            conversation_turns=len(history_turns),
-            session_active=bool(effective_session_id or history_turns),
-        )
-        soft_cap_active = bool(quota is not None and getattr(quota, "soft_cap_active", False))
-        if soft_cap_active and decision.tier in {"T2", "T3"}:
+        try:
+            provider_policy = self.provider_policy_store.get_policy(actor.tenant)
+        except Exception:
+            self._record_telemetry_safe(
+                actor,
+                provider="policy",
+                model=self.llm_provider.profile.model_id,
+                tier="T0",
+                reasoning_effort="none",
+                success=False,
+                error_code="PROVIDER_POLICY_ERROR",
+            )
+            return self._offline_fallback(actor, text, locale, snapshot)
+
+        max_tier = str(provider_policy.get("max_tier") or "T3")
+        if max_tier == "T0":
+            return self._offline_fallback(actor, text, locale, snapshot)
+
+        system_prompt, directives = self._compile_system_prompt(actor, snapshot, locale)
+        is_mapreduce = doc_input is not None and doc_pack_tokens > ZONE1_5_HARD_MAX_TOKENS
+        history_turns = [{"role": t.role, "content": t.text} for t in (conversation_context or [])]
+        effective_session_id = session_id or (f"doc:{actor.subject}" if doc_input is not None else None)
+
+        if is_mapreduce:
+            decision = self.effort_router.route(
+                text,
+                doc_pack_tokens=doc_pack_tokens,
+                conversation_turns=len(history_turns),
+                session_active=True,
+            )
+            assembly = None
+            sorted_tools: list[dict[str, Any]] = []
+            prompt_toks_est = doc_pack_tokens
+            zone1_toks_est = 0
+        else:
+            pulse_summary = self._compile_pulse_summary(actor, snapshot)
+            tool_schemas = self._openai_tool_schemas(actor, offered_tools)
+            assembly = self.context_manager.assemble(
+                actor,
+                session_id=effective_session_id,
+                system_prompt=system_prompt,
+                tool_schemas=tool_schemas,
+                history_turns=history_turns,
+                user_text=text,
+                pulse_summary=pulse_summary,
+                profile=self.llm_provider.profile,
+                user_memory=user_memory_content or None,
+                active_document=doc_input,
+                task_switched=task_switched,
+            )
+            decision = self.effort_router.route(
+                text,
+                active_doc_tokens=assembly.zone1_5_tokens,
+                doc_pack_tokens=doc_pack_tokens,
+                conversation_turns=len(history_turns),
+                session_active=bool(effective_session_id or history_turns),
+            )
+            decision = self._clamp_decision_to_max_tier(decision, max_tier)
+            sorted_tools = assembly.sorted_tool_schemas
+            prompt_toks_est = (
+                assembly.zone1_tokens
+                + assembly.zone1_2_tokens
+                + assembly.zone1_5_tokens
+                + assembly.zone2_tokens
+                + assembly.zone3_tokens
+                + approx_tokens(text)
+            )
+            zone1_toks_est = assembly.zone1_tokens
+
+        # 3b. Fail-closed quota pre-check + atomic reservation BEFORE invoking external LLM.
+        try:
+            precheck = self.quota_manager.check_quota(actor)
+            if not precheck.allowed:
+                quota = precheck
+            else:
+                if not is_mapreduce and precheck.soft_cap_active and decision.tier in {"T2", "T3"}:
+                    decision = RoutingDecision(
+                        tier="T1",
+                        effort="none",
+                        max_tokens=EFFORT_MAX_TOKENS["none"],
+                        timeout_s=EFFORT_TIMEOUT_SECONDS["none"],
+                        reason=f"{decision.reason}|soft_budget_downgrade_from_{decision.tier}",
+                        escalated_from_tier=decision.escalated_from_tier,
+                        keep_warm_same_model=decision.keep_warm_same_model,
+                    )
+                est_provider = self._get_pro_provider() if decision.tier == "T3" else self.llm_provider
+                est_micro_usd, est_tokens = self._estimate_turn_budget(
+                    decision,
+                    est_provider.profile,
+                    prompt_tokens=prompt_toks_est,
+                    zone1_tokens=zone1_toks_est,
+                    is_mapreduce=is_mapreduce,
+                )
+                if hasattr(self.quota_manager, "reserve_budget"):
+                    quota = self.quota_manager.reserve_budget(
+                        actor,
+                        estimated_micro_usd=est_micro_usd,
+                        estimated_tokens=est_tokens,
+                    )
+                else:
+                    quota = precheck
+        except Exception:
+            self._record_telemetry_safe(
+                actor,
+                provider="quota",
+                model=self.llm_provider.profile.model_id,
+                tier="T0",
+                reasoning_effort="none",
+                success=False,
+                error_code="QUOTA_CHECK_ERROR",
+            )
+            return AssistantMessage(
+                kind="message",
+                reply=_localize(
+                    locale,
+                    "配额服务暂不可用，已安全降级为本地工作台指引，请稍后再试或使用 `/` 快捷指令。",
+                    "配額服務暫不可用，已安全降級為本地工作台指引，請稍後再試或使用 `/` 快捷指令。",
+                    "Quota service is unavailable; failed closed to deterministic local guidance without calling an external LLM.",
+                ),
+                mode="workflow_guidance",
+                pending_work=snapshot,
+                suggested_actions=self._suggested_actions(actor, snapshot, locale),
+                email_draft=None,
+            )
+
+        if not quota.allowed:
+            self._record_telemetry_safe(
+                actor,
+                provider="quota",
+                model=self.llm_provider.profile.model_id,
+                tier="T0",
+                reasoning_effort="none",
+                success=False,
+                error_code="QUOTA_EXCEEDED",
+            )
+            return AssistantMessage(
+                kind="message",
+                reply=_localize(
+                    locale,
+                    "当前账号或部门的今日 AI 用量配额已达上限，请联系管理员调整配额后再试，或使用 `/` 快捷指令处理业务。",
+                    "目前帳號或部門的今日 AI 用量配額已達上限，請聯絡管理員調整配額後再試，或使用 `/` 快捷指令處理業務。",
+                    "Daily AI usage quota has been reached for your scope. Contact an administrator or use `/` shortcuts for deterministic actions.",
+                ),
+                mode="workflow_guidance",
+                pending_work=snapshot,
+                suggested_actions=self._suggested_actions(actor, snapshot, locale),
+                email_draft=None,
+            )
+
+        reservation_id = getattr(quota, "reservation_id", None)
+        soft_cap_active = bool(getattr(quota, "soft_cap_active", False))
+        if not is_mapreduce and soft_cap_active and decision.tier in {"T2", "T3"}:
             decision = RoutingDecision(
                 tier="T1",
                 effort="none",
@@ -2769,282 +2957,452 @@ class AssistantAgent:
                 keep_warm_same_model=decision.keep_warm_same_model,
             )
 
-        messages = list(assembly.messages)
-        sorted_tools = assembly.sorted_tool_schemas
-        current_decision = decision
-        escalated_from: RoutingTier | None = None
-        seen_malformed: set[tuple[str, str]] = set()
-        saw_tool_calls = False
+        turn_deadline = time.monotonic() + max(0.05, float(os.getenv("AIOS_TURN_DEADLINE_SECONDS", "55")))
+        policy_check = self._provider_policy_check(actor)
+        llm_usage_recorded = False
+        actual_micro_usd = 0
+        actual_tokens = 0
 
-        for step in range(MAX_HARNESS_STEPS):
-            try:
-                chat_res = self._call_model(actor, messages, sorted_tools, current_decision)
-            except (LLMProviderError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as err:
-                _emit_llm_metric(
-                    provider=self.llm_provider.profile.provider,
-                    model=self.llm_provider.profile.model_id,
-                    tier=current_decision.tier,
-                    status="error",
-                )
-                self._record_telemetry_safe(
-                    actor,
-                    provider=self.llm_provider.profile.provider,
-                    model=self.llm_provider.profile.model_id,
-                    tier=current_decision.tier,
-                    reasoning_effort=current_decision.effort,
-                    escalated_from_tier=escalated_from,
-                    success=False,
-                    error_code=getattr(err, "error_code", type(err).__name__),
-                )
-                return self._offline_fallback(actor, text, locale, snapshot)
+        try:
+            if is_mapreduce:
+                assert doc_input is not None
+                mr_provider = self._get_pro_provider()
+                if not policy_check(mr_provider.profile, False):
+                    self._record_telemetry_safe(
+                        actor,
+                        provider=mr_provider.profile.provider,
+                        model=mr_provider.profile.model_id,
+                        tier="T3",
+                        reasoning_effort="high",
+                        success=False,
+                        error_code="PROVIDER_POLICY_DENIED",
+                    )
+                    return self._offline_fallback(actor, text, locale, snapshot)
 
-            failover_from = getattr(chat_res, "failover_from", None)
-            _emit_llm_metric(
-                provider=chat_res.provider,
-                model=chat_res.model,
-                tier=current_decision.tier,
-                status="ok",
-                prompt_tokens=chat_res.usage.prompt_tokens,
-                cache_hit_tokens=chat_res.usage.cache_hit_tokens,
-                completion_tokens=chat_res.usage.completion_tokens,
-                estimated_usd=chat_res.usage.estimated_usd,
-            )
-            _emit_cache_metric(
-                cache_layer="provider_kv",
-                outcome="hit" if chat_res.usage.cache_hit_tokens > 0 else "miss",
-            )
-            self._record_telemetry_safe(
-                actor,
-                provider=chat_res.provider,
-                model=chat_res.model,
-                tier=current_decision.tier,
-                reasoning_effort=current_decision.effort,
-                prompt_tokens=chat_res.usage.prompt_tokens,
-                cache_hit_tokens=chat_res.usage.cache_hit_tokens,
-                reasoning_tokens=chat_res.usage.reasoning_tokens,
-                completion_tokens=chat_res.usage.completion_tokens,
-                estimated_usd=chat_res.usage.estimated_usd,
-                latency_ms=chat_res.latency_ms,
-                escalated_from_tier=escalated_from,
-                success=True,
-                error_code=f"FAILOVER:{failover_from}"[:64] if failover_from else None,
-            )
-
-            if chat_res.tool_calls:
-                saw_tool_calls = True
-                assistant_msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": chat_res.text or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": tc.raw_arguments or json.dumps(tc.arguments, ensure_ascii=False),
-                            },
-                        }
-                        for tc in chat_res.tool_calls
-                    ],
-                }
-                if chat_res.reasoning_content is not None:
-                    assistant_msg["reasoning_content"] = chat_res.reasoning_content
-                if chat_res.thinking_blocks:
-                    assistant_msg["thinking_blocks"] = chat_res.thinking_blocks
-
-                # Detect malformed JSON arguments for Cascade Escalation (T1/T2 -> T3).
-                malformed_tc = next((tc for tc in chat_res.tool_calls if tc.malformed_arguments), None)
-                if malformed_tc is not None:
-                    sig = (malformed_tc.name, malformed_tc.raw_arguments)
-                    if (
-                        not soft_cap_active
-                        and current_decision.tier in {"T1", "T2"}
-                        and escalated_from is None
-                        and step + 1 < MAX_HARNESS_STEPS
-                        and sig not in seen_malformed
-                    ):
-                        seen_malformed.add(sig)
-                        prev_tier = current_decision.tier
-                        current_decision = self.effort_router.route(
-                            text,
-                            cascade_from_tier=prev_tier,
-                            session_active=True,
-                        )
-                        escalated_from = prev_tier
-                        messages.append(assistant_msg)
-                        for tc in chat_res.tool_calls:
-                            err_obs = (
-                                f"Malformed JSON arguments for tool '{tc.name}'. Return valid JSON matching the tool schema."
-                                if tc.malformed_arguments
-                                else "Skipped due to malformed sibling tool arguments."
-                            )
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "name": tc.name,
-                                    "content": self.context_manager.clamp_tool_output(err_obs),
-                                }
-                            )
-                        continue
+                sem = self._get_mapreduce_semaphore(actor.tenant)
+                wait_s = min(1.0, max(0.05, turn_deadline - time.monotonic()))
+                if not sem.acquire(timeout=wait_s):
+                    self._record_telemetry_safe(
+                        actor,
+                        provider="mapreduce",
+                        model=mr_provider.profile.model_id,
+                        tier="T3",
+                        reasoning_effort="high",
+                        success=False,
+                        error_code="MAPREDUCE_BUSY",
+                    )
                     return AssistantMessage(
                         kind="message",
                         reply=_localize(
                             locale,
-                            "工具参数格式不完整，请补充明确的编号、仓库或 YYYY-MM-DD 日期后再试。",
-                            "工具參數格式不完整，請補充明確的編號、倉庫或 YYYY-MM-DD 日期後再試。",
-                            "Some tool arguments are invalid or missing; please provide an explicit reference, warehouse, or YYYY-MM-DD date.",
+                            "当前租户正在并行处理多份超大文档分析，请稍候再试或先使用 `/` 快捷指令。",
+                            "目前租戶正在並行處理多份超大文檔分析，請稍後再試或先使用 `/` 快捷指令。",
+                            "Tenant large-document analyzer concurrency is busy; please retry shortly or use `/` shortcuts.",
                         ),
                         mode="workflow_guidance",
                         pending_work=snapshot,
+                        suggested_actions=self._suggested_actions(actor, snapshot, locale),
+                        email_draft=None,
+                    )
+                try:
+                    mr_res = self.mapreduce.analyze(doc_input.content, question=text)
+                except (LLMProviderError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as err:
+                    _emit_llm_metric(
+                        provider=mr_provider.profile.provider,
+                        model=mr_provider.profile.model_id,
+                        tier="T3",
+                        status="error",
+                    )
+                    self._record_telemetry_safe(
+                        actor,
+                        provider=mr_provider.profile.provider,
+                        model=mr_provider.profile.model_id,
+                        tier="T3",
+                        reasoning_effort="high",
+                        success=False,
+                        error_code=getattr(err, "error_code", type(err).__name__),
+                    )
+                    return self._offline_fallback(actor, text, locale, snapshot)
+                finally:
+                    sem.release()
+
+                llm_usage_recorded = True
+                actual_tokens += int(mr_res.usage.prompt_tokens + mr_res.usage.completion_tokens)
+                actual_micro_usd += (
+                    int(round(mr_res.usage.estimated_usd * 1_000_000))
+                    if mr_res.usage.estimated_usd > 0
+                    else mr_provider.profile.estimate_cost_micro_usd(
+                        prompt_tokens=mr_res.usage.prompt_tokens,
+                        cache_hit_tokens=mr_res.usage.cache_hit_tokens,
+                        completion_tokens=mr_res.usage.completion_tokens,
+                    )
+                )
+                _emit_llm_metric(
+                    provider=mr_provider.profile.provider,
+                    model=mr_provider.profile.model_id,
+                    tier="T3",
+                    status="ok",
+                    prompt_tokens=mr_res.usage.prompt_tokens,
+                    cache_hit_tokens=mr_res.usage.cache_hit_tokens,
+                    completion_tokens=mr_res.usage.completion_tokens,
+                    estimated_usd=mr_res.usage.estimated_usd,
+                )
+                _emit_cache_metric(
+                    cache_layer="provider_kv",
+                    outcome="hit" if mr_res.usage.cache_hit_tokens > 0 else "miss",
+                )
+                self._record_telemetry_safe(
+                    actor,
+                    provider=mr_provider.profile.provider,
+                    model=mr_provider.profile.model_id,
+                    tier="T3",
+                    reasoning_effort="high",
+                    prompt_tokens=mr_res.usage.prompt_tokens,
+                    cache_hit_tokens=mr_res.usage.cache_hit_tokens,
+                    reasoning_tokens=mr_res.usage.reasoning_tokens,
+                    completion_tokens=mr_res.usage.completion_tokens,
+                    estimated_usd=mr_res.usage.estimated_usd,
+                    success=True,
+                )
+                safe_mr = self._sanitize_assistant_reply(mr_res.summary, directives, locale)
+                if not safe_mr:
+                    return self._offline_fallback(actor, text, locale, snapshot)
+                return AssistantMessage(
+                    kind="message",
+                    reply=safe_mr[:4000],
+                    mode="workflow_guidance",
+                    pending_work=snapshot,
+                    suggested_actions=self._suggested_actions(actor, snapshot, locale),
+                    email_draft=None,
+                )
+
+            assert assembly is not None
+            messages = list(assembly.messages)
+            current_decision = decision
+            escalated_from: RoutingTier | None = None
+            seen_malformed: set[tuple[str, str]] = set()
+            saw_tool_calls = False
+
+            for step in range(MAX_HARNESS_STEPS):
+                remaining_s = turn_deadline - time.monotonic()
+                step_provider = self._get_pro_provider() if current_decision.tier == "T3" else self.llm_provider
+                if remaining_s <= 0.0:
+                    self._record_telemetry_safe(
+                        actor,
+                        provider=step_provider.profile.provider,
+                        model=step_provider.profile.model_id,
+                        tier=current_decision.tier,
+                        reasoning_effort=current_decision.effort,
+                        escalated_from_tier=escalated_from,
+                        success=False,
+                        error_code="TURN_DEADLINE_EXCEEDED",
+                    )
+                    return self._offline_fallback(actor, text, locale, snapshot)
+
+                step_timeout = min(current_decision.timeout_s, max(1.0, remaining_s))
+                try:
+                    chat_res = self._call_model(
+                        actor,
+                        messages,
+                        sorted_tools,
+                        current_decision,
+                        target_provider=step_provider,
+                        timeout_s=step_timeout,
+                        provider_policy_check=policy_check,
+                    )
+                except (LLMProviderError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as err:
+                    _emit_llm_metric(
+                        provider=step_provider.profile.provider,
+                        model=step_provider.profile.model_id,
+                        tier=current_decision.tier,
+                        status="error",
+                    )
+                    self._record_telemetry_safe(
+                        actor,
+                        provider=step_provider.profile.provider,
+                        model=step_provider.profile.model_id,
+                        tier=current_decision.tier,
+                        reasoning_effort=current_decision.effort,
+                        escalated_from_tier=escalated_from,
+                        success=False,
+                        error_code=getattr(err, "error_code", type(err).__name__),
+                    )
+                    return self._offline_fallback(actor, text, locale, snapshot)
+
+                llm_usage_recorded = True
+                actual_tokens += int(chat_res.usage.prompt_tokens + chat_res.usage.completion_tokens)
+                if chat_res.usage.estimated_usd > 0:
+                    actual_micro_usd += int(round(chat_res.usage.estimated_usd * 1_000_000))
+                else:
+                    actual_micro_usd += step_provider.profile.estimate_cost_micro_usd(
+                        prompt_tokens=chat_res.usage.prompt_tokens,
+                        cache_hit_tokens=chat_res.usage.cache_hit_tokens,
+                        completion_tokens=chat_res.usage.completion_tokens,
                     )
 
-                if len(chat_res.tool_calls) == 1:
-                    tc = chat_res.tool_calls[0]
-                    outcome = self._dispatch_llm_tool(
-                        actor,
-                        tc.name,
-                        tc.arguments,
-                        text,
-                        locale,
-                        key,
-                        snapshot,
-                        execute_call,
-                        preview_approval,
-                    )
-                    if isinstance(outcome, PolicyRefusal):
-                        return outcome
-                    if getattr(outcome, "kind", None) in {"proposal", "approval_preview"}:
-                        return outcome
-                    if isinstance(outcome, AssistantMessage):
-                        if outcome.mode == "email_draft":
-                            return outcome
-                        # Cascade escalate once if business tool args failed schema validation at T1/T2.
+                failover_from = getattr(chat_res, "failover_from", None)
+                _emit_llm_metric(
+                    provider=chat_res.provider,
+                    model=chat_res.model,
+                    tier=current_decision.tier,
+                    status="ok",
+                    prompt_tokens=chat_res.usage.prompt_tokens,
+                    cache_hit_tokens=chat_res.usage.cache_hit_tokens,
+                    completion_tokens=chat_res.usage.completion_tokens,
+                    estimated_usd=chat_res.usage.estimated_usd,
+                )
+                _emit_cache_metric(
+                    cache_layer="provider_kv",
+                    outcome="hit" if chat_res.usage.cache_hit_tokens > 0 else "miss",
+                )
+                self._record_telemetry_safe(
+                    actor,
+                    provider=chat_res.provider,
+                    model=chat_res.model,
+                    tier=current_decision.tier,
+                    reasoning_effort=current_decision.effort,
+                    prompt_tokens=chat_res.usage.prompt_tokens,
+                    cache_hit_tokens=chat_res.usage.cache_hit_tokens,
+                    reasoning_tokens=chat_res.usage.reasoning_tokens,
+                    completion_tokens=chat_res.usage.completion_tokens,
+                    estimated_usd=chat_res.usage.estimated_usd,
+                    latency_ms=chat_res.latency_ms,
+                    escalated_from_tier=escalated_from,
+                    success=True,
+                    error_code=f"FAILOVER:{failover_from}"[:64] if failover_from else None,
+                )
+
+                if chat_res.tool_calls:
+                    saw_tool_calls = True
+                    assistant_msg: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": chat_res.text or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.name,
+                                    "arguments": tc.raw_arguments or json.dumps(tc.arguments, ensure_ascii=False),
+                                },
+                            }
+                            for tc in chat_res.tool_calls
+                        ],
+                    }
+                    if chat_res.reasoning_content is not None:
+                        assistant_msg["reasoning_content"] = chat_res.reasoning_content
+                    if chat_res.thinking_blocks:
+                        assistant_msg["thinking_blocks"] = chat_res.thinking_blocks
+
+                    # Detect malformed JSON arguments for Cascade Escalation (T1/T2 -> T3).
+                    malformed_tc = next((tc for tc in chat_res.tool_calls if tc.malformed_arguments), None)
+                    if malformed_tc is not None:
+                        sig = (malformed_tc.name, malformed_tc.raw_arguments)
                         if (
                             not soft_cap_active
-                            and outcome.mode == "workflow_guidance"
+                            and max_tier == "T3"
                             and current_decision.tier in {"T1", "T2"}
                             and escalated_from is None
                             and step + 1 < MAX_HARNESS_STEPS
+                            and sig not in seen_malformed
                         ):
-                            sig = (tc.name, tc.raw_arguments)
-                            if sig not in seen_malformed:
-                                seen_malformed.add(sig)
-                                prev_tier = current_decision.tier
-                                current_decision = self.effort_router.route(
-                                    text,
-                                    cascade_from_tier=prev_tier,
-                                    session_active=True,
+                            seen_malformed.add(sig)
+                            prev_tier = current_decision.tier
+                            current_decision = self.effort_router.route(
+                                text,
+                                cascade_from_tier=prev_tier,
+                                session_active=True,
+                            )
+                            escalated_from = prev_tier
+                            messages.append(assistant_msg)
+                            for tc in chat_res.tool_calls:
+                                err_obs = (
+                                    f"Malformed JSON arguments for tool '{tc.name}'. Return valid JSON matching the tool schema."
+                                    if tc.malformed_arguments
+                                    else "Skipped due to malformed sibling tool arguments."
                                 )
-                                escalated_from = prev_tier
-                                messages.append(assistant_msg)
                                 messages.append(
                                     {
                                         "role": "tool",
                                         "tool_call_id": tc.id,
                                         "name": tc.name,
-                                        "content": self.context_manager.clamp_tool_output(
-                                            f"Tool call validation error: {outcome.reply}"
-                                        ),
+                                        "content": self.context_manager.clamp_tool_output(err_obs),
                                     }
                                 )
-                                continue
-                        return outcome
+                            continue
+                        return AssistantMessage(
+                            kind="message",
+                            reply=_localize(
+                                locale,
+                                "工具参数格式不完整，请补充明确的编号、仓库或 YYYY-MM-DD 日期后再试。",
+                                "工具參數格式不完整，請補充明確的編號、倉庫或 YYYY-MM-DD 日期後再試。",
+                                "Some tool arguments are invalid or missing; please provide an explicit reference, warehouse, or YYYY-MM-DD date.",
+                            ),
+                            mode="workflow_guidance",
+                            pending_work=snapshot,
+                        )
 
-                    # Keep direct WorkResult return for single business reads (backward-compatible with UI & tests).
-                    if (
-                        current_decision.tier != "T3"
-                        or not self._needs_multi_step_synthesis(text)
-                        or step == MAX_HARNESS_STEPS - 1
-                    ):
-                        return outcome
+                    if len(chat_res.tool_calls) == 1:
+                        tc = chat_res.tool_calls[0]
+                        outcome = self._dispatch_llm_tool(
+                            actor,
+                            tc.name,
+                            tc.arguments,
+                            text,
+                            locale,
+                            key,
+                            snapshot,
+                            execute_call,
+                            preview_approval,
+                        )
+                        if isinstance(outcome, PolicyRefusal):
+                            return outcome
+                        if getattr(outcome, "kind", None) in {"proposal", "approval_preview"}:
+                            return outcome
+                        if isinstance(outcome, AssistantMessage):
+                            if outcome.mode == "email_draft":
+                                return outcome
+                            # Cascade escalate once if business tool args failed schema validation at T1/T2.
+                            if (
+                                not soft_cap_active
+                                and max_tier == "T3"
+                                and outcome.mode == "workflow_guidance"
+                                and current_decision.tier in {"T1", "T2"}
+                                and escalated_from is None
+                                and step + 1 < MAX_HARNESS_STEPS
+                            ):
+                                sig = (tc.name, tc.raw_arguments)
+                                if sig not in seen_malformed:
+                                    seen_malformed.add(sig)
+                                    prev_tier = current_decision.tier
+                                    current_decision = self.effort_router.route(
+                                        text,
+                                        cascade_from_tier=prev_tier,
+                                        session_active=True,
+                                    )
+                                    escalated_from = prev_tier
+                                    messages.append(assistant_msg)
+                                    messages.append(
+                                        {
+                                            "role": "tool",
+                                            "tool_call_id": tc.id,
+                                            "name": tc.name,
+                                            "content": self.context_manager.clamp_tool_output(
+                                                f"Tool call validation error: {outcome.reply}"
+                                            ),
+                                        }
+                                    )
+                                    continue
+                            return outcome
 
+                        # Keep direct WorkResult return for single business reads (backward-compatible with UI & tests).
+                        if (
+                            current_decision.tier != "T3"
+                            or not self._needs_multi_step_synthesis(text)
+                            or step == MAX_HARNESS_STEPS - 1
+                        ):
+                            return outcome
+
+                        messages.append(assistant_msg)
+                        obs = outcome.model_dump(mode="json") if hasattr(outcome, "model_dump") else outcome
+                        compacted_obs = compact_tool_observation(obs, max_chars=2400)
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "name": tc.name,
+                                "content": self.context_manager.clamp_tool_output(compacted_obs),
+                            }
+                        )
+                        continue
+
+                    # Multi-tool batch within Plan-Act-Observe loop.
                     messages.append(assistant_msg)
-                    obs = outcome.model_dump(mode="json") if hasattr(outcome, "model_dump") else outcome
-                    compacted_obs = compact_tool_observation(obs, max_chars=2400)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "name": tc.name,
-                            "content": self.context_manager.clamp_tool_output(compacted_obs),
-                        }
-                    )
+                    should_stop_early = False
+                    for tc in chat_res.tool_calls:
+                        outcome = self._dispatch_llm_tool(
+                            actor,
+                            tc.name,
+                            tc.arguments,
+                            text,
+                            locale,
+                            key,
+                            snapshot,
+                            execute_call,
+                            preview_approval,
+                        )
+                        if isinstance(outcome, PolicyRefusal):
+                            return outcome
+                        if getattr(outcome, "kind", None) in {"proposal", "approval_preview"}:
+                            return outcome
+                        if isinstance(outcome, AssistantMessage) and outcome.mode == "email_draft":
+                            return outcome
+                        obs = outcome.model_dump(mode="json") if hasattr(outcome, "model_dump") else outcome
+                        compacted_obs = compact_tool_observation(obs, max_chars=2400)
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "name": tc.name,
+                                "content": self.context_manager.clamp_tool_output(compacted_obs),
+                            }
+                        )
+                        if step == MAX_HARNESS_STEPS - 1 and getattr(outcome, "kind", None) == "result":
+                            should_stop_early = True
+                            last_result = outcome
+                    if should_stop_early:
+                        return last_result
                     continue
 
-                # Multi-tool batch within Plan-Act-Observe loop.
-                messages.append(assistant_msg)
-                should_stop_early = False
-                for tc in chat_res.tool_calls:
-                    outcome = self._dispatch_llm_tool(
-                        actor,
-                        tc.name,
-                        tc.arguments,
-                        text,
-                        locale,
-                        key,
-                        snapshot,
-                        execute_call,
-                        preview_approval,
-                    )
-                    if isinstance(outcome, PolicyRefusal):
-                        return outcome
-                    if getattr(outcome, "kind", None) in {"proposal", "approval_preview"}:
-                        return outcome
-                    if isinstance(outcome, AssistantMessage) and outcome.mode == "email_draft":
-                        return outcome
-                    obs = outcome.model_dump(mode="json") if hasattr(outcome, "model_dump") else outcome
-                    compacted_obs = compact_tool_observation(obs, max_chars=2400)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "name": tc.name,
-                            "content": self.context_manager.clamp_tool_output(compacted_obs),
-                        }
-                    )
-                    if step == MAX_HARNESS_STEPS - 1 and getattr(outcome, "kind", None) == "result":
-                        should_stop_early = True
-                        last_result = outcome
-                if should_stop_early:
-                    return last_result
-                continue
+                raw_reply = chat_res.text.strip()
+                if not raw_reply:
+                    return self._offline_fallback(actor, text, locale, snapshot)
 
-            raw_reply = chat_res.text.strip()
-            if not raw_reply:
-                return self._offline_fallback(actor, text, locale, snapshot)
+                safe_reply = self._sanitize_assistant_reply(raw_reply, directives, locale)
+                if not safe_reply:
+                    return self._offline_fallback(actor, text, locale, snapshot)
 
-            safe_reply = self._sanitize_assistant_reply(raw_reply, directives, locale)
-            if not safe_reply:
-                return self._offline_fallback(actor, text, locale, snapshot)
-
-            has_actionable = (
-                snapshot.pending_approvals > 0
-                or snapshot.returned_proposals > 0
-                or snapshot.unread_notices > 0
-                or (snapshot.open_exceptions or 0) > 0
-            )
-            msg_mode: Literal["chat", "proactive_reminder", "email_draft", "workflow_guidance"] = (
-                "proactive_reminder" if has_actionable else "chat"
-            )
-            final_reply = safe_reply[:4000]
-            if l1_eligible and step == 0 and not saw_tool_calls and "[REDACTED_POLICY]" not in final_reply:
-                self.response_cache.put(
-                    l1_key,
-                    {"reply": final_reply, "mode": msg_mode},
-                    saved_tokens=int(
-                        chat_res.usage.total_tokens
-                        or (chat_res.usage.prompt_tokens + chat_res.usage.completion_tokens)
-                    ),
-                    saved_usd=float(chat_res.usage.estimated_usd or 0.0),
+                has_actionable = (
+                    snapshot.pending_approvals > 0
+                    or snapshot.returned_proposals > 0
+                    or snapshot.unread_notices > 0
+                    or (snapshot.open_exceptions or 0) > 0
                 )
-            return AssistantMessage(
-                kind="message",
-                reply=final_reply,
-                mode=msg_mode,
-                pending_work=snapshot,
-                suggested_actions=self._suggested_actions(actor, snapshot, locale),
-                email_draft=None,
-            )
+                msg_mode: Literal["chat", "proactive_reminder", "email_draft", "workflow_guidance"] = (
+                    "proactive_reminder" if has_actionable else "chat"
+                )
+                final_reply = safe_reply[:4000]
+                if l1_eligible and step == 0 and not saw_tool_calls and "[REDACTED_POLICY]" not in final_reply:
+                    self.response_cache.put(
+                        l1_key,
+                        {"reply": final_reply, "mode": msg_mode},
+                        saved_tokens=int(
+                            chat_res.usage.total_tokens
+                            or (chat_res.usage.prompt_tokens + chat_res.usage.completion_tokens)
+                        ),
+                        saved_usd=float(chat_res.usage.estimated_usd or 0.0),
+                    )
+                return AssistantMessage(
+                    kind="message",
+                    reply=final_reply,
+                    mode=msg_mode,
+                    pending_work=snapshot,
+                    suggested_actions=self._suggested_actions(actor, snapshot, locale),
+                    email_draft=None,
+                )
 
-        return self._offline_fallback(actor, text, locale, snapshot)
+            return self._offline_fallback(actor, text, locale, snapshot)
+        finally:
+            if reservation_id and hasattr(self.quota_manager, "settle_budget"):
+                try:
+                    if llm_usage_recorded:
+                        self.quota_manager.settle_budget(
+                            actor.tenant,
+                            reservation_id,
+                            actual_micro_usd=actual_micro_usd,
+                            actual_tokens=actual_tokens,
+                        )
+                    else:
+                        self.quota_manager.release_budget(actor.tenant, reservation_id)
+                except Exception:
+                    pass

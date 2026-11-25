@@ -281,8 +281,8 @@ html[data-theme="dark"] {
   --agent-surface: linear-gradient(145deg, #242320 0%, #1B1A18 100%);
   --agent-bubble-bg: #242320;
   --agent-ring: rgba(244, 241, 236, 0.16);
-  --bubble-sent-bg: #2557A0;
-  --bubble-sent-ink: #FAF8F5;
+  --bubble-sent-bg: #ECE8E1;
+  --bubble-sent-ink: #111110;
   --bubble-received-bg: #242320;
   --bubble-received-ink: #F4F1EC;
 
@@ -358,17 +358,19 @@ html[data-theme="dark"] {
     0 32px 72px rgba(0, 0, 0, 0.54),
     inset 0 1px 0 rgba(244, 241, 236, 0.08),
     0 0 0 1px rgba(244, 241, 236, 0.11);
-  --scrim: rgba(0, 0, 0, 0.58);
+  --scrim: rgba(0, 0, 0, 0.48);
 }
 
-/* Smooth transient theme switch crossfade (scoped to toggle event only) */
-html[data-theme-switching="true"],
-html[data-theme-switching="true"] *,
-html[data-theme-switching="true"] *::before,
-html[data-theme-switching="true"] *::after {
-  transition-property: color, background-color, border-color, box-shadow, fill, stroke !important;
-  transition-duration: 180ms !important;
-  transition-timing-function: ease !important;
+@media (prefers-reduced-motion: no-preference) {
+  /* Smooth transient theme switch crossfade (scoped to toggle event only) */
+  html[data-theme-switching="true"],
+  html[data-theme-switching="true"] *,
+  html[data-theme-switching="true"] *::before,
+  html[data-theme-switching="true"] *::after {
+    transition-property: color, background-color, border-color, box-shadow, fill, stroke !important;
+    transition-duration: 180ms !important;
+    transition-timing-function: ease !important;
+  }
 }
 
 /* ==========================================================================
@@ -418,11 +420,11 @@ html[data-theme-switching="true"] *::after {
   background-color: var(--bg-sidebar-solid);
 }
 
-@supports (backdrop-filter: blur(20px)) {
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .aios-sidebar-glass {
     background-color: var(--bg-sidebar);
-    backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
   }
 }
 
@@ -430,11 +432,11 @@ html[data-theme-switching="true"] *::after {
   background-color: var(--bg-header-solid);
 }
 
-@supports (backdrop-filter: blur(20px)) {
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .aios-topbar-glass {
     background-color: var(--bg-header);
-    backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
   }
 }
 
@@ -447,35 +449,98 @@ html[data-theme-switching="true"] *::after {
   height: 112px;
   pointer-events: none;
   z-index: 0;
-  opacity: 0;
+  opacity: 0.82;
   background: linear-gradient(
     to bottom,
     var(--bg-header-solid) 0%,
     var(--bg-header) 56%,
     transparent 100%
   );
-  backdrop-filter: blur(20px) saturate(170%);
-  -webkit-backdrop-filter: blur(20px) saturate(170%);
-  mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 54%,
-    rgba(0, 0, 0, 0.42) 78%,
-    transparent 100%
-  );
   -webkit-mask-image: linear-gradient(
     to bottom,
     #000 0%,
-    #000 54%,
+    #000 52%,
+    rgba(0, 0, 0, 0.42) 78%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 52%,
     rgba(0, 0, 0, 0.42) 78%,
     transparent 100%
   );
   transition: opacity 260ms var(--ease-settle);
 }
 
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .aios-chat-header-veil {
+    -webkit-backdrop-filter: blur(20px) saturate(170%);
+    backdrop-filter: blur(20px) saturate(170%);
+  }
+}
+
 .aios-chat-header:hover .aios-chat-header-veil,
-.aios-chat-header:focus-within .aios-chat-header-veil {
+.aios-chat-header:focus-within .aios-chat-header-veil,
+.aios-chat-header[data-scrolled="true"] .aios-chat-header-veil {
   opacity: 1;
+}
+
+/* ==========================================================================
+   Unified Form Controls (.aios-input & .aios-select)
+   ========================================================================== */
+@layer components {
+  .aios-input {
+    height: 2.25rem;
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-surface-tint);
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+    padding-inline: 0.75rem;
+    font-size: 13px;
+    color: var(--ink-primary);
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .aios-input::placeholder {
+    color: var(--ink-muted);
+  }
+
+  .aios-input:focus {
+    outline: none;
+    background-color: var(--bg-surface);
+    box-shadow:
+      inset 0 0 0 1.5px var(--accent),
+      0 0 0 2px var(--accent-ring);
+  }
+
+  .aios-select {
+    appearance: none;
+    -webkit-appearance: none;
+    height: 2.25rem;
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-surface-tint);
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+    padding-left: 0.75rem;
+    padding-right: 1.75rem;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: var(--ink-primary);
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .aios-select:focus {
+    outline: none;
+    background-color: var(--bg-surface);
+    box-shadow:
+      inset 0 0 0 1.5px var(--accent),
+      0 0 0 2px var(--accent-ring);
+  }
 }
 
 /* ==========================================================================
@@ -587,12 +652,54 @@ html[data-theme="dark"] .aios-3d-sheen {
   }
 }
 
+@keyframes aios-modal-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.98);
+  }
+}
+
 @keyframes aios-scrim-in {
   from {
     opacity: 0;
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes aios-scrim-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes aios-popover-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes aios-popover-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 3px, 0) scale(0.98);
   }
 }
 
@@ -697,8 +804,43 @@ html[data-theme="dark"] .aios-3d-sheen {
   animation: aios-modal-in 210ms var(--ease-settle) both;
 }
 
+.aios-modal-content[data-state="closed"] {
+  animation: aios-modal-out 120ms var(--ease-settle) forwards;
+}
+
 .aios-modal-scrim {
   animation: aios-scrim-in 160ms ease-out both;
+}
+
+.aios-modal-scrim[data-state="closed"] {
+  animation: aios-scrim-out 120ms ease-out forwards;
+}
+
+.aios-popover-content {
+  transform-origin: var(
+    --radix-popover-content-transform-origin,
+    var(--radix-dropdown-menu-content-transform-origin, center top)
+  );
+  animation: aios-popover-in 160ms var(--ease-snappy) both;
+}
+
+.aios-popover-content[data-state="closed"] {
+  animation: aios-popover-out 120ms var(--ease-settle) forwards;
+}
+
+.aios-list-feather-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 calc(100% - 14px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 calc(100% - 14px),
+    transparent 100%
+  );
 }
 
 .aios-whisper-dot {
@@ -761,9 +903,16 @@ html[data-theme="dark"] .aios-3d-sheen {
 
 .aios-drawer-transition {
   transition:
-    width var(--dur-drawer) var(--ease-settle),
     transform var(--dur-drawer) var(--ease-settle),
-    opacity var(--dur-fade) ease;
+    opacity var(--dur-fade) ease,
+    visibility 0s linear 0s;
+}
+
+.aios-drawer-transition[aria-hidden="true"] {
+  transition:
+    transform var(--dur-drawer) var(--ease-settle),
+    opacity var(--dur-fade) ease,
+    visibility 0s linear var(--dur-drawer);
 }
 
 /* ==========================================================================
@@ -777,6 +926,27 @@ html[data-theme="dark"] .aios-3d-sheen {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .animate-spin,
+  .aios-popover-content,
+  .aios-modal-content,
+  .aios-modal-scrim,
+  .aios-row-in,
+  .aios-thread-pane,
+  .aios-bubble-outgoing,
+  .aios-bubble-incoming,
+  .imessage-bubble-sent,
+  .imessage-bubble-received,
+  .aios-topology-trace,
+  .aios-check-reveal {
+    animation: none !important;
+  }
+
+  .aios-drawer-transition,
+  .aios-accordion,
+  .aios-card-elevated {
+    transition: none !important;
   }
 
   .aios-3d-card {

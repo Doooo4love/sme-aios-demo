@@ -10,7 +10,6 @@ import {
   ChevronRight,
   Copy,
   Hash,
-  Lock,
   Mail,
   MapPin,
   Phone,
@@ -449,7 +448,6 @@ export function ContactProfileDialog({
             />
             <div className="min-w-0 space-y-0.5">
               <div className="flex items-center gap-1.5 font-semibold text-[var(--ink-primary)]">
-                <Lock className="h-3 w-3 text-[var(--status-emerald)]" />
                 <span>
                   {tx({
                     "zh-CN": "核心策略已密封保护",

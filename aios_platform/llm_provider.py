@@ -1,6 +1,7 @@
 """Pure httpx + pydantic multi-provider LLM client with pooled transport, prompt caching, and circuit breaker."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from hashlib import sha256
 import importlib
 import json
@@ -9,7 +10,7 @@ from pathlib import Path
 import random
 import threading
 import time
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import httpx
 from pydantic import Field
@@ -19,8 +20,48 @@ from .providers import https_base
 
 MAX_LLM_RESPONSE_BYTES = 524_288
 ANTHROPIC_PROMPT_CACHE_MIN_CHARS = 3600
+DEFAULT_LLM_MODEL = "deepseek-flash"
+DEFAULT_PRICING_VERSION = "2026-11-official"
 EffortLevel = Literal["none", "low", "medium", "high"]
 AdapterKind = Literal["openai_compat", "anthropic", "gemini"]
+
+_PRICING_OVERRIDE_LOCK = threading.Lock()
+_PRICING_OVERRIDE_CACHE: tuple[str, dict[str, dict[str, Any]]] = ("", {})
+
+
+def is_peak_pricing_window(now: float | datetime | None = None) -> bool:
+    """Return True during Mon-Fri 01:00-04:00 & 06:00-10:00 UTC official peak windows."""
+    if now is None:
+        dt = datetime.now(timezone.utc)
+    elif isinstance(now, datetime):
+        dt = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    else:
+        dt = datetime.fromtimestamp(float(now), timezone.utc)
+    if dt.weekday() >= 5:
+        return False
+    return (1 <= dt.hour < 4) or (6 <= dt.hour < 10)
+
+
+def _load_pricing_overrides() -> dict[str, dict[str, Any]]:
+    raw = (os.getenv("AIOS_MODEL_PRICING_JSON") or "").strip()
+    if not raw:
+        return {}
+    with _PRICING_OVERRIDE_LOCK:
+        cached_raw, cached_map = _PRICING_OVERRIDE_CACHE
+        if cached_raw == raw:
+            return cached_map
+    parsed: dict[str, dict[str, Any]] = {}
+    try:
+        loaded = json.loads(raw)
+        if isinstance(loaded, dict):
+            for k, v in loaded.items():
+                if isinstance(k, str) and isinstance(v, dict):
+                    parsed[k.strip()] = dict(v)
+    except (ValueError, TypeError):
+        parsed = {}
+    with _PRICING_OVERRIDE_LOCK:
+        globals()["_PRICING_OVERRIDE_CACHE"] = (raw, parsed)
+    return parsed
 
 EFFORT_MAX_TOKENS: dict[str, int] = {
     "none": 1200,
@@ -98,6 +139,12 @@ class ModelProfile(Strict):
     output_per_1m: float
     supports_reasoning_effort: bool = True
     supports_prompt_cache: bool = True
+    deprecated: bool = False
+    region: str = "global"
+    pricing_version: str = DEFAULT_PRICING_VERSION
+    off_peak_input_per_1m: float | None = None
+    off_peak_cached_input_per_1m: float | None = None
+    off_peak_output_per_1m: float | None = None
 
     @property
     def safe_cap_tokens(self) -> int:
@@ -135,22 +182,78 @@ class ModelProfile(Strict):
         gemini_budgets = {"none": 0, "low": 1024, "medium": 4096, "high": 8192}
         return {"thinkingConfig": {"thinkingBudget": gemini_budgets[effort]}}
 
+    def effective_rates(self, now: float | datetime | None = None) -> tuple[float, float, float]:
+        """Return (input_per_1m, cached_input_per_1m, output_per_1m) respecting peak/off-peak and env overrides."""
+        ov = _load_pricing_overrides().get(self.model_id, {})
+        in_rate = float(ov["input_per_1m"]) if "input_per_1m" in ov else self.input_per_1m
+        cached_rate = float(ov["cached_input_per_1m"]) if "cached_input_per_1m" in ov else self.cached_input_per_1m
+        out_rate = float(ov["output_per_1m"]) if "output_per_1m" in ov else self.output_per_1m
+
+        if is_peak_pricing_window(now):
+            return (in_rate, cached_rate, out_rate)
+
+        if "off_peak_input_per_1m" in ov:
+            off_in = float(ov["off_peak_input_per_1m"])
+        elif "input_per_1m" in ov:
+            off_in = in_rate
+        else:
+            off_in = self.off_peak_input_per_1m if self.off_peak_input_per_1m is not None else in_rate
+
+        if "off_peak_cached_input_per_1m" in ov:
+            off_cached = float(ov["off_peak_cached_input_per_1m"])
+        elif "cached_input_per_1m" in ov:
+            off_cached = cached_rate
+        else:
+            off_cached = (
+                self.off_peak_cached_input_per_1m
+                if self.off_peak_cached_input_per_1m is not None
+                else cached_rate
+            )
+
+        if "off_peak_output_per_1m" in ov:
+            off_out = float(ov["off_peak_output_per_1m"])
+        elif "output_per_1m" in ov:
+            off_out = out_rate
+        else:
+            off_out = self.off_peak_output_per_1m if self.off_peak_output_per_1m is not None else out_rate
+
+        return (off_in, off_cached, off_out)
+
     def estimate_cost_usd(
         self,
         *,
         prompt_tokens: int,
         cache_hit_tokens: int,
         completion_tokens: int,
+        now: float | datetime | None = None,
     ) -> float:
+        in_rate, cached_rate, out_rate = self.effective_rates(now=now)
         uncached_prompt = max(0, prompt_tokens - max(0, cache_hit_tokens))
         cached_prompt = max(0, min(prompt_tokens, cache_hit_tokens))
         output_tokens = max(0, completion_tokens)
         usd = (
-            uncached_prompt * self.input_per_1m
-            + cached_prompt * self.cached_input_per_1m
-            + output_tokens * self.output_per_1m
+            uncached_prompt * in_rate
+            + cached_prompt * cached_rate
+            + output_tokens * out_rate
         ) / 1_000_000.0
         return round(usd, 8)
+
+    def estimate_cost_micro_usd(
+        self,
+        *,
+        prompt_tokens: int,
+        cache_hit_tokens: int,
+        completion_tokens: int,
+        now: float | datetime | None = None,
+    ) -> int:
+        """Compute fixed-point integer micro-USD cost (1 USD = 1,000,000 micro-USD)."""
+        usd = self.estimate_cost_usd(
+            prompt_tokens=prompt_tokens,
+            cache_hit_tokens=cache_hit_tokens,
+            completion_tokens=completion_tokens,
+            now=now,
+        )
+        return int(round(usd * 1_000_000))
 
 
 MODEL_PROFILES: dict[str, ModelProfile] = {
@@ -165,30 +268,43 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         cached_input_per_1m=0.07,
         output_per_1m=1.10,
         supports_reasoning_effort=True,
+        deprecated=True,
+        region="cn-hk",
+        pricing_version=DEFAULT_PRICING_VERSION,
     ),
     "deepseek-flash": ModelProfile(
         model_id="deepseek-flash",
         provider="deepseek",
         adapter_kind="openai_compat",
         default_base_url="https://api.deepseek.com",
-        context_window=128_000,
-        surcharge_cliff=128_000,
-        input_per_1m=0.10,
-        cached_input_per_1m=0.025,
-        output_per_1m=0.40,
-        supports_reasoning_effort=False,
+        context_window=1_000_000,
+        surcharge_cliff=200_000,
+        input_per_1m=0.30,
+        cached_input_per_1m=0.006,
+        output_per_1m=1.20,
+        off_peak_input_per_1m=0.15,
+        off_peak_cached_input_per_1m=0.003,
+        off_peak_output_per_1m=0.60,
+        supports_reasoning_effort=True,
+        region="cn-hk",
+        pricing_version=DEFAULT_PRICING_VERSION,
     ),
     "deepseek-v4-pro": ModelProfile(
         model_id="deepseek-v4-pro",
         provider="deepseek",
         adapter_kind="openai_compat",
         default_base_url="https://api.deepseek.com",
-        context_window=256_000,
+        context_window=1_000_000,
         surcharge_cliff=200_000,
-        input_per_1m=0.55,
-        cached_input_per_1m=0.14,
-        output_per_1m=2.19,
+        input_per_1m=1.32,
+        cached_input_per_1m=0.044,
+        output_per_1m=3.96,
+        off_peak_input_per_1m=0.66,
+        off_peak_cached_input_per_1m=0.022,
+        off_peak_output_per_1m=1.98,
         supports_reasoning_effort=True,
+        region="cn-hk",
+        pricing_version=DEFAULT_PRICING_VERSION,
     ),
     "gpt-5.4-mini": ModelProfile(
         model_id="gpt-5.4-mini",
@@ -201,6 +317,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         cached_input_per_1m=0.025,
         output_per_1m=2.00,
         supports_reasoning_effort=True,
+        region="us",
     ),
     "claude-sonnet-4-6": ModelProfile(
         model_id="claude-sonnet-4-6",
@@ -213,6 +330,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         cached_input_per_1m=0.30,
         output_per_1m=15.00,
         supports_reasoning_effort=True,
+        region="us",
     ),
     "gemini-2.5-pro": ModelProfile(
         model_id="gemini-2.5-pro",
@@ -225,6 +343,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         cached_input_per_1m=0.31,
         output_per_1m=10.00,
         supports_reasoning_effort=True,
+        region="us",
     ),
     "qwen-plus": ModelProfile(
         model_id="qwen-plus",
@@ -237,8 +356,31 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         cached_input_per_1m=0.10,
         output_per_1m=1.20,
         supports_reasoning_effort=True,
+        region="ap-east-1",
     ),
 }
+
+
+def _apply_pricing_override(profile: ModelProfile) -> ModelProfile:
+    ov = _load_pricing_overrides().get(profile.model_id)
+    if not ov:
+        return profile
+    updates: dict[str, Any] = {}
+    for field_name in (
+        "input_per_1m",
+        "cached_input_per_1m",
+        "output_per_1m",
+        "off_peak_input_per_1m",
+        "off_peak_cached_input_per_1m",
+        "off_peak_output_per_1m",
+    ):
+        if field_name in ov and ov[field_name] is not None:
+            updates[field_name] = float(ov[field_name])
+    if "pricing_version" in ov and ov["pricing_version"]:
+        updates["pricing_version"] = str(ov["pricing_version"])
+    if "region" in ov and ov["region"]:
+        updates["region"] = str(ov["region"])
+    return profile.model_copy(update=updates) if updates else profile
 
 
 def resolve_model_profile(
@@ -248,7 +390,7 @@ def resolve_model_profile(
     base_url: str | None = None,
 ) -> ModelProfile:
     """Look up a registered ModelProfile or synthesize a safe OpenAI-compatible gateway profile."""
-    clean_model = (model_id or "").strip() or "deepseek-chat"
+    clean_model = (model_id or "").strip() or DEFAULT_LLM_MODEL
     clean_base = https_base(base_url) if base_url else None
     is_external_gateway = bool(
         clean_base
@@ -258,57 +400,67 @@ def resolve_model_profile(
         )
     )
     if clean_model in MODEL_PROFILES:
-        base_profile = MODEL_PROFILES[clean_model]
+        base_profile = _apply_pricing_override(MODEL_PROFILES[clean_model])
         if is_external_gateway and base_profile.adapter_kind != "openai_compat":
-            return ModelProfile(
-                model_id=base_profile.model_id,
-                provider=provider or "openai_compat",
-                adapter_kind="openai_compat",
-                default_base_url=clean_base or base_profile.default_base_url,
-                context_window=base_profile.context_window,
-                surcharge_cliff=base_profile.surcharge_cliff,
-                input_per_1m=base_profile.input_per_1m,
-                cached_input_per_1m=base_profile.cached_input_per_1m,
-                output_per_1m=base_profile.output_per_1m,
-                supports_reasoning_effort=base_profile.supports_reasoning_effort,
+            return base_profile.model_copy(
+                update={
+                    "provider": provider or "openai_compat",
+                    "adapter_kind": "openai_compat",
+                    "default_base_url": clean_base or base_profile.default_base_url,
+                }
             )
         return base_profile
 
     low = clean_model.lower()
     if not is_external_gateway and (provider == "anthropic" or ("claude" in low and (clean_base is None or "anthropic" in clean_base))):
-        return ModelProfile(
-            model_id=clean_model,
-            provider=provider or "anthropic",
-            adapter_kind="anthropic",
-            default_base_url=clean_base or "https://api.anthropic.com",
-            context_window=200_000,
-            surcharge_cliff=200_000,
-            input_per_1m=3.00,
-            cached_input_per_1m=0.30,
-            output_per_1m=15.00,
+        return _apply_pricing_override(
+            ModelProfile(
+                model_id=clean_model,
+                provider=provider or "anthropic",
+                adapter_kind="anthropic",
+                default_base_url=clean_base or "https://api.anthropic.com",
+                context_window=200_000,
+                surcharge_cliff=200_000,
+                input_per_1m=3.00,
+                cached_input_per_1m=0.30,
+                output_per_1m=15.00,
+                region="us",
+            )
         )
     if not is_external_gateway and (provider == "gemini" or ("gemini" in low and (clean_base is None or "googleapis" in clean_base))):
-        return ModelProfile(
-            model_id=clean_model,
-            provider=provider or "gemini",
-            adapter_kind="gemini",
-            default_base_url=clean_base or "https://generativelanguage.googleapis.com/v1beta",
-            context_window=1_000_000,
-            surcharge_cliff=200_000,
-            input_per_1m=1.25,
-            cached_input_per_1m=0.31,
-            output_per_1m=10.00,
+        return _apply_pricing_override(
+            ModelProfile(
+                model_id=clean_model,
+                provider=provider or "gemini",
+                adapter_kind="gemini",
+                default_base_url=clean_base or "https://generativelanguage.googleapis.com/v1beta",
+                context_window=1_000_000,
+                surcharge_cliff=200_000,
+                input_per_1m=1.25,
+                cached_input_per_1m=0.31,
+                output_per_1m=10.00,
+                region="us",
+            )
         )
-    return ModelProfile(
-        model_id=clean_model,
-        provider=provider or ("qwen" if "qwen" in low else "openai_compat"),
-        adapter_kind="openai_compat",
-        default_base_url=clean_base or "https://api.deepseek.com",
-        context_window=128_000,
-        surcharge_cliff=128_000,
-        input_per_1m=0.40,
-        cached_input_per_1m=0.10,
-        output_per_1m=1.20,
+    inferred_provider = provider or ("qwen" if "qwen" in low else ("deepseek" if "deepseek" in low else "openai_compat"))
+    inferred_region = (
+        "ap-east-1"
+        if inferred_provider == "qwen"
+        else ("cn-hk" if inferred_provider == "deepseek" else ("us" if inferred_provider == "openai" else "global"))
+    )
+    return _apply_pricing_override(
+        ModelProfile(
+            model_id=clean_model,
+            provider=inferred_provider,
+            adapter_kind="openai_compat",
+            default_base_url=clean_base or "https://api.deepseek.com",
+            context_window=128_000,
+            surcharge_cliff=128_000,
+            input_per_1m=0.40,
+            cached_input_per_1m=0.10,
+            output_per_1m=1.20,
+            region=inferred_region,
+        )
     )
 
 
@@ -1179,11 +1331,11 @@ def resolve_fallback_llm_configs() -> list[dict[str, str | None]]:
         "anthropic": "claude-sonnet-4-6",
         "gemini": "gemini-2.5-pro",
         "qwen": "qwen-plus",
-        "deepseek": "deepseek-chat",
+        "deepseek": DEFAULT_LLM_MODEL,
     }
     models = [m.strip() for m in raw_models.split(",") if m.strip()] if raw_models else []
     if not models:
-        models = [default_by_provider.get(raw_provider or "", "deepseek-chat")]
+        models = [default_by_provider.get(raw_provider or "", DEFAULT_LLM_MODEL)]
 
     return [
         {
@@ -1203,7 +1355,7 @@ class LLMProvider:
         self,
         *,
         api_key: str | None,
-        model: str = "deepseek-chat",
+        model: str = DEFAULT_LLM_MODEL,
         base_url: str | None = None,
         provider: str | None = None,
         circuit_breaker: ProviderCircuitBreaker | None = None,
@@ -1370,7 +1522,7 @@ class LLMProvider:
             self.circuit_breaker.record_success(breaker_key)
             return result, data
 
-    def chat_with_raw(
+    def _execute_chat_with_raw(
         self,
         messages: list[dict[str, Any]],
         *,
@@ -1381,8 +1533,15 @@ class LLMProvider:
         temperature: float = 0.35,
         user_tag: str | None = None,
         cached_content: str | None = None,
+        provider_policy_check: Callable[[ModelProfile, bool], bool] | None = None,
+        is_failover: bool = False,
     ) -> tuple[ChatResult, dict[str, Any]]:
-        """Execute a provider chat completion with multi-provider failover, returning ChatResult and raw dict."""
+        if provider_policy_check is not None and not provider_policy_check(self.profile, is_failover):
+            raise LLMProviderError(
+                f"Provider '{self.profile.provider}' / model '{self.profile.model_id}' denied by tenant policy",
+                error_code="PROVIDER_POLICY_DENIED",
+                status_code=403,
+            )
         try:
             return self._chat_single_with_raw(
                 messages,
@@ -1395,6 +1554,8 @@ class LLMProvider:
                 cached_content=cached_content,
             )
         except LLMProviderError as primary_err:
+            if is_failover or primary_err.error_code == "PROVIDER_POLICY_DENIED":
+                raise
             failover_eligible = bool(self.fallback_providers) and (
                 isinstance(primary_err, CircuitOpenError)
                 or primary_err.error_code == "CIRCUIT_OPEN"
@@ -1405,11 +1566,12 @@ class LLMProvider:
                 raise
 
             origin = f"{self.profile.provider}/{self.profile.model_id}"
+            policy_denied_err: LLMProviderError | None = None
             for fb in self.fallback_providers:
                 if not fb.enabled:
                     continue
                 try:
-                    fb_result, fb_raw = fb.chat_with_raw(
+                    fb_result, fb_raw = fb._execute_chat_with_raw(
                         messages,
                         tools=tools,
                         effort=effort,
@@ -1418,13 +1580,46 @@ class LLMProvider:
                         temperature=temperature,
                         user_tag=user_tag,
                         cached_content=cached_content,
+                        provider_policy_check=provider_policy_check,
+                        is_failover=True,
                     )
                     if fb_result.failover_from is None:
                         fb_result = fb_result.model_copy(update={"failover_from": origin})
                     return fb_result, fb_raw
-                except LLMProviderError:
+                except LLMProviderError as fb_err:
+                    if fb_err.error_code == "PROVIDER_POLICY_DENIED":
+                        policy_denied_err = fb_err
                     continue
+            if policy_denied_err is not None:
+                raise policy_denied_err
             raise primary_err
+
+    def chat_with_raw(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        effort: EffortLevel = "low",
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+        temperature: float = 0.35,
+        user_tag: str | None = None,
+        cached_content: str | None = None,
+        provider_policy_check: Callable[[ModelProfile, bool], bool] | None = None,
+    ) -> tuple[ChatResult, dict[str, Any]]:
+        """Execute a provider chat completion with multi-provider failover, returning ChatResult and raw dict."""
+        return self._execute_chat_with_raw(
+            messages,
+            tools=tools,
+            effort=effort,
+            max_tokens=max_tokens,
+            timeout_s=timeout_s,
+            temperature=temperature,
+            user_tag=user_tag,
+            cached_content=cached_content,
+            provider_policy_check=provider_policy_check,
+            is_failover=False,
+        )
 
     def chat(
         self,
@@ -1437,6 +1632,7 @@ class LLMProvider:
         temperature: float = 0.35,
         user_tag: str | None = None,
         cached_content: str | None = None,
+        provider_policy_check: Callable[[ModelProfile, bool], bool] | None = None,
     ) -> ChatResult:
         """Execute a provider chat completion and return normalized ChatResult."""
         result, _ = self.chat_with_raw(
@@ -1448,5 +1644,6 @@ class LLMProvider:
             temperature=temperature,
             user_tag=user_tag,
             cached_content=cached_content,
+            provider_policy_check=provider_policy_check,
         )
         return result

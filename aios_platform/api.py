@@ -150,12 +150,14 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     bearer = HTTPBearer(auto_error=False)
     module_access = ModuleAccess(workflow)
     hub = event_hub if event_hub is not None else EventHub()
+    hub.bind_workflow(workflow)
     workflow.event_hub = hub
     known_actors: dict[tuple[str, str], Actor] = {}
     known_actors_lock = threading.Lock()
     if browser is not None and browser.demo != runtime.demo:
         raise ValueError("Browser session profile must match the service profile")
     sessions = BrowserSessions(workflow, browser, runtime.profiles) if browser else None
+    app.state.browser_sessions = sessions
 
     @app.exception_handler(MissingResource)
     async def missing_resource(_request: Request, _error: MissingResource):
@@ -379,6 +381,27 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             l1_cache = {}
         has_open_circuit = any(isinstance(item, dict) and item.get("state") == "open" for item in circuits)
         status = "ok" if (storage_ok and not has_open_circuit) else "degraded"
+
+        schema_security: dict[str, object] = {"status": "unknown"}
+        try:
+            from .database_security import database_security_status
+
+            schema_security = database_security_status(workflow.db)
+        except ImportError:
+            pass
+        except Exception:
+            schema_security = {"status": "unavailable"}
+
+        provider_policy: dict[str, object] = {}
+        try:
+            from .routing_context import TenantProviderPolicyStore
+
+            provider_policy = TenantProviderPolicyStore(workflow).get_policy(current.tenant)
+        except ImportError:
+            pass
+        except (sqlite3.Error, PostgresError, OSError):
+            provider_policy = {}
+
         return {
             "status": status,
             "db_engine_mode": workflow.db.engine_mode,
@@ -389,6 +412,8 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
             "active_sse_subscribers": hub.subscriber_count(),
             "rate_limit_rejections": rate_limit_rejections_count(),
             "otel_genai_enabled": otel_genai_enabled(),
+            "schema_security": schema_security,
+            "provider_policy": provider_policy,
             "uptime_seconds": round(time.monotonic() - started_at, 2),
         }
 

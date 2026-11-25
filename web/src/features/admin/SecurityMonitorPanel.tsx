@@ -5,6 +5,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Cpu,
   Eye,
   EyeOff,
@@ -1298,7 +1299,7 @@ export function SecurityMonitorPanel({
                       "zh-HK": "租戶每日算力金額上限（美元）",
                       en: "Tenant daily USD cap",
                     })}
-                    className="h-7 w-28 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-2 font-mono-code text-[11.5px] text-[var(--ink-primary)] tabular-nums focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:outline-none"
+                    className="aios-input h-8 w-28 px-2 font-mono-code text-[11.5px] tabular-nums"
                   />
                   <input
                     type="number"
@@ -1319,14 +1320,14 @@ export function SecurityMonitorPanel({
                       "zh-HK": "租戶每日 Token 上限",
                       en: "Tenant daily token cap",
                     })}
-                    className="h-7 w-32 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-2 font-mono-code text-[11.5px] text-[var(--ink-primary)] tabular-nums focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:outline-none"
+                    className="aios-input h-8 w-32 px-2 font-mono-code text-[11.5px] tabular-nums"
                   />
                   <Button
                     size="sm"
                     variant="secondary"
                     loading={quotaSaving}
                     onClick={() => void handleSaveTenantQuota()}
-                    className="h-7 px-2.5 text-[11.5px]"
+                    className="h-8 px-2.5 text-[11.5px]"
                   >
                     <span>
                       {tx({
@@ -1449,7 +1450,7 @@ export function SecurityMonitorPanel({
                           });
                           setPolicyFeedback(null);
                         }}
-                        className="h-8 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-2.5 font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums focus:border-[var(--accent)] focus:outline-none"
+                        className="aios-input h-8 w-full px-2.5 font-mono-code text-[13px] font-semibold tabular-nums"
                       />
                     ) : (
                       <div className="font-mono-code text-[16px] font-semibold text-[var(--ink-primary)] tabular-nums">
@@ -1483,7 +1484,7 @@ export function SecurityMonitorPanel({
                           });
                           setPolicyFeedback(null);
                         }}
-                        className="h-8 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-2.5 font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums focus:border-[var(--accent)] focus:outline-none"
+                        className="aios-input h-8 w-full px-2.5 font-mono-code text-[13px] font-semibold tabular-nums"
                       />
                     ) : (
                       <div className="font-mono-code text-[16px] font-semibold text-[var(--ink-primary)] tabular-nums">
@@ -1518,7 +1519,7 @@ export function SecurityMonitorPanel({
                           });
                           setPolicyFeedback(null);
                         }}
-                        className="h-8 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-2.5 font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums focus:border-[var(--accent)] focus:outline-none"
+                        className="aios-input h-8 w-full px-2.5 font-mono-code text-[13px] font-semibold tabular-nums"
                       />
                     ) : (
                       <div className="font-mono-code text-[16px] font-semibold text-[var(--ink-primary)] tabular-nums">
@@ -1552,7 +1553,7 @@ export function SecurityMonitorPanel({
                           });
                           setPolicyFeedback(null);
                         }}
-                        className="h-8 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface)] px-2.5 font-mono-code text-[13px] font-semibold text-[var(--ink-primary)] tabular-nums focus:border-[var(--accent)] focus:outline-none"
+                        className="aios-input h-8 w-full px-2.5 font-mono-code text-[13px] font-semibold tabular-nums"
                       />
                     ) : (
                       <div className="font-mono-code text-[16px] font-semibold text-[var(--ink-primary)] tabular-nums">
@@ -1633,7 +1634,7 @@ export function SecurityMonitorPanel({
                           "zh-HK": "新增應用名稱或 Bundle ID（如 Excel）…",
                           en: "Add work app or bundle ID (e.g. Excel)…",
                         })}
-                        className="h-8 min-w-0 flex-1 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-2.5 font-mono-code text-[11.5px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:outline-none"
+                        className="aios-input h-8 min-w-0 flex-1 px-2.5 font-mono-code text-[11.5px] placeholder:font-sans"
                       />
                       <Button
                         size="sm"
@@ -2104,15 +2105,15 @@ export function SecurityMonitorPanel({
 
       {/* Filter Bar */}
       <section className="rounded-card border border-[var(--hairline)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-card)]">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 min-w-0">
+          <div className="flex min-w-0 w-full sm:w-auto flex-1 flex-wrap items-center gap-2">
             <span className="aios-micro-label inline-flex items-center gap-1.5">
               <Filter className="h-3.5 w-3.5" />
               <span>
                 {tx({ "zh-CN": "状态", "zh-HK": "狀態", en: "Status" })}
               </span>
             </span>
-            <div className="inline-flex rounded-sm border border-[var(--hairline)] bg-[var(--bg-inset)] p-0.5">
+            <div className="inline-flex max-w-full flex-wrap rounded-sm border border-[var(--hairline)] bg-[var(--bg-inset)] p-0.5">
               {(["all", "open", "acknowledged", "resolved"] as const).map(
                 (st) => (
                   <button
@@ -2134,56 +2135,70 @@ export function SecurityMonitorPanel({
               )}
             </div>
 
-            <select
-              value={severityFilter}
-              onChange={(e) =>
-                setSeverityFilter(
-                  e.target.value as SecurityEventSeverity | "all",
-                )
-              }
-              aria-label={tx({
-                "zh-CN": "按风险等级筛选",
-                "zh-HK": "按風險等級篩選",
-                en: "Filter by severity",
-              })}
-              className="h-8 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-2.5 text-[12px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:outline-none"
-            >
-              <option value="all">
-                {tx({
-                  "zh-CN": "全部级别",
-                  "zh-HK": "全部級別",
-                  en: "All Severities",
+            <div className="relative min-w-0 max-w-full w-full sm:w-auto">
+              <select
+                value={severityFilter}
+                onChange={(e) =>
+                  setSeverityFilter(
+                    e.target.value as SecurityEventSeverity | "all",
+                  )
+                }
+                aria-label={tx({
+                  "zh-CN": "按风险等级筛选",
+                  "zh-HK": "按風險等級篩選",
+                  en: "Filter by severity",
                 })}
-              </option>
-              <option value="critical">{localizeSeverity("critical")}</option>
-              <option value="high">{localizeSeverity("high")}</option>
-              <option value="medium">{localizeSeverity("medium")}</option>
-              <option value="info">{localizeSeverity("info")}</option>
-            </select>
-
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              aria-label={tx({
-                "zh-CN": "按事件分类筛选",
-                "zh-HK": "按事件分類篩選",
-                en: "Filter by category",
-              })}
-              className="h-8 max-w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-2.5 font-mono-code text-[11.5px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:outline-none"
-            >
-              <option value="">
-                {tx({
-                  "zh-CN": "全部分类",
-                  "zh-HK": "全部分類",
-                  en: "All Categories",
-                })}
-              </option>
-              {KNOWN_CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {localizeCategory(cat)} ({cat})
+                className="aios-select h-8 min-w-0 max-w-full w-full sm:w-auto px-2.5 pr-7 truncate"
+              >
+                <option value="all">
+                  {tx({
+                    "zh-CN": "全部级别",
+                    "zh-HK": "全部級別",
+                    en: "All Severities",
+                  })}
                 </option>
-              ))}
-            </select>
+                <option value="critical">{localizeSeverity("critical")}</option>
+                <option value="high">{localizeSeverity("high")}</option>
+                <option value="medium">{localizeSeverity("medium")}</option>
+                <option value="info">{localizeSeverity("info")}</option>
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                strokeWidth={1.85}
+                aria-hidden="true"
+              />
+            </div>
+
+            <div className="relative w-full min-w-0 max-w-full sm:w-auto sm:max-w-[260px]">
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                aria-label={tx({
+                  "zh-CN": "按事件分类筛选",
+                  "zh-HK": "按事件分類篩選",
+                  en: "Filter by category",
+                })}
+                className="aios-select h-8 w-full min-w-0 max-w-full sm:w-auto sm:max-w-[260px] truncate px-2.5 pr-7"
+              >
+                <option value="">
+                  {tx({
+                    "zh-CN": "全部分类",
+                    "zh-HK": "全部分類",
+                    en: "All Categories",
+                  })}
+                </option>
+                {KNOWN_CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {localizeCategory(cat)} ({cat})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                strokeWidth={1.85}
+                aria-hidden="true"
+              />
+            </div>
 
             <input
               type="text"
@@ -2194,7 +2209,7 @@ export function SecurityMonitorPanel({
                 "zh-HK": "按員工主體篩選…",
                 en: "Subject filter…",
               })}
-              className="h-8 w-full sm:w-40 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-2.5 font-mono-code text-[12px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:outline-none"
+              className="aios-input h-8 w-full min-w-0 sm:w-40 px-2.5 font-mono-code text-[12px] placeholder:font-sans"
             />
           </div>
 
@@ -2294,10 +2309,10 @@ export function SecurityMonitorPanel({
                             )}
                             <span>{localizeSeverity(ev.severity)}</span>
                           </span>
-                          <span className="font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)]">
-                            {ev.category}
-                          </span>
-                          <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-tint)] px-2 py-0.5 text-[11px] font-medium text-[var(--ink-secondary)]">
+                          <span
+                            title={ev.category}
+                            className="text-[13px] font-semibold text-[var(--ink-primary)]"
+                          >
                             {localizeCategory(ev.category)}
                           </span>
                           <span className="rounded-xs border border-[var(--hairline)] bg-[var(--bg-surface-subtle)] px-2 py-0.5 font-mono-code text-[10.5px] font-medium text-[var(--ink-secondary)]">

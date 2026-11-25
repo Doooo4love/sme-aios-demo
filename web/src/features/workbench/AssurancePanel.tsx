@@ -10,6 +10,7 @@ import React, {
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   OctagonAlert,
   Play,
   RefreshCw,
@@ -502,18 +503,25 @@ export function AssuranceCaseInspector({
                 en: "Review Instruction",
               })}
             </span>
-            <select
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              data-testid="assurance-instruction-select"
-              className="h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 text-[12.5px] text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
-            >
-              {instructions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <select
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                data-testid="assurance-instruction-select"
+                className="aios-select w-full text-[12.5px]"
+              >
+                {instructions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                strokeWidth={1.85}
+                aria-hidden="true"
+              />
+            </div>
           </label>
 
           <Button

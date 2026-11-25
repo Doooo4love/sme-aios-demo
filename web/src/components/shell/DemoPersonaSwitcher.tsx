@@ -107,7 +107,7 @@ export function DemoPersonaSwitcher({
             align={align}
             sideOffset={8}
             className={[
-              "z-50 w-[336px] max-h-[min(520px,80dvh)] overflow-auto rounded-card border border-[var(--hairline-strong)]",
+              "aios-popover-content z-50 w-[336px] max-h-[min(520px,80dvh)] overflow-auto rounded-card border border-[var(--hairline-strong)]",
               "bg-[var(--bg-surface)] p-2 shadow-[var(--shadow-popover)] focus:outline-none",
             ].join(" ")}
           >

@@ -30,9 +30,10 @@ import {
   openOrCreateDirectRoom,
   type ApiError,
 } from "@/lib/api-client";
-import { getTenantMark, sortWarehouses } from "@/lib/format";
+import { getMonogram, getTenantMark, sortWarehouses } from "@/lib/format";
 import {
   PERSONA_LOCALIZATIONS,
+  extractDirectRoomInfo,
   formatChatMessagePreview,
   formatChatRoomTitle,
   isDirectRoomTitle,
@@ -41,6 +42,10 @@ import {
 } from "@/lib/i18n";
 import { useSession } from "@/lib/session-context";
 import { useWorkbench } from "@/lib/workbench-context";
+import {
+  loadDirectoryContactsCached,
+  mapContactAvailabilityToAvatarStatus,
+} from "@/components/chat/ContactProfileDialog";
 import { Interactive3DCard } from "@/components/kinetic";
 import { DemoPersonaSwitcher } from "@/components/shell/DemoPersonaSwitcher";
 import { NoticesPopover } from "@/components/shell/NoticesPopover";
@@ -53,7 +58,7 @@ import {
   ThemeToggle,
 } from "@/components/ui/PreferencesControls";
 import { TheodicLogo } from "@/components/ui/TheodicBrand";
-import { fetchRoomMessages } from "@/features/chat/api";
+import { fetchRoomMembers, fetchRoomMessages } from "@/features/chat/api";
 import { createChatRoom, fetchChatRooms } from "@/features/inbox/api";
 import {
   getAssistantMemory,
@@ -148,6 +153,12 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
   const [roomPreviews, setRoomPreviews] = useState<
     Record<string, RoomPreviewMeta>
   >({});
+  const [directoryContacts, setDirectoryContacts] = useState<CompanyContact[]>(
+    [],
+  );
+  const [roomMembersMap, setRoomMembersMap] = useState<
+    Record<string, string[]>
+  >({});
 
   // Account Popover state
   const [accountOpen, setAccountOpen] = useState(false);
@@ -170,9 +181,33 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
   const creatingRef = useRef(false);
   const startingContactRef = useRef(false);
   const fetchedPreviewsRef = useRef<Set<string>>(new Set());
+  const fetchedMembersRef = useRef<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const chatAvailable = Boolean(capabilities?.chat_available);
+
+  const userDisplayName = useMemo(() => {
+    const raw = profile?.display_name?.trim();
+    const subject = actor?.subject;
+    if (subject) {
+      const known =
+        PERSONA_LOCALIZATIONS[subject as keyof typeof PERSONA_LOCALIZATIONS];
+      if (
+        raw &&
+        (!known ||
+          (raw !== known["zh-CN"].displayName &&
+            raw !== known["zh-HK"].displayName &&
+            raw !== known.en.displayName))
+      ) {
+        return raw;
+      }
+      if (known) {
+        return localizePersona(subject).displayName;
+      }
+      return raw || subject;
+    }
+    return raw || tx({ "zh-CN": "员工", "zh-HK": "員工", en: "Employee" });
+  }, [profile?.display_name, actor?.subject, localizePersona, tx]);
 
   const resolveContactDisplay = useCallback(
     (contact: CompanyContact) => {
@@ -202,48 +237,171 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
     [locale, localizePersona, localizeRole],
   );
 
+  const contactBySubject = useMemo(() => {
+    const map = new Map<string, CompanyContact>();
+    for (const c of directoryContacts) {
+      map.set(c.subject, c);
+    }
+    return map;
+  }, [directoryContacts]);
+
+  const dmContactByRoomId = useMemo(() => {
+    const map = new Map<string, CompanyContact>();
+    for (const c of directoryContacts) {
+      if (c.direct_room_id) {
+        map.set(c.direct_room_id, c);
+      }
+    }
+    return map;
+  }, [directoryContacts]);
+
   const resolveRoomDisplay = useCallback(
-    (title: string) => ({
-      isDirect: isDirectRoomTitle(title),
-      label: formatChatRoomTitle(title, locale),
-    }),
-    [locale],
+    (room: ChatRoom) => {
+      const mappedDmContact = dmContactByRoomId.get(room.id);
+      const roomMembers = roomMembersMap[room.id];
+      const titleIsDirect = isDirectRoomTitle(room.title);
+      const isDirect =
+        Boolean(mappedDmContact) || titleIsDirect || roomMembers?.length === 2;
+
+      if (isDirect) {
+        let peerSubject: string | null = mappedDmContact?.subject ?? null;
+        if (
+          !peerSubject &&
+          roomMembers &&
+          roomMembers.length === 2 &&
+          actor?.subject
+        ) {
+          peerSubject = roomMembers.find((m) => m !== actor.subject) ?? null;
+        }
+        const dmInfo = extractDirectRoomInfo(room.title);
+        if (!peerSubject && dmInfo) {
+          const formattedRaw = formatChatRoomTitle(room.title, locale);
+          const pointsToSelf = Boolean(
+            actor &&
+              (dmInfo.targetSubject === actor.subject ||
+                dmInfo.targetLabel === actor.subject ||
+                formattedRaw === userDisplayName),
+          );
+          if (pointsToSelf && actor && room.owner !== actor.subject) {
+            peerSubject = room.owner;
+          } else if (
+            dmInfo.targetSubject &&
+            dmInfo.targetSubject !== actor?.subject
+          ) {
+            peerSubject = dmInfo.targetSubject;
+          }
+        }
+
+        const peerContact = peerSubject
+          ? contactBySubject.get(peerSubject)
+          : mappedDmContact;
+        const label = peerContact
+          ? resolveContactDisplay(peerContact).displayName
+          : peerSubject
+            ? localizePersona(peerSubject).displayName
+            : formatChatRoomTitle(room.title, locale);
+
+        return {
+          isDirect: true,
+          label,
+          peerSubject,
+          avatarSrc: peerContact?.avatar_url ?? null,
+          avatarStatus: mapContactAvailabilityToAvatarStatus(
+            peerContact?.availability,
+          ),
+          fallbackText: getMonogram(label, peerSubject || "DM"),
+        };
+      }
+
+      const label = formatChatRoomTitle(room.title, locale);
+      return {
+        isDirect: false,
+        label,
+        peerSubject: null,
+        avatarSrc: null,
+        avatarStatus: undefined,
+        fallbackText: getMonogram(label, room.owner || "RM"),
+      };
+    },
+    [
+      actor,
+      contactBySubject,
+      dmContactByRoomId,
+      locale,
+      localizePersona,
+      resolveContactDisplay,
+      roomMembersMap,
+      userDisplayName,
+    ],
   );
 
-  // Bounded lightweight hydration of latest message preview + timestamp per room
+  // Bounded lightweight hydration of latest message preview + DM peer members per room
   const hydrateRoomPreviews = useCallback(
     async (roomList: ChatRoom[], startGen: number) => {
       const candidates = roomList
         .filter((r) => !fetchedPreviewsRef.current.has(r.id))
         .slice(0, 12);
-      if (candidates.length === 0) return;
+      const memberCandidates = roomList
+        .filter(
+          (r) =>
+            isDirectRoomTitle(r.title) && !fetchedMembersRef.current.has(r.id),
+        )
+        .slice(0, 12);
 
       for (const r of candidates) {
         fetchedPreviewsRef.current.add(r.id);
       }
+      for (const r of memberCandidates) {
+        fetchedMembersRef.current.add(r.id);
+      }
 
-      const settled = await Promise.allSettled(
-        candidates.map(async (room) => {
-          const res = await fetchRoomMessages(room.id, { limit: 100, after: 0 });
-          const last =
-            res.items.length > 0 ? res.items[res.items.length - 1] : null;
-          return { roomId: room.id, last };
-        }),
-      );
-      if (startGen !== getAuthGeneration()) return;
+      if (candidates.length > 0) {
+        const settled = await Promise.allSettled(
+          candidates.map(async (room) => {
+            const res = await fetchRoomMessages(room.id, {
+              limit: 100,
+              after: 0,
+            });
+            const last =
+              res.items.length > 0 ? res.items[res.items.length - 1] : null;
+            return { roomId: room.id, last };
+          }),
+        );
+        if (startGen !== getAuthGeneration()) return;
 
-      setRoomPreviews((prev) => {
-        const next = { ...prev };
-        for (const item of settled) {
-          if (item.status === "fulfilled" && item.value.last) {
-            next[item.value.roomId] = {
-              text: item.value.last.text,
-              createdAt: item.value.last.created_at,
-            };
+        setRoomPreviews((prev) => {
+          const next = { ...prev };
+          for (const item of settled) {
+            if (item.status === "fulfilled" && item.value.last) {
+              next[item.value.roomId] = {
+                text: item.value.last.text,
+                createdAt: item.value.last.created_at,
+              };
+            }
           }
-        }
-        return next;
-      });
+          return next;
+        });
+      }
+
+      if (memberCandidates.length > 0) {
+        const memberSettled = await Promise.allSettled(
+          memberCandidates.map(async (room) => {
+            const res = await fetchRoomMembers(room.id, { limit: 10 });
+            return { roomId: room.id, items: res.items };
+          }),
+        );
+        if (startGen !== getAuthGeneration()) return;
+
+        setRoomMembersMap((prev) => {
+          const next = { ...prev };
+          for (const item of memberSettled) {
+            if (item.status === "fulfilled") {
+              next[item.value.roomId] = item.value.items;
+            }
+          }
+          return next;
+        });
+      }
     },
     [],
   );
@@ -303,10 +461,13 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
 
   useEffect(() => {
     fetchedPreviewsRef.current.clear();
+    fetchedMembersRef.current.clear();
     setRooms([]);
     setRoomsNext(null);
     setRoomsError(null);
     setRoomPreviews({});
+    setRoomMembersMap({});
+    setDirectoryContacts([]);
     setAccountOpen(false);
     setSearchQuery("");
     setContactHits([]);
@@ -317,6 +478,12 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
     createClientIdRef.current = generateClientId("room");
     if (status === "authenticated" && chatAvailable) {
       void loadRooms(null);
+      const startGen = authGeneration;
+      void loadDirectoryContactsCached(startGen).then((items) => {
+        if (startGen === getAuthGeneration()) {
+          setDirectoryContacts(items);
+        }
+      });
     }
   }, [authGeneration, status, chatAvailable, loadRooms]);
 
@@ -329,6 +496,7 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
         if (prev.some((r) => r.id === custom.detail.id)) return prev;
         return [custom.detail, ...prev];
       });
+      void hydrateRoomPreviews([custom.detail], getAuthGeneration());
     };
     const onRoomPreview = (event: Event) => {
       const custom = event as CustomEvent<{
@@ -399,7 +567,7 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
     return rooms.filter(
       (room) =>
         room.title.toLowerCase().includes(q) ||
-        resolveRoomDisplay(room.title).label.toLowerCase().includes(q) ||
+        resolveRoomDisplay(room).label.toLowerCase().includes(q) ||
         room.owner.toLowerCase().includes(q),
     );
   }, [rooms, searchQuery, resolveRoomDisplay]);
@@ -513,29 +681,6 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
     await logout();
     router.replace("/login");
   };
-
-  const userDisplayName = useMemo(() => {
-    const raw = profile?.display_name?.trim();
-    const subject = actor?.subject;
-    if (subject) {
-      const known =
-        PERSONA_LOCALIZATIONS[subject as keyof typeof PERSONA_LOCALIZATIONS];
-      if (
-        raw &&
-        (!known ||
-          (raw !== known["zh-CN"].displayName &&
-            raw !== known["zh-HK"].displayName &&
-            raw !== known.en.displayName))
-      ) {
-        return raw;
-      }
-      if (known) {
-        return localizePersona(subject).displayName;
-      }
-      return raw || subject;
-    }
-    return raw || tx({ "zh-CN": "员工", "zh-HK": "員工", en: "Employee" });
-  }, [profile?.display_name, actor?.subject, localizePersona, tx]);
 
   const userAvatarSrc = profile?.has_avatar
     ? `/v1/profile/avatar?v=${avatarVersion}`
@@ -708,21 +853,15 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
               href="/inbox/assistant"
               data-testid="inbox-pinned-agent"
               aria-current={isAgentActive ? "page" : undefined}
-              className="relative z-[3] flex items-center gap-3 px-3 py-2.5"
+              className="relative z-[3] flex items-center gap-2.5 px-[9px] py-2.5"
             >
-              <span className="relative inline-flex shrink-0">
-                <Avatar
-                  src={agentAvatarSrc}
-                  name={agentDisplayName}
-                  fallbackText="AG"
-                  size="md"
-                  kind="agent"
-                />
-                <span
-                  aria-hidden="true"
-                  className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full bg-[var(--accent-solid)] ring-2 ring-[var(--bg-surface)]"
-                />
-              </span>
+              <Avatar
+                src={agentAvatarSrc}
+                name={agentDisplayName}
+                fallbackText="AG"
+                size="md"
+                kind="agent"
+              />
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-1.5 min-w-0">
                   <span
@@ -897,7 +1036,14 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                         activeThread === room.id ||
                         pathname === `/inbox/${encodeURIComponent(room.id)}` ||
                         pathname === `/inbox/${room.id}`;
-                      const { label } = resolveRoomDisplay(room.title);
+                      const {
+                        label,
+                        isDirect,
+                        peerSubject,
+                        avatarSrc,
+                        avatarStatus,
+                        fallbackText,
+                      } = resolveRoomDisplay(room);
                       const preview = roomPreviews[room.id];
                       return (
                         <Link
@@ -907,14 +1053,16 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                           className={[
                             "flex items-center gap-2.5 rounded-sm px-2.5 py-2 transition-colors duration-[140ms]",
                             isActive
-                              ? "bg-[var(--accent-wash-strong)] text-[var(--ink-primary)]"
+                              ? "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--hairline)]"
                               : "hover:bg-[var(--bg-hover)] text-[var(--ink-primary)]",
                           ].join(" ")}
                         >
                           <Avatar
+                            src={avatarSrc}
                             name={label}
-                            fallbackText={room.owner}
+                            fallbackText={fallbackText}
                             size="sm"
+                            status={avatarStatus}
                           />
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-[13px] font-medium text-[var(--ink-primary)]">
@@ -923,7 +1071,14 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                             <div className="truncate text-[11.5px] text-[var(--ink-muted)]">
                               {preview?.text
                                 ? formatChatMessagePreview(preview.text, locale)
-                                : localizePersona(room.owner).displayName}
+                                : isDirect
+                                  ? tx({
+                                      "zh-CN": "1:1 私聊",
+                                      "zh-HK": "1:1 私訊",
+                                      en: "1:1 Direct Chat",
+                                    })
+                                  : localizePersona(peerSubject || room.owner)
+                                      .displayName}
                             </div>
                           </div>
                         </Link>
@@ -992,7 +1147,13 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                       activeThread === room.id ||
                       pathname === `/inbox/${encodeURIComponent(room.id)}` ||
                       pathname === `/inbox/${room.id}`;
-                    const { label, isDirect } = resolveRoomDisplay(room.title);
+                    const {
+                      label,
+                      isDirect,
+                      avatarSrc,
+                      avatarStatus,
+                      fallbackText,
+                    } = resolveRoomDisplay(room);
                     const isOwner = Boolean(actor && room.owner === actor.subject);
                     const preview = roomPreviews[room.id];
                     const timeLabel = preview
@@ -1042,14 +1203,16 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                         className={[
                           "flex min-h-[54px] items-center gap-2.5 rounded-sm px-2.5 py-2 transition-colors duration-[140ms]",
                           isActive
-                            ? "bg-[var(--accent-wash-strong)] text-[var(--ink-primary)]"
+                            ? "bg-[var(--bg-surface)] text-[var(--ink-primary)] shadow-[var(--shadow-subtle)] ring-1 ring-[var(--hairline)]"
                             : "hover:bg-[var(--bg-hover)] text-[var(--ink-primary)]",
                         ].join(" ")}
                       >
                         <Avatar
+                          src={avatarSrc}
                           name={label}
-                          fallbackText={room.owner}
+                          fallbackText={fallbackText}
                           size="md"
+                          status={avatarStatus}
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-2">
@@ -1199,7 +1362,7 @@ export function InboxShell({ mode, activeThread, children }: InboxShellProps) {
                 side="top"
                 align="start"
                 sideOffset={10}
-                className="z-50 w-[268px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
+                className="aios-popover-content z-50 w-[268px] rounded-card border border-[var(--hairline-strong)] bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
               >
                 <div className="border-b border-[var(--hairline)] px-3 py-2.5">
                   <div className="truncate text-[13.5px] font-semibold text-[var(--ink-primary)]">

@@ -79,10 +79,237 @@ function sha256Buf(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
 }
 
+const VALID_REQUEST_ID_RE = /^[A-Za-z0-9._:-]{8,128}$/;
+const VALID_TRACEPARENT_RE = /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/;
+
+function buildTraceHeaders(req: NextRequest): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const reqId = req.headers.get("x-request-id")?.trim() ?? "";
+  if (VALID_REQUEST_ID_RE.test(reqId)) {
+    headers["X-Request-ID"] = reqId;
+  }
+  const tp = req.headers.get("traceparent")?.trim() ?? "";
+  if (VALID_TRACEPARENT_RE.test(tp)) {
+    headers.traceparent = tp;
+  }
+  return headers;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildReserveConflictDetail(
+  parsed: unknown,
+  locale: Locale,
+): { code: string; message: string } {
+  const rawDetail = isPlainRecord(parsed) ? parsed.detail : parsed;
+  const code =
+    isPlainRecord(rawDetail) && typeof rawDetail.code === "string"
+      ? rawDetail.code
+      : "";
+  const rawMsg =
+    isPlainRecord(rawDetail) && typeof rawDetail.message === "string"
+      ? rawDetail.message
+      : typeof rawDetail === "string"
+        ? rawDetail
+        : "";
+
+  if (
+    code === "IDEMPOTENCY_CONFLICT" ||
+    rawMsg.includes("different request payload")
+  ) {
+    return {
+      code: "IDEMPOTENCY_CONFLICT",
+      message:
+        locale === "en"
+          ? "This email request ID is already bound to a different message payload."
+          : locale === "zh-HK"
+            ? "此郵件請求編號已綁定至另一封郵件內容。"
+            : "此邮件请求标识已绑定至另一封邮件内容。",
+    };
+  }
+  if (code === "OUTCOME_UNKNOWN" || rawMsg.includes("UNKNOWN")) {
+    return {
+      code: "OUTCOME_UNKNOWN",
+      message:
+        locale === "en"
+          ? "Previous email dispatch outcome is UNKNOWN; manual verification is required before retry."
+          : locale === "zh-HK"
+            ? "上次郵件派發結果未知，須人工核實後再重試。"
+            : "上次邮件发送结果未知，需人工核实后再重试。",
+    };
+  }
+  return {
+    code: "DISPATCH_IN_PROGRESS",
+    message:
+      locale === "en"
+        ? "This email dispatch is already in progress."
+        : locale === "zh-HK"
+          ? "此郵件發送請求正在處理中，請勿重複提交。"
+          : "该邮件发送请求正在处理中，请勿重复提交。",
+  };
+}
+
+interface OutboxReserveSuccess {
+  status: "reserved" | "replay";
+  outbox_id: string;
+  attempt: number;
+  cached_result: unknown;
+}
+
+async function reserveExternalOutbox(params: {
+  apiBase: string;
+  browserOrigin: string;
+  cookie: string;
+  csrfToken: string;
+  traceHeaders: Record<string, string>;
+  clientId: string;
+  requestSha256: string;
+  locale: Locale;
+}): Promise<
+  | { ok: true; data: OutboxReserveSuccess }
+  | { ok: false; response: Response }
+> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${params.apiBase}/v1/workbench/external-outbox/reserve`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: params.cookie,
+          "X-CSRF-Token": params.csrfToken,
+          Origin: params.browserOrigin,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...params.traceHeaders,
+        },
+        body: JSON.stringify({
+          action_kind: "email.send",
+          client_id: params.clientId,
+          request_sha256: params.requestSha256,
+          lease_s: 60,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      response: jsonResponse(
+        {
+          detail: {
+            code: "UPSTREAM_UNAVAILABLE",
+            message:
+              params.locale === "en"
+                ? "Outbox reservation service is temporarily unavailable."
+                : params.locale === "zh-HK"
+                  ? "發件預約服務暫不可用，請稍後重試。"
+                  : "发件预留服务暂不可用，请稍后重试。",
+          },
+        },
+        503,
+      ),
+    };
+  }
+
+  const text = await res.text();
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = text;
+  }
+
+  if (res.status === 409) {
+    return {
+      ok: false,
+      response: jsonResponse(
+        { detail: buildReserveConflictDetail(parsed, params.locale) },
+        409,
+      ),
+    };
+  }
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      response: jsonResponse(sanitizeErrorPayload(res.status, parsed), res.status),
+    };
+  }
+
+  if (!isPlainRecord(parsed) || typeof parsed.outbox_id !== "string") {
+    return {
+      ok: false,
+      response: jsonResponse(
+        {
+          detail: {
+            code: "UPSTREAM_UNAVAILABLE",
+            message: "发件预留响应无效，请稍后重试。",
+          },
+        },
+        503,
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      status: parsed.status === "replay" ? "replay" : "reserved",
+      outbox_id: parsed.outbox_id,
+      attempt: typeof parsed.attempt === "number" ? parsed.attempt : 1,
+      cached_result: parsed.cached_result ?? null,
+    },
+  };
+}
+
+async function finalizeExternalOutbox(params: {
+  apiBase: string;
+  browserOrigin: string;
+  cookie: string;
+  csrfToken: string;
+  traceHeaders: Record<string, string>;
+  outboxId: string;
+  state: "SUCCEEDED" | "FAILED" | "UNKNOWN";
+  externalId?: string | null;
+  result?: Record<string, unknown> | null;
+}): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${params.apiBase}/v1/workbench/external-outbox/${encodeURIComponent(params.outboxId)}/finalize`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: params.cookie,
+          "X-CSRF-Token": params.csrfToken,
+          Origin: params.browserOrigin,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...params.traceHeaders,
+        },
+        body: JSON.stringify({
+          state: params.state,
+          external_id: params.externalId ?? null,
+          result: params.result ?? null,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function verifySessionCsrf(
   apiBase: string,
   cookie: string,
   presentedCsrf: string,
+  traceHeaders: Record<string, string>,
 ): Promise<{ ok: true } | { ok: false; response: Response }> {
   let sessionRes: Response;
   try {
@@ -91,6 +318,7 @@ async function verifySessionCsrf(
       headers: {
         Cookie: cookie,
         Accept: "application/json",
+        ...traceHeaders,
       },
       cache: "no-store",
       signal: AbortSignal.timeout(3000),
@@ -389,12 +617,14 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     const apiBase = getApiBaseUrl();
     const browserOrigin = getBrowserOrigin();
+    const traceHeaders = buildTraceHeaders(req);
 
     // Verify CSRF against FastAPI BEFORE checking secrets/idempotency/sending mail
     const csrfCheck = await verifySessionCsrf(
       apiBase,
       cookie,
       csrfToken.trim(),
+      traceHeaders,
     );
     if (!csrfCheck.ok) {
       return csrfCheck.response;
@@ -426,6 +656,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             Origin: browserOrigin,
             "Content-Type": "application/json",
             Accept: "application/json",
+            ...traceHeaders,
           },
           body: JSON.stringify({
             client_id: data.client_id,
@@ -475,82 +706,135 @@ export async function POST(req: NextRequest): Promise<Response> {
       );
     }
 
-    // Idempotency guard: avoid duplicate external SMTP send on repeated client_id
-    const existingReceipt = (await findExistingOutboxReceipt(
+    // Reserve-first atomic external outbox BEFORE calling SMTP/MCP!
+    const canonicalRequestPayload = JSON.stringify({
+      body: cleanBody,
+      cc: normalizedCc,
+      recipients: normalizedTo,
+      subject: cleanSubject,
+    });
+    const requestSha256 = createHash("sha256")
+      .update(canonicalRequestPayload, "utf8")
+      .digest("hex");
+
+    const reservation = await reserveExternalOutbox({
       apiBase,
+      browserOrigin,
       cookie,
-      data.client_id,
-    )) as (EmailOutboxReceipt & { body_sha256?: string }) | null;
-    if (existingReceipt) {
-      const samePayload =
-        existingReceipt.subject_line === cleanSubject &&
-        (!existingReceipt.body_sha256 ||
-          existingReceipt.body_sha256 === bodySha256) &&
-        JSON.stringify(existingReceipt.recipients) ===
-          JSON.stringify(normalizedTo) &&
-        JSON.stringify(existingReceipt.cc) === JSON.stringify(normalizedCc);
-      if (samePayload) {
+      csrfToken: csrfToken.trim(),
+      traceHeaders,
+      clientId: data.client_id,
+      requestSha256,
+      locale: cookieLocale,
+    });
+    if (!reservation.ok) {
+      return reservation.response;
+    }
+
+    if (reservation.data.status === "replay") {
+      if (
+        isPlainRecord(reservation.data.cached_result) &&
+        Object.keys(reservation.data.cached_result).length > 0
+      ) {
+        return jsonResponse(reservation.data.cached_result, 200);
+      }
+      const fallbackReceipt = await findExistingOutboxReceipt(
+        apiBase,
+        cookie,
+        data.client_id,
+      );
+      if (fallbackReceipt) {
         const idempotentPayload: EmailSendResponse = {
           phase: "sent",
-          receipt: existingReceipt,
-          transport_mode: existingReceipt.transport_mode,
-          message_id: existingReceipt.message_id,
-          delivery_status: existingReceipt.delivery_status,
-          accepted: [...existingReceipt.recipients, ...existingReceipt.cc],
+          receipt: fallbackReceipt,
+          transport_mode: fallbackReceipt.transport_mode,
+          message_id: fallbackReceipt.message_id,
+          delivery_status: fallbackReceipt.delivery_status,
+          accepted: [...fallbackReceipt.recipients, ...fallbackReceipt.cc],
           rejected: [],
           warnings: [],
         };
         return jsonResponse(idempotentPayload, 200);
       }
       return jsonResponse(
-        {
-          detail: {
-            code: "CONFLICT",
-            message:
-              cookieLocale === "en"
-                ? "This email request ID is already bound to a different message."
-                : cookieLocale === "zh-HK"
-                  ? "此郵件請求編號已綁定至另一封郵件內容。"
-                  : "此邮件请求标识已绑定至另一封邮件内容。",
-          },
-        },
-        409,
+        { phase: "sent", outbox_id: reservation.data.outbox_id },
+        200,
       );
     }
 
+    const outboxId = reservation.data.outbox_id;
+
     // Resolve tenant colleagues whose emails appear in To/CC for internal notices & SSE push
-    const directory = await resolveTenantContacts(actor, cookie, {
-      includeSelf: false,
-      limit: 50,
-      locale: cookieLocale,
-    });
-    const contactByEmail = new Map(
-      directory.items.map((item) => [item.email.toLowerCase(), item]),
-    );
-    const internalRecipientSubjects: string[] = [];
-    for (const addr of [...normalizedTo, ...normalizedCc]) {
-      const match = contactByEmail.get(addr.toLowerCase());
-      if (
-        match &&
-        match.subject !== actor.subject &&
-        !internalRecipientSubjects.includes(match.subject)
-      ) {
-        internalRecipientSubjects.push(match.subject);
+    let internalRecipientSubjects: string[] = [];
+    try {
+      const directory = await resolveTenantContacts(actor, cookie, {
+        includeSelf: false,
+        limit: 50,
+        locale: cookieLocale,
+      });
+      const contactByEmail = new Map(
+        directory.items.map((item) => [item.email.toLowerCase(), item]),
+      );
+      const seenSubjects = new Set<string>();
+      for (const addr of [...normalizedTo, ...normalizedCc]) {
+        const match = contactByEmail.get(addr.toLowerCase());
+        if (
+          match &&
+          match.subject !== actor.subject &&
+          !seenSubjects.has(match.subject)
+        ) {
+          seenSubjects.add(match.subject);
+        }
       }
+      internalRecipientSubjects = Array.from(seenSubjects);
+    } catch {
+      internalRecipientSubjects = [];
     }
 
-    const dispatchResult = await sendEmailViaConnector(
-      {
-        to: normalizedTo,
-        cc: normalizedCc,
-        subject: cleanSubject,
-        body: cleanBody,
-        senderSubject: actor.subject,
-        senderTenant: actor.tenant,
-        internalRecipientCount: internalRecipientSubjects.length,
-      },
-      cookieLocale,
-    );
+    let dispatchResult: Awaited<ReturnType<typeof sendEmailViaConnector>>;
+    try {
+      dispatchResult = await sendEmailViaConnector(
+        {
+          to: normalizedTo,
+          cc: normalizedCc,
+          subject: cleanSubject,
+          body: cleanBody,
+          senderSubject: actor.subject,
+          senderTenant: actor.tenant,
+          internalRecipientCount: internalRecipientSubjects.length,
+        },
+        cookieLocale,
+      );
+    } catch (err) {
+      const isDeterministicPreDispatch =
+        isPlainRecord(err) && err.preDispatch === true;
+      await finalizeExternalOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken: csrfToken.trim(),
+        traceHeaders,
+        outboxId,
+        state: isDeterministicPreDispatch ? "FAILED" : "UNKNOWN",
+      });
+      return jsonResponse(
+        {
+          detail: {
+            code: isDeterministicPreDispatch
+              ? "EMAIL_DISPATCH_FAILED"
+              : "OUTCOME_UNKNOWN",
+            message: isDeterministicPreDispatch
+              ? cookieLocale === "en"
+                ? "Email dispatch failed before transport."
+                : "邮件发送前校验失败，未发出。"
+              : cookieLocale === "en"
+                ? "Email transport failed with an uncertain outcome; manual verification is required before retry."
+                : "邮件传输发生超时或网络异常，发送结果未知，需人工核实后再重试。",
+          },
+        },
+        isDeterministicPreDispatch ? 422 : 503,
+      );
+    }
 
     let persistRes: Response;
     try {
@@ -562,6 +846,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           Origin: browserOrigin,
           "Content-Type": "application/json",
           Accept: "application/json",
+          ...traceHeaders,
         },
         body: JSON.stringify({
           client_id: data.client_id,
@@ -580,11 +865,21 @@ export async function POST(req: NextRequest): Promise<Response> {
         signal: AbortSignal.timeout(5000),
       });
     } catch {
+      await finalizeExternalOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken: csrfToken.trim(),
+        traceHeaders,
+        outboxId,
+        state: "UNKNOWN",
+        externalId: dispatchResult.message_id,
+      });
       return jsonResponse(
         {
           detail: {
             code: "UPSTREAM_UNAVAILABLE",
-            message: "邮件审计留痕服务暂不可用，请稍后重试。",
+            message: "邮件审计留痕服务暂不可用，结果已标记为 UNKNOWN，请核实后重试。",
           },
         },
         503,
@@ -600,6 +895,17 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
 
     if (!persistRes.ok) {
+      const sentExternally = dispatchResult.transport_mode !== "governed_outbox";
+      await finalizeExternalOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken: csrfToken.trim(),
+        traceHeaders,
+        outboxId,
+        state: persistRes.status >= 500 || sentExternally ? "UNKNOWN" : "FAILED",
+        externalId: dispatchResult.message_id,
+      });
       return jsonResponse(
         sanitizeErrorPayload(persistRes.status, persistParsed),
         persistRes.status,
@@ -618,6 +924,39 @@ export async function POST(req: NextRequest): Promise<Response> {
       rejected: dispatchResult.rejected,
       warnings: dispatchResult.warnings,
     };
+
+    const finalized = await finalizeExternalOutbox({
+      apiBase,
+      browserOrigin,
+      cookie,
+      csrfToken: csrfToken.trim(),
+      traceHeaders,
+      outboxId,
+      state: "SUCCEEDED",
+      externalId: responsePayload.message_id,
+      result: responsePayload as unknown as Record<string, unknown>,
+    });
+    if (!finalized) {
+      await finalizeExternalOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken: csrfToken.trim(),
+        traceHeaders,
+        outboxId,
+        state: "UNKNOWN",
+        externalId: responsePayload.message_id,
+      });
+      return jsonResponse(
+        {
+          detail: {
+            code: "UPSTREAM_UNAVAILABLE",
+            message: "发件回执落库确认失败，已锁定防止重复发送。",
+          },
+        },
+        503,
+      );
+    }
 
     return jsonResponse(responsePayload, 201);
   }

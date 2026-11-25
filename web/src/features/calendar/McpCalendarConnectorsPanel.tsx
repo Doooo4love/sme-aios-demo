@@ -140,7 +140,7 @@ export function McpCalendarConnectorsPanel({
       side="bottom"
       align="end"
       sideOffset={8}
-      className="z-50 w-[290px] rounded-card bg-[var(--bg-surface)] p-3.5 shadow-[var(--shadow-popover)] focus:outline-none space-y-2"
+      className="aios-popover-content z-50 w-[290px] rounded-card bg-[var(--bg-surface)] p-3.5 shadow-[var(--shadow-popover)] focus:outline-none space-y-2"
     >
       <div className="text-[12.5px] font-semibold text-[var(--ink-primary)]">
         {tx(

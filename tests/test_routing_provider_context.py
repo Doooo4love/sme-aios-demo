@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,14 @@ from fastapi.testclient import TestClient
 import httpx
 
 from aios_platform.api import build_app
-from aios_platform.assistant_agent import AssistantAgent, AssistantMessage, PendingWorkSnapshot, PolicyRefusal
+from aios_platform.assistant_agent import (
+    DEFAULT_LLM_MODEL,
+    AssistantAgent,
+    AssistantMessage,
+    PendingWorkSnapshot,
+    PolicyRefusal,
+    resolve_llm_model,
+)
 from aios_platform.events import EventHub
 from aios_platform.governance import GovernanceService
 from aios_platform.identity import DemoIdentity
@@ -36,11 +44,13 @@ from aios_platform.routing_context import (
     ZONE2_COMPACT_TARGET_TOKENS,
     ZONE2_TOOL_OUTPUT_MAX_TOKENS,
     ActiveDocumentInput,
+    BudgetReservation,
     ContextManager,
     EffortRouter,
     MapReduceDocumentAnalyzer,
     QuotaManager,
     RoutingTelemetryStore,
+    TenantProviderPolicyStore,
     approx_tokens,
 )
 from aios_platform.service import services
@@ -871,6 +881,218 @@ class RoutingProviderContextTests(unittest.TestCase):
                 },
             )
             self.assertEqual(bad_41.status_code, 422)
+
+    def test_deepseek_flash_default_2026_pricing_peak_offpeak_and_override(self):
+        self.assertEqual(DEFAULT_LLM_MODEL, "deepseek-flash")
+        self.assertTrue(MODEL_PROFILES["deepseek-chat"].deprecated)
+        self.assertFalse(MODEL_PROFILES["deepseek-flash"].deprecated)
+        self.assertEqual(MODEL_PROFILES["deepseek-flash"].context_window, 1_000_000)
+        self.assertEqual(MODEL_PROFILES["deepseek-flash"].surcharge_cliff, 200_000)
+        self.assertEqual(MODEL_PROFILES["deepseek-flash"].region, "cn-hk")
+        self.assertEqual(MODEL_PROFILES["deepseek-v4-pro"].context_window, 1_000_000)
+        self.assertEqual(MODEL_PROFILES["deepseek-v4-pro"].surcharge_cliff, 200_000)
+        self.assertEqual(MODEL_PROFILES["deepseek-v4-pro"].region, "cn-hk")
+
+        default_provider = LLMProvider(api_key="sk-def")
+        self.addCleanup(default_provider.close)
+        self.assertEqual(default_provider.profile.model_id, "deepseek-flash")
+        self.assertEqual(resolve_model_profile("").model_id, "deepseek-flash")
+        with patch.dict(os.environ, {"AIOS_LLM_MODEL": ""}, clear=False):
+            self.assertEqual(resolve_llm_model(), "deepseek-flash")
+
+        # Peak (Wed 02:00 UTC & 07:30 UTC) vs Off-Peak (Wed 04:30 UTC & Sat 02:00 UTC)
+        peak_am = datetime(2026, 11, 25, 2, 0, tzinfo=timezone.utc)
+        peak_pm = datetime(2026, 11, 25, 7, 30, tzinfo=timezone.utc)
+        off_mid = datetime(2026, 11, 25, 4, 30, tzinfo=timezone.utc)
+        off_wknd = datetime(2026, 11, 28, 2, 0, tzinfo=timezone.utc)
+
+        flash = MODEL_PROFILES["deepseek-flash"]
+        # 1M uncached input ($0.30) + 1M cached ($0.006) + 1M output ($1.20) = $1.506 = 1,506,000 micro_usd
+        self.assertEqual(
+            flash.estimate_cost_micro_usd(prompt_tokens=2_000_000, cache_hit_tokens=1_000_000, completion_tokens=1_000_000, now=peak_am),
+            1_506_000,
+        )
+        self.assertEqual(
+            flash.estimate_cost_micro_usd(prompt_tokens=2_000_000, cache_hit_tokens=1_000_000, completion_tokens=1_000_000, now=peak_pm),
+            1_506_000,
+        )
+        # Off-Peak 50% discount: $0.15 + $0.003 + $0.60 = $0.753 = 753,000 micro_usd
+        self.assertEqual(
+            flash.estimate_cost_micro_usd(prompt_tokens=2_000_000, cache_hit_tokens=1_000_000, completion_tokens=1_000_000, now=off_mid),
+            753_000,
+        )
+        self.assertEqual(
+            flash.estimate_cost_micro_usd(prompt_tokens=2_000_000, cache_hit_tokens=1_000_000, completion_tokens=1_000_000, now=off_wknd),
+            753_000,
+        )
+
+        pro = MODEL_PROFILES["deepseek-v4-pro"]
+        # Peak: $1.32 + $0.044 + $3.96 = 5,324,000 micro_usd; Off-Peak: 2,662,000 micro_usd
+        self.assertEqual(
+            pro.estimate_cost_micro_usd(prompt_tokens=2_000_000, cache_hit_tokens=1_000_000, completion_tokens=1_000_000, now=peak_am),
+            5_324_000,
+        )
+        self.assertEqual(
+            pro.estimate_cost_micro_usd(prompt_tokens=2_000_000, cache_hit_tokens=1_000_000, completion_tokens=1_000_000, now=off_mid),
+            2_662_000,
+        )
+
+        # AIOS_MODEL_PRICING_JSON override dynamically updates rates
+        override_json = json.dumps(
+            {
+                "deepseek-flash": {
+                    "input_per_1m": 0.40,
+                    "cached_input_per_1m": 0.01,
+                    "output_per_1m": 1.60,
+                    "off_peak_input_per_1m": 0.20,
+                    "off_peak_cached_input_per_1m": 0.005,
+                    "off_peak_output_per_1m": 0.80,
+                }
+            }
+        )
+        with patch.dict(os.environ, {"AIOS_MODEL_PRICING_JSON": override_json}, clear=False):
+            ov_prof = resolve_model_profile("deepseek-flash")
+            self.assertEqual(ov_prof.input_per_1m, 0.40)
+            self.assertEqual(
+                flash.estimate_cost_micro_usd(prompt_tokens=1_000_000, cache_hit_tokens=0, completion_tokens=1_000_000, now=peak_am),
+                2_000_000,
+            )
+            self.assertEqual(
+                flash.estimate_cost_micro_usd(prompt_tokens=1_000_000, cache_hit_tokens=0, completion_tokens=1_000_000, now=off_mid),
+                1_000_000,
+            )
+
+    def test_tenant_provider_policy_failover_block_pro_model_and_turn_deadline(self):
+        policy_store = TenantProviderPolicyStore(self.runtime.workflow)
+        defaults = policy_store.get_policy("harbour")
+        self.assertTrue(defaults["allow_failover"])
+        self.assertEqual(defaults["max_tier"], "T3")
+        self.assertIn("restricted_pii", defaults["blocked_data_classes"])
+
+        with self.assertRaises(ValueError):
+            policy_store.upsert_policy(self.admin, allowed_providers=[])
+        with self.assertRaises(ValueError):
+            policy_store.upsert_policy(self.admin, max_tier="T9")
+
+        # Restrict residency to cn-hk (allows deepseek-flash, blocks failover to US gpt-5.4-mini)
+        policy_store.upsert_policy(
+            self.admin,
+            allowed_providers=["deepseek", "openai"],
+            allowed_regions=["cn-hk"],
+            allow_failover=True,
+        )
+        self.assertTrue(policy_store.is_provider_allowed("harbour", MODEL_PROFILES["deepseek-flash"], is_failover=False))
+        self.assertFalse(policy_store.is_provider_allowed("harbour", MODEL_PROFILES["gpt-5.4-mini"], is_failover=True))
+        self.assertFalse(
+            policy_store.is_provider_allowed("harbour", MODEL_PROFILES["deepseek-flash"], data_class="restricted_pii")
+        )
+
+        fb = LLMProvider(api_key="sk-fb-us", model="gpt-5.4-mini", max_retries=0)
+        primary = LLMProvider(api_key="sk-pri-hk", model="deepseek-flash", max_retries=0, retry_backoff_base=0.0).with_fallbacks([fb])
+        self.addCleanup(primary.close)
+
+        urls_hit: list[str] = []
+
+        def fake_stream(_self, _method, url, **kwargs):
+            urls_hit.append(url)
+            return _MockHttpResponse({"error": "upstream unavailable"}, status_code=503)
+
+        with patch("httpx.Client.stream", autospec=True, side_effect=fake_stream):
+            with self.assertRaises(LLMProviderError) as ctx:
+                primary.chat_with_raw(
+                    [{"role": "user", "content": "Check status"}],
+                    provider_policy_check=lambda prof, is_fb: policy_store.is_provider_allowed("harbour", prof, is_failover=is_fb),
+                )
+        self.assertEqual(ctx.exception.error_code, "PROVIDER_POLICY_DENIED")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(urls_hit, ["https://api.deepseek.com/chat/completions"])
+
+        # Also test allow_failover=False blocking even cn-hk fallback
+        policy_store.upsert_policy(self.admin, allowed_regions=["cn-hk", "us"], allow_failover=False)
+        self.assertFalse(policy_store.is_provider_allowed("harbour", MODEL_PROFILES["gpt-5.4-mini"], is_failover=True))
+        policy_store.upsert_policy(self.admin, allowed_regions=["global", "cn-hk", "ap-east-1", "us"], allow_failover=True)
+
+        # Optional AIOS_LLM_PRO_MODEL routes T3 to deepseek-v4-pro while T1 uses deepseek-flash
+        seen_models: list[str] = []
+
+        def model_capture_stream(_self, _method, _url, **kwargs):
+            seen_models.append(str(kwargs["json"]["model"]))
+            return _MockHttpResponse({"choices": [{"message": {"role": "assistant", "content": "Pro reply"}}]})
+
+        with patch.dict(os.environ, {"AIOS_LLM_PRO_MODEL": "deepseek-v4-pro"}, clear=False):
+            pro_agent = AssistantAgent(self.runtime.workflow, self.governance, self.hub, api_key="sk-pro-test")
+            self.addCleanup(pro_agent.close)
+            with patch("aios_platform.llm_provider.httpx.Client.stream", autospec=True, side_effect=model_capture_stream):
+                pro_agent.handle_turn(
+                    self.operator,
+                    text="早安",
+                    locale="zh-CN",
+                    execute_call=lambda *_a: None,
+                    preview_approval=lambda *_a: None,
+                )
+                pro_agent.handle_turn(
+                    self.operator,
+                    text="Compare all clauses for contract conflict review in HK01",
+                    locale="en",
+                    execute_call=lambda *_a: None,
+                    preview_approval=lambda *_a: None,
+                )
+        self.assertEqual(seen_models, ["deepseek-flash", "deepseek-v4-pro"])
+
+        # Turn deadline ceiling halts tool loop cleanly once AIOS_TURN_DEADLINE_SECONDS elapses
+        dl_agent = AssistantAgent(self.runtime.workflow, self.governance, self.hub, api_key="sk-dl-test")
+        self.addCleanup(dl_agent.close)
+        dl_calls = {"n": 0}
+
+        def slow_tool_chat(messages, **kwargs):
+            dl_calls["n"] += 1
+            time.sleep(0.18)
+            from aios_platform.llm_provider import ChatResult, NormalizedToolCall, UsageMetrics
+            return (
+                ChatResult(
+                    provider="deepseek",
+                    model="deepseek-flash",
+                    tool_calls=[
+                        NormalizedToolCall(
+                            id=f"tc_dl_{dl_calls['n']}",
+                            name="shipment_read",
+                            arguments={"shipment_id": "SHP-1001", "warehouse": "HK01"},
+                            raw_arguments='{"shipment_id":"SHP-1001","warehouse":"HK01"}',
+                        )
+                    ],
+                    usage=UsageMetrics(prompt_tokens=30, completion_tokens=10),
+                ),
+                {},
+            )
+
+        with patch.dict(os.environ, {"AIOS_TURN_DEADLINE_SECONDS": "0.12"}, clear=False), patch.object(
+            dl_agent.llm_provider, "chat_with_raw", side_effect=slow_tool_chat
+        ):
+            dl_resp = dl_agent.handle_turn(
+                self.operator,
+                text="Check shipment SHP-1001 in HK01 and then compare all email drafts",
+                locale="en",
+                offered_tools=("shipment.read", "decision.warehouse.summary"),
+                execute_call=lambda *_a: {"ok": True},
+                preview_approval=lambda *_a: None,
+            )
+        self.assertIsInstance(dl_resp, AssistantMessage)
+        self.assertEqual(dl_calls["n"], 1)
+        with self.runtime.workflow.tx("harbour", write=False) as run:
+            dl_errs = run(
+                "SELECT error_code FROM aios_llm_telemetry WHERE tenant = 'harbour' AND error_code = 'TURN_DEADLINE_EXCEEDED'"
+            ).fetchall()
+        self.assertEqual(len(dl_errs), 1)
+        _ = BudgetReservation(
+            tenant="harbour",
+            id="br-1",
+            subject="operator",
+            role="operator",
+            day_key="2026-11-25",
+            reserved_micro_usd=100,
+            expires_at=time.time() + 60,
+            created_at=time.time(),
+        )
 
 
 if __name__ == "__main__":

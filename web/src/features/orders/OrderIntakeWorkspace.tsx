@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   CheckCircle2,
+  ChevronDown,
   FileSpreadsheet,
   FileText,
   ImageUp,
@@ -837,26 +838,33 @@ export function OrderIntakeWorkspace() {
                   en: "Target Warehouse",
                 })}
               </label>
-              <select
-                id="order-warehouse-select"
-                value={warehouse}
-                onChange={(e) => {
-                  setWarehouse(e.target.value);
-                  setStructuredIntake(null);
-                  setStructuredFingerprint("");
-                  setStructuredIdemKey("");
-                  setCreatedProposal(null);
-                  setStructuredError(null);
-                }}
-                data-testid="orders-warehouse-select"
-                className="h-9 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] font-semibold text-[var(--ink-primary)] focus:bg-[var(--bg-surface)] focus:border-[var(--accent)] focus:ring-3 focus:ring-[var(--accent-ring)] focus:outline-none transition-all duration-[150ms]"
-              >
-                {authorizedWarehouses.map((wh) => (
-                  <option key={wh} value={wh}>
-                    {wh}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <select
+                  id="order-warehouse-select"
+                  value={warehouse}
+                  onChange={(e) => {
+                    setWarehouse(e.target.value);
+                    setStructuredIntake(null);
+                    setStructuredFingerprint("");
+                    setStructuredIdemKey("");
+                    setCreatedProposal(null);
+                    setStructuredError(null);
+                  }}
+                  data-testid="orders-warehouse-select"
+                  className="aios-select font-mono-code text-[12.5px] font-semibold"
+                >
+                  {authorizedWarehouses.map((wh) => (
+                    <option key={wh} value={wh}>
+                      {wh}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                  strokeWidth={1.85}
+                  aria-hidden="true"
+                />
+              </div>
             </div>
 
             <span

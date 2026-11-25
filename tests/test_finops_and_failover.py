@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import secrets
 from tempfile import TemporaryDirectory
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -763,6 +764,201 @@ class FinOpsAndFailoverTests(unittest.TestCase):
         health_json = health_resp.json()
         self.assertEqual(health_json["l1_cache"]["hits"], 1)
         self.assertTrue(len(health_json["provider_circuits"]) >= 1)
+
+    def test_concurrent_8_thread_budget_reservation_enforces_hard_cap(self):
+        quota = QuotaManager(self.runtime.workflow)
+        quota.upsert_policy(self.admin, "tenant", "harbour", daily_usd_limit=0.010, daily_token_limit=100_000)
+
+        # Warm up SQLite schema via single reservation-release cycle? No, let all 8 threads race cold!
+        barrier = threading.Barrier(8)
+        now_ts = time.time()
+
+        def worker(_idx: int):
+            barrier.wait(timeout=5.0)
+            return quota.reserve_budget(
+                self.operator,
+                estimated_micro_usd=3_000,
+                estimated_tokens=1_000,
+                ttl_s=120.0,
+                now=now_ts,
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(worker, range(8)))
+
+        allowed = [r for r in results if r.allowed]
+        denied = [r for r in results if not r.allowed]
+        self.assertEqual(len(allowed), 3)
+        self.assertEqual(len(denied), 5)
+        self.assertTrue(all(r.reservation_id for r in allowed))
+
+        # Settle two of the approved reservations (2,000 each -> 4,000) and release the third -> 6,000 remaining
+        quota.settle_budget("harbour", allowed[0].reservation_id, actual_micro_usd=2_000, actual_tokens=600, now=now_ts + 1.0)
+        quota.settle_budget("harbour", allowed[1].reservation_id, actual_micro_usd=2_000, actual_tokens=600, now=now_ts + 1.0)
+        quota.release_budget("harbour", allowed[2].reservation_id)
+
+        # Second 8-thread concurrent race with 3,000 each -> at most 2 more fit (4,000 + 6,000 = 10,000)
+        barrier2 = threading.Barrier(8)
+
+        def worker2(_idx: int):
+            barrier2.wait(timeout=5.0)
+            res = quota.reserve_budget(
+                self.operator,
+                estimated_micro_usd=3_000,
+                estimated_tokens=1_000,
+                ttl_s=120.0,
+                now=now_ts + 2.0,
+            )
+            if res.allowed and res.reservation_id:
+                quota.settle_budget("harbour", res.reservation_id, actual_micro_usd=3_000, actual_tokens=1_000, now=now_ts + 3.0)
+            return res
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results2 = list(pool.map(worker2, range(8)))
+
+        allowed2 = [r for r in results2 if r.allowed]
+        self.assertLessEqual(len(allowed2), 2)
+
+        with self.runtime.workflow.tx("harbour", write=False) as run:
+            agg = run(
+                """SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN actual_micro_usd ELSE 0 END), 0) AS settled_micro,
+                          COALESCE(SUM(CASE WHEN status = 'reserved' THEN reserved_micro_usd ELSE 0 END), 0) AS reserved_micro
+                   FROM aios_budget_reservation
+                   WHERE tenant = ?""",
+                ("harbour",),
+            ).fetchone()
+        total_micro = int(agg["settled_micro"] or 0) + int(agg["reserved_micro"] or 0)
+        self.assertLessEqual(total_micro, 10_000)
+
+        # Expired reservations no longer block fresh capacity
+        expired_res = quota.reserve_budget(
+            self.operator,
+            estimated_micro_usd=500,
+            estimated_tokens=100,
+            ttl_s=1.0,
+            now=now_ts + 10.0,
+        )
+        self.assertFalse(expired_res.allowed)  # settled spend already at 10,000!
+
+    def test_fail_closed_quota_l1_cache_skips_budget_and_mapreduce_semaphore(self):
+        quota = QuotaManager(self.runtime.workflow)
+        quota.upsert_policy(self.admin, "subject", "operator", daily_usd_limit=0.50, daily_token_limit=100_000)
+
+        agent = AssistantAgent(self.runtime.workflow, self.governance, self.hub, api_key="sk-fail-closed")
+        self.addCleanup(agent.close)
+        self.assertEqual(agent.llm_provider.profile.model_id, "deepseek-flash")
+
+        # 1. Fail-closed on DB exception during quota check: zero external LLM call
+        with (
+            patch.object(agent.quota_manager, "check_quota", side_effect=RuntimeError("DB offline")),
+            patch.object(agent.llm_provider, "chat_with_raw", side_effect=AssertionError("Must fail closed without LLM call")),
+        ):
+            fc_msg = agent.handle_turn(
+                self.operator,
+                text="Summarize warehouse cutoff rules",
+                locale="en",
+                execute_call=lambda *_a: None,
+                preview_approval=lambda *_a: None,
+            )
+        self.assertIsInstance(fc_msg, AssistantMessage)
+        self.assertEqual(fc_msg.mode, "workflow_guidance")
+
+        # 2. L1 cache hit runs BEFORE take_planner_budget & reserve_budget (planner_limit=1 never exhausts on L1 hits!)
+        calls = {"n": 0}
+
+        def fake_chat(messages, **kwargs):
+            calls["n"] += 1
+            from aios_platform.llm_provider import ChatResult, UsageMetrics
+            res = ChatResult(
+                provider="deepseek",
+                model="deepseek-flash",
+                text=f"Cutoff is 17:00 HKT #{calls['n']}",
+                usage=UsageMetrics(prompt_tokens=120, completion_tokens=15, estimated_usd=0.0001),
+            )
+            return res, {"choices": [{"message": {"content": res.text}}]}
+
+        with patch.object(agent.llm_provider, "chat_with_raw", side_effect=fake_chat):
+            cold = agent.handle_turn(
+                self.operator,
+                text="Explain HK01 cutoff time",
+                locale="en",
+                planner_limit=2,
+                execute_call=lambda *_a: None,
+                preview_approval=lambda *_a: None,
+            )
+            # 3 immediate hits with planner_limit=2 in same minute must all hit L1 without 429 or new reservations!
+            for _ in range(3):
+                hit = agent.handle_turn(
+                    self.operator,
+                    text="  Explain   HK01 cutoff time ",
+                    locale="en",
+                    planner_limit=2,
+                    execute_call=lambda *_a: None,
+                    preview_approval=lambda *_a: None,
+                )
+                self.assertEqual(hit.reply, cold.reply)
+
+            # Role/grant/warehouse change must miss stale L1 cache immediately
+            expanded_grants_actor = self.operator.model_copy(
+                update={"grants": frozenset({*self.operator.grants, "finance.read"})}
+            )
+            miss_grants = agent.handle_turn(
+                expanded_grants_actor,
+                text="Explain HK01 cutoff time",
+                locale="en",
+                planner_limit=5,
+                execute_call=lambda *_a: None,
+                preview_approval=lambda *_a: None,
+            )
+            self.assertNotEqual(miss_grants.reply, cold.reply)
+
+            expanded_wh_actor = self.operator.model_copy(
+                update={"warehouses": frozenset({*self.operator.warehouses, "HK02"})}
+            )
+            miss_wh = agent.handle_turn(
+                expanded_wh_actor,
+                text="Explain HK01 cutoff time",
+                locale="en",
+                planner_limit=5,
+                execute_call=lambda *_a: None,
+                preview_approval=lambda *_a: None,
+            )
+            self.assertNotEqual(miss_wh.reply, cold.reply)
+            self.assertNotEqual(miss_wh.reply, miss_grants.reply)
+
+        self.assertEqual(calls["n"], 3)
+        with self.runtime.workflow.tx("harbour", write=False) as run:
+            res_rows = run("SELECT status FROM aios_budget_reservation WHERE tenant = 'harbour'").fetchall()
+        # Only the 3 cold LLM turns created budget reservations (0 for the 3 L1 hits!)
+        self.assertEqual(len(res_rows), 3)
+        self.assertTrue(all(r["status"] == "settled" for r in res_rows))
+
+        # 3. MapReduce per-tenant Semaphore(2) bounds concurrency cleanly and releases unused reservation
+        quota.upsert_policy(self.admin, "subject", "operator", daily_usd_limit=1.0, daily_token_limit=500_000)
+        sem = agent._get_mapreduce_semaphore("harbour")
+        self.assertTrue(sem.acquire(timeout=0.5))
+        self.assertTrue(sem.acquire(timeout=0.5))
+        try:
+            huge_doc = ActiveDocumentInput(doc_id="big-1", title="Big Pack", content=("word " * 160_000))
+            with patch.object(agent.mapreduce, "analyze", side_effect=AssertionError("Semaphore full must skip analyze")):
+                busy_msg = agent.handle_turn(
+                    self.operator,
+                    text="Analyze contract clauses",
+                    locale="en",
+                    active_document=huge_doc,
+                    execute_call=lambda *_a: None,
+                    preview_approval=lambda *_a: None,
+                )
+            self.assertEqual(busy_msg.mode, "workflow_guidance")
+            self.assertIn("busy", busy_msg.reply.lower())
+            with self.runtime.workflow.tx("harbour", write=False) as run:
+                released_rows = run(
+                    "SELECT status FROM aios_budget_reservation WHERE tenant = 'harbour' AND status = 'released'"
+                ).fetchall()
+            self.assertEqual(len(released_rows), 1)
+        finally:
+            sem.release()
+            sem.release()
 
 
 if __name__ == "__main__":

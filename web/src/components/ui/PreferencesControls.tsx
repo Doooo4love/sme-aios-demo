@@ -64,7 +64,7 @@ export function LanguageSwitcher({
             side={side}
             align={align}
             sideOffset={8}
-            className="z-50 w-[168px] rounded-lg bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
+            className="aios-popover-content z-50 w-[168px] rounded-lg bg-[var(--bg-surface)] p-1.5 shadow-[var(--shadow-popover)] focus:outline-none"
           >
             <DropdownMenu.Label className="px-2.5 py-1 text-[11px] font-medium text-[var(--ink-muted)]">
               {t("prefs.languageLabel")}

@@ -15,7 +15,7 @@ from scripts.enterprise_eval import main as eval_main, run_enterprise_eval
 
 
 class EnterpriseReadinessTests(unittest.TestCase):
-    """Verify all 6 enterprise readiness gates and CLI modes cleanly."""
+    """Verify all 7 enterprise readiness gates and CLI modes cleanly."""
 
     @classmethod
     def setUpClass(cls):
@@ -25,8 +25,8 @@ class EnterpriseReadinessTests(unittest.TestCase):
         self.assertTrue(self.report["all_passed"], self.report)
         self.assertTrue(self.report["zero_api_keys_required"])
         self.assertTrue(self.report["litellm_absent"])
-        self.assertEqual(self.report["gates_passed"], 6)
-        self.assertEqual(self.report["gates_total"], 6)
+        self.assertEqual(self.report["gates_passed"], 7)
+        self.assertEqual(self.report["gates_total"], 7)
         self.assertNotIn("litellm", sys.modules)
 
     def test_gate1_security_seal_and_antipoisoning_recall(self):
@@ -117,6 +117,44 @@ class EnterpriseReadinessTests(unittest.TestCase):
         self.assertTrue(g6["event_hub_since_event_ok"])
         self.assertTrue(g6["sse_last_event_id_replay_ok"])
         self.assertEqual(g6["replayed_event_ids"], ["eval-evt-2", "eval-evt-3"])
+
+    def test_gate7_p0_p1_enterprise_controls(self):
+        g7 = self.report["gates"]["p0_p1_enterprise_controls"]
+        self.assertTrue(g7["passed"], g7)
+
+        cb = g7["concurrent_budget"]
+        self.assertTrue(cb["ok"])
+        self.assertEqual(cb["threads"], 8)
+        self.assertEqual(cb["cap_micro_usd"], 10_000)
+        self.assertLessEqual(cb["settled_micro_usd"], 10_000)
+        self.assertEqual(cb["approved_threads"], 2)
+        self.assertEqual(cb["rejected_threads"], 6)
+
+        ob = g7["external_outbox"]
+        self.assertTrue(ob["ok"])
+        self.assertTrue(ob["in_flight_blocked"])
+        self.assertEqual(ob["replay_status"], "replay")
+        self.assertTrue(ob["unknown_retry_blocked"])
+
+        pp = g7["provider_policy"]
+        self.assertTrue(pp["ok"])
+        self.assertTrue(pp["primary_allowed"])
+        self.assertFalse(pp["failover_policy_allowed"])
+        self.assertEqual(pp["policy_denied_code"], "PROVIDER_POLICY_DENIED")
+        self.assertEqual(pp["blocked_failover_http_calls"], 0)
+
+        ev = g7["durable_events_and_sse_revocation"]
+        self.assertTrue(ev["ok"])
+        self.assertEqual(ev["cross_hub_replayed_ids"], ["g7-evt-2", "g7-evt-3"])
+        self.assertTrue(ev["cross_tenant_empty"])
+        self.assertTrue(ev["sse_revoked_closed"])
+
+        pm = g7["permanent_memory_purge"]
+        self.assertTrue(pm["ok"])
+        self.assertTrue(pm["staged_before_purge"])
+        self.assertTrue(pm["previous_content_cleared"])
+        self.assertEqual(pm["staging_rows_after_purge"], 0)
+        self.assertGreaterEqual(pm["audit_events"], 1)
 
     def test_cli_json_and_summary_exit_zero(self):
         proc_json = subprocess.run(

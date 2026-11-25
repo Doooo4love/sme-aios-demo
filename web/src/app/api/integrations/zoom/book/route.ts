@@ -85,11 +85,238 @@ function shortHash(seed: string): string {
   return createHash("sha256").update(seed, "utf8").digest("hex").slice(0, 24);
 }
 
+const VALID_REQUEST_ID_RE = /^[A-Za-z0-9._:-]{8,128}$/;
+const VALID_TRACEPARENT_RE = /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/;
+
+function buildTraceHeaders(req: NextRequest): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const reqId = req.headers.get("x-request-id")?.trim() ?? "";
+  if (VALID_REQUEST_ID_RE.test(reqId)) {
+    headers["X-Request-ID"] = reqId;
+  }
+  const tp = req.headers.get("traceparent")?.trim() ?? "";
+  if (VALID_TRACEPARENT_RE.test(tp)) {
+    headers.traceparent = tp;
+  }
+  return headers;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildReserveConflictDetail(
+  parsed: unknown,
+  locale: Locale,
+): { code: string; message: string } {
+  const rawDetail = isPlainRecord(parsed) ? parsed.detail : parsed;
+  const code =
+    isPlainRecord(rawDetail) && typeof rawDetail.code === "string"
+      ? rawDetail.code
+      : "";
+  const rawMsg =
+    isPlainRecord(rawDetail) && typeof rawDetail.message === "string"
+      ? rawDetail.message
+      : typeof rawDetail === "string"
+        ? rawDetail
+        : "";
+
+  if (
+    code === "IDEMPOTENCY_CONFLICT" ||
+    rawMsg.includes("different request payload")
+  ) {
+    return {
+      code: "IDEMPOTENCY_CONFLICT",
+      message:
+        locale === "en"
+          ? "This meeting booking ID is already bound to a different meeting payload."
+          : locale === "zh-HK"
+            ? "此會議預約編號已綁定至另一組會議內容。"
+            : "此会议预约标识已绑定至另一组会议内容。",
+    };
+  }
+  if (code === "OUTCOME_UNKNOWN" || rawMsg.includes("UNKNOWN")) {
+    return {
+      code: "OUTCOME_UNKNOWN",
+      message:
+        locale === "en"
+          ? "Previous Zoom booking outcome is UNKNOWN; manual verification is required before retry."
+          : locale === "zh-HK"
+            ? "上次會議預約結果未知，須人工核實後再重試。"
+            : "上次会议预约结果未知，需人工核实后再重试。",
+    };
+  }
+  return {
+    code: "DISPATCH_IN_PROGRESS",
+    message:
+      locale === "en"
+        ? "This Zoom meeting booking is already in progress."
+        : locale === "zh-HK"
+          ? "此會議預約請求正在處理中，請勿重複提交。"
+          : "该会议预约请求正在处理中，请勿重复提交。",
+  };
+}
+
+interface OutboxReserveSuccess {
+  status: "reserved" | "replay";
+  outbox_id: string;
+  attempt: number;
+  cached_result: unknown;
+}
+
+async function reserveZoomOutbox(params: {
+  apiBase: string;
+  browserOrigin: string;
+  cookie: string;
+  csrfToken: string;
+  traceHeaders: Record<string, string>;
+  clientId: string;
+  requestSha256: string;
+  locale: Locale;
+}): Promise<
+  | { ok: true; data: OutboxReserveSuccess }
+  | { ok: false; response: Response }
+> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${params.apiBase}/v1/workbench/external-outbox/reserve`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: params.cookie,
+          "X-CSRF-Token": params.csrfToken,
+          Origin: params.browserOrigin,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...params.traceHeaders,
+        },
+        body: JSON.stringify({
+          action_kind: "zoom.book",
+          client_id: params.clientId,
+          request_sha256: params.requestSha256,
+          lease_s: 60,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      response: jsonResponse(
+        {
+          detail: {
+            code: "UPSTREAM_UNAVAILABLE",
+            message:
+              params.locale === "en"
+                ? "Booking outbox reservation service is temporarily unavailable."
+                : params.locale === "zh-HK"
+                  ? "會議預約預留服務暫不可用，請稍後重試。"
+                  : "会议预约预留服务暂不可用，请稍后重试。",
+          },
+        },
+        503,
+      ),
+    };
+  }
+
+  const text = await res.text();
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = text;
+  }
+
+  if (res.status === 409) {
+    return {
+      ok: false,
+      response: jsonResponse(
+        { detail: buildReserveConflictDetail(parsed, params.locale) },
+        409,
+      ),
+    };
+  }
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      response: jsonResponse(sanitizeErrorPayload(res.status, parsed), res.status),
+    };
+  }
+
+  if (!isPlainRecord(parsed) || typeof parsed.outbox_id !== "string") {
+    return {
+      ok: false,
+      response: jsonResponse(
+        {
+          detail: {
+            code: "UPSTREAM_UNAVAILABLE",
+            message: "会议预约预留响应无效，请稍后重试。",
+          },
+        },
+        503,
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      status: parsed.status === "replay" ? "replay" : "reserved",
+      outbox_id: parsed.outbox_id,
+      attempt: typeof parsed.attempt === "number" ? parsed.attempt : 1,
+      cached_result: parsed.cached_result ?? null,
+    },
+  };
+}
+
+async function finalizeZoomOutbox(params: {
+  apiBase: string;
+  browserOrigin: string;
+  cookie: string;
+  csrfToken: string;
+  traceHeaders: Record<string, string>;
+  outboxId: string;
+  state: "SUCCEEDED" | "FAILED" | "UNKNOWN";
+  externalId?: string | null;
+  result?: Record<string, unknown> | null;
+}): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${params.apiBase}/v1/workbench/external-outbox/${encodeURIComponent(params.outboxId)}/finalize`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: params.cookie,
+          "X-CSRF-Token": params.csrfToken,
+          Origin: params.browserOrigin,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...params.traceHeaders,
+        },
+        body: JSON.stringify({
+          state: params.state,
+          external_id: params.externalId ?? null,
+          result: params.result ?? null,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveOrCreateMeetingRoom(params: {
   apiBase: string;
   browserOrigin: string;
   cookie: string;
   csrfToken: string;
+  traceHeaders: Record<string, string>;
   actorSubject: string;
   otherAttendees: string[];
   requestedRoomId: string | null;
@@ -101,6 +328,7 @@ async function resolveOrCreateMeetingRoom(params: {
     browserOrigin,
     cookie,
     csrfToken,
+    traceHeaders,
     actorSubject,
     otherAttendees,
     requestedRoomId,
@@ -120,6 +348,7 @@ async function resolveOrCreateMeetingRoom(params: {
             Origin: browserOrigin,
             "Content-Type": "application/json",
             Accept: "application/json",
+            ...traceHeaders,
           },
           body: JSON.stringify({ active: true }),
           cache: "no-store",
@@ -151,7 +380,7 @@ async function resolveOrCreateMeetingRoom(params: {
       `${apiBase}/v1/chat/rooms/${encodeURIComponent(requestedRoomId)}/members?limit=50`,
       {
         method: "GET",
-        headers: { Cookie: cookie, Accept: "application/json" },
+        headers: { Cookie: cookie, Accept: "application/json", ...traceHeaders },
         cache: "no-store",
       },
     );
@@ -182,7 +411,7 @@ async function resolveOrCreateMeetingRoom(params: {
   try {
     const roomsRes = await fetch(`${apiBase}/v1/chat/rooms?limit=50`, {
       method: "GET",
-      headers: { Cookie: cookie, Accept: "application/json" },
+      headers: { Cookie: cookie, Accept: "application/json", ...traceHeaders },
       cache: "no-store",
       signal: AbortSignal.timeout(2500),
     });
@@ -197,7 +426,7 @@ async function resolveOrCreateMeetingRoom(params: {
           `${apiBase}/v1/chat/rooms/${encodeURIComponent(room.id)}/members?limit=50`,
           {
             method: "GET",
-            headers: { Cookie: cookie, Accept: "application/json" },
+            headers: { Cookie: cookie, Accept: "application/json", ...traceHeaders },
             cache: "no-store",
             signal: AbortSignal.timeout(1500),
           },
@@ -237,6 +466,7 @@ async function resolveOrCreateMeetingRoom(params: {
       Origin: browserOrigin,
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...traceHeaders,
     },
     body: JSON.stringify({ client_id: roomClientId, title: roomTitle }),
     cache: "no-store",
@@ -432,11 +662,65 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     const apiBase = getApiBaseUrl();
     const browserOrigin = getBrowserOrigin();
+    const traceHeaders = buildTraceHeaders(req);
+    const timezone = data.timezone || "Asia/Hong_Kong";
+    const wantsZoom = data.create_zoom !== false;
+    const calendarTargets: ExternalCalendarTarget[] =
+      data.calendar_targets && data.calendar_targets.length > 0
+        ? data.calendar_targets
+        : ["google", "icloud", "outlook"];
+
+    // Reserve-first atomic external outbox BEFORE mutating rooms/calendar/Zoom!
+    const canonicalRequestPayload = JSON.stringify({
+      attendees: [...rawAttendees].sort(),
+      calendar_targets: [...calendarTargets].sort(),
+      create_zoom: wantsZoom,
+      ends_at: data.ends_at,
+      room_id: data.room_id ?? null,
+      starts_at: data.starts_at,
+      timezone,
+      title: data.title,
+    });
+    const requestSha256 = createHash("sha256")
+      .update(canonicalRequestPayload, "utf8")
+      .digest("hex");
+
+    const reservation = await reserveZoomOutbox({
+      apiBase,
+      browserOrigin,
+      cookie,
+      csrfToken,
+      traceHeaders,
+      clientId: data.client_id,
+      requestSha256,
+      locale,
+    });
+    if (!reservation.ok) {
+      return reservation.response;
+    }
+    if (reservation.data.status === "replay") {
+      return jsonResponse(
+        isPlainRecord(reservation.data.cached_result)
+          ? reservation.data.cached_result
+          : { phase: "confirmed", outbox_id: reservation.data.outbox_id },
+        200,
+      );
+    }
+    const outboxId = reservation.data.outbox_id;
 
     // Step 1: Authorized room resolution for multi-attendee events (calendar.py invariant)
     let resolvedRoomId: string | null = data.room_id ?? null;
     if (otherAttendees.length > 0) {
       if (!actor.grants.includes("chat.use")) {
+        await finalizeZoomOutbox({
+          apiBase,
+          browserOrigin,
+          cookie,
+          csrfToken,
+          traceHeaders,
+          outboxId,
+          state: "FAILED",
+        });
         return jsonResponse(
           {
             detail: {
@@ -447,21 +731,52 @@ export async function POST(req: NextRequest): Promise<Response> {
           403,
         );
       }
-      const roomResolution = await resolveOrCreateMeetingRoom({
-        apiBase,
-        browserOrigin,
-        cookie,
-        csrfToken,
-        actorSubject: actor.subject,
-        otherAttendees,
-        requestedRoomId: resolvedRoomId,
-        clientId: data.client_id,
-        title: data.title,
-      });
-      if (!roomResolution.ok) {
-        return roomResolution.response;
+      try {
+        const roomResolution = await resolveOrCreateMeetingRoom({
+          apiBase,
+          browserOrigin,
+          cookie,
+          csrfToken,
+          traceHeaders,
+          actorSubject: actor.subject,
+          otherAttendees,
+          requestedRoomId: resolvedRoomId,
+          clientId: data.client_id,
+          title: data.title,
+        });
+        if (!roomResolution.ok) {
+          await finalizeZoomOutbox({
+            apiBase,
+            browserOrigin,
+            cookie,
+            csrfToken,
+            traceHeaders,
+            outboxId,
+            state: "FAILED",
+          });
+          return roomResolution.response;
+        }
+        resolvedRoomId = roomResolution.roomId;
+      } catch {
+        await finalizeZoomOutbox({
+          apiBase,
+          browserOrigin,
+          cookie,
+          csrfToken,
+          traceHeaders,
+          outboxId,
+          state: "FAILED",
+        });
+        return jsonResponse(
+          {
+            detail: {
+              code: "UPSTREAM_UNAVAILABLE",
+              message: "协作房间服务暂不可用，请稍后重试。",
+            },
+          },
+          503,
+        );
       }
-      resolvedRoomId = roomResolution.roomId;
     }
 
     // Step 2: REAL internal event creation via FastAPI POST /v1/calendar/events (Fail-Fast!)
@@ -486,11 +801,21 @@ export async function POST(req: NextRequest): Promise<Response> {
           Origin: browserOrigin,
           "Content-Type": "application/json",
           Accept: "application/json",
+          ...traceHeaders,
         },
         body: JSON.stringify(eventPayload),
         cache: "no-store",
       });
     } catch {
+      await finalizeZoomOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken,
+        traceHeaders,
+        outboxId,
+        state: "FAILED",
+      });
       return jsonResponse(
         {
           detail: {
@@ -512,6 +837,15 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     if (!calRes.ok) {
       // Fail-fast: NEVER invoke Zoom or external calendars on 409 busy / 422 / 403 / 404
+      await finalizeZoomOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken,
+        traceHeaders,
+        outboxId,
+        state: "FAILED",
+      });
       return jsonResponse(sanitizeErrorPayload(calRes.status, calParsed), calRes.status);
     }
 
@@ -526,8 +860,6 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     // Step 3: Zoom provisioning (MCP -> S2S OAuth -> transparent sandbox_preview)
     const durationMinutes = Math.max(15, Math.round(durationMs / 60_000));
-    const timezone = data.timezone || "Asia/Hong_Kong";
-    const wantsZoom = data.create_zoom !== false;
 
     const agendaText =
       locale === "en"
@@ -536,35 +868,61 @@ export async function POST(req: NextRequest): Promise<Response> {
           ? `AIOS 企業會議 · 組織者 ${actor.subject}`
           : `AIOS 企业会议 · 组织者 ${actor.subject}`;
 
-    const zoomResult: ZoomMeetingResult = wantsZoom
-      ? await createZoomMeeting(
-          {
-            topic: data.title,
-            startsAtIso: data.starts_at,
-            durationMinutes,
-            timezone,
-            agenda: agendaText,
-          },
-          locale,
-        )
-      : {
-          requested: false,
-          mode: "skipped",
-          sync_mode: "skipped",
-          status_code: "SKIPPED",
-          status_label: localizeZoomStatusLabel(
+    let zoomResult: ZoomMeetingResult;
+    try {
+      zoomResult = wantsZoom
+        ? await createZoomMeeting(
             {
-              mode: "skipped",
-              join_url: null,
-              status_label: "",
-              status_code: "SKIPPED",
+              topic: data.title,
+              startsAtIso: data.starts_at,
+              durationMinutes,
+              timezone,
+              agenda: agendaText,
             },
             locale,
-          ),
-          join_url: null,
-          meeting_id: null,
-          passcode: null,
-        };
+          )
+        : {
+            requested: false,
+            mode: "skipped",
+            sync_mode: "skipped",
+            status_code: "SKIPPED",
+            status_label: localizeZoomStatusLabel(
+              {
+                mode: "skipped",
+                join_url: null,
+                status_label: "",
+                status_code: "SKIPPED",
+              },
+              locale,
+            ),
+            join_url: null,
+            meeting_id: null,
+            passcode: null,
+          };
+    } catch {
+      await finalizeZoomOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken,
+        traceHeaders,
+        outboxId,
+        state: "UNKNOWN",
+        externalId: bookedEvent.id,
+      });
+      return jsonResponse(
+        {
+          detail: {
+            code: "OUTCOME_UNKNOWN",
+            message:
+              locale === "en"
+                ? "Zoom meeting transport threw a network/timeout error; outcome is UNKNOWN until manually verified."
+                : "Zoom 外部接口超时或网络异常，预约结果未知，已锁定防止重复创建。",
+          },
+        },
+        503,
+      );
+    }
 
     // Step 4: Best-effort persistent locale-neutral structured system message (P0-2)
     let roomNotified = false;
@@ -590,6 +948,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               Origin: browserOrigin,
               "Content-Type": "application/json",
               Accept: "application/json",
+              ...traceHeaders,
             },
             body: JSON.stringify({
               client_id: `zmsg_${shortHash(data.client_id)}`,
@@ -606,11 +965,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
 
     // Step 5: Parallel external calendar MCP fan-out (Google / iCloud / Outlook)
-    const calendarTargets: ExternalCalendarTarget[] =
-      data.calendar_targets && data.calendar_targets.length > 0
-        ? data.calendar_targets
-        : ["google", "icloud", "outlook"];
-
     const externalDescriptionParts = [
       locale === "en"
         ? `AIOS Internal Calendar Sync · Organizer: ${actor.subject}`
@@ -644,25 +998,51 @@ export async function POST(req: NextRequest): Promise<Response> {
           ? "AIOS 站內協作日曆"
           : "AIOS 站内协作日历";
 
-    const externalSyncResults = await syncExternalCalendars(
-      calendarTargets,
-      {
-        title: data.title,
-        startsAtIso: data.starts_at,
-        endsAtIso: data.ends_at,
-        timezone,
-        location: zoomResult.join_url || defaultCalLocation,
-        description: externalDescriptionParts.join("\n"),
-        attendees: otherAttendees.map((sub) => {
-          const contact = tenantContactMap.get(sub);
-          return {
-            email: contact?.email || `${sub}@${actor.tenant}.local`,
-            displayName: contact?.display_name || sub,
-          };
-        }),
-      },
-      locale,
-    );
+    let externalSyncResults: Awaited<ReturnType<typeof syncExternalCalendars>>;
+    try {
+      externalSyncResults = await syncExternalCalendars(
+        calendarTargets,
+        {
+          title: data.title,
+          startsAtIso: data.starts_at,
+          endsAtIso: data.ends_at,
+          timezone,
+          location: zoomResult.join_url || defaultCalLocation,
+          description: externalDescriptionParts.join("\n"),
+          attendees: otherAttendees.map((sub) => {
+            const contact = tenantContactMap.get(sub);
+            return {
+              email: contact?.email || `${sub}@${actor.tenant}.local`,
+              displayName: contact?.display_name || sub,
+            };
+          }),
+        },
+        locale,
+      );
+    } catch {
+      await finalizeZoomOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken,
+        traceHeaders,
+        outboxId,
+        state: "UNKNOWN",
+        externalId: zoomResult.meeting_id || bookedEvent.id,
+      });
+      return jsonResponse(
+        {
+          detail: {
+            code: "OUTCOME_UNKNOWN",
+            message:
+              locale === "en"
+                ? "External calendar synchronization threw a network/timeout error; outcome is UNKNOWN until verified."
+                : "外部日历同步超时或网络异常，结果未知，已锁定防止重复同步。",
+          },
+        },
+        503,
+      );
+    }
 
     // Step 6: Build .ics download link & unified 201 response
     const icsParams = new URLSearchParams({ event_id: bookedEvent.id });
@@ -714,6 +1094,39 @@ export async function POST(req: NextRequest): Promise<Response> {
       room_notified: roomNotified,
       ics_download_url: icsDownloadUrl,
     };
+
+    const finalized = await finalizeZoomOutbox({
+      apiBase,
+      browserOrigin,
+      cookie,
+      csrfToken,
+      traceHeaders,
+      outboxId,
+      state: "SUCCEEDED",
+      externalId: zoomResult.meeting_id || bookedEvent.id,
+      result: payload as unknown as Record<string, unknown>,
+    });
+    if (!finalized) {
+      await finalizeZoomOutbox({
+        apiBase,
+        browserOrigin,
+        cookie,
+        csrfToken,
+        traceHeaders,
+        outboxId,
+        state: "UNKNOWN",
+        externalId: zoomResult.meeting_id || bookedEvent.id,
+      });
+      return jsonResponse(
+        {
+          detail: {
+            code: "UPSTREAM_UNAVAILABLE",
+            message: "会议预约回执确认失败，已锁定防止重复创建。",
+          },
+        },
+        503,
+      );
+    }
 
     return jsonResponse(payload, 201);
   }

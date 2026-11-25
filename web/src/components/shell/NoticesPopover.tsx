@@ -150,7 +150,7 @@ export function NoticesPopover({
           align={align}
           sideOffset={8}
           className={[
-            "z-50 w-[332px] overflow-hidden rounded-card border border-[var(--hairline-strong)]",
+            "aios-popover-content z-50 w-[332px] overflow-hidden rounded-card border border-[var(--hairline-strong)]",
             "bg-[var(--bg-surface)] shadow-[var(--shadow-popover)] focus:outline-none",
           ].join(" ")}
         >

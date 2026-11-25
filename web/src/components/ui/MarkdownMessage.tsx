@@ -70,14 +70,19 @@ interface TonePalette {
 const TONE_PALETTES: Record<MarkdownMessageTone, TonePalette> = {
   sent: {
     rootText: "text-[var(--bubble-sent-ink)]",
-    link: "text-[#FAF8F5] underline decoration-[#FAF8F5]/65 underline-offset-2 hover:decoration-[#FAF8F5]",
-    inlineCode: "border-[#FAF8F5]/20 bg-[#FAF8F5]/14 text-[#FAF8F5]",
-    preBlock: "border-[#FAF8F5]/20 bg-[#141311]/25 text-[#FAF8F5]",
-    blockquote: "border-[#FAF8F5]/35 bg-[#FAF8F5]/10 text-[#FAF8F5]/90",
-    tableWrap: "border-[#FAF8F5]/20 bg-[#141311]/15",
-    tableHead: "bg-[#FAF8F5]/10 text-[#FAF8F5]",
-    tableCellBorder: "border-[#FAF8F5]/15",
-    hr: "border-[#FAF8F5]/20",
+    link: "text-[var(--bubble-sent-ink)] underline decoration-[var(--bubble-sent-ink)]/65 underline-offset-2 hover:decoration-[var(--bubble-sent-ink)]",
+    inlineCode:
+      "border-[var(--bubble-sent-ink)]/20 bg-[var(--bubble-sent-ink)]/12 text-[var(--bubble-sent-ink)]",
+    preBlock:
+      "border-[var(--bubble-sent-ink)]/20 bg-[var(--bubble-sent-ink)]/10 text-[var(--bubble-sent-ink)]",
+    blockquote:
+      "border-[var(--bubble-sent-ink)]/35 bg-[var(--bubble-sent-ink)]/10 text-[var(--bubble-sent-ink)]/90",
+    tableWrap:
+      "border-[var(--bubble-sent-ink)]/20 bg-[var(--bubble-sent-ink)]/8",
+    tableHead:
+      "bg-[var(--bubble-sent-ink)]/10 text-[var(--bubble-sent-ink)]",
+    tableCellBorder: "border-[var(--bubble-sent-ink)]/15",
+    hr: "border-[var(--bubble-sent-ink)]/20",
   },
   received: {
     rootText: "text-[var(--bubble-received-ink)]",

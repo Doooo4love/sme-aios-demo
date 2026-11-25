@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  ChevronDown,
   Copy,
   KeyRound,
   Link2,
@@ -784,23 +785,30 @@ export function ChannelsHubPanel() {
                   en: "Target Channel (channel_id)",
                 })}
               </label>
-              <select
-                id="relay-channel-select"
-                data-testid="channel-relay-select"
-                value={relayChannelId}
-                onChange={(e) => {
-                  setRelayChannelId(e.target.value);
-                  setRelayValidationError(null);
-                  setRelayError(null);
-                }}
-                className="mt-1.5 h-9 w-full rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-3 text-[13px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent-ring)] focus:outline-none"
-              >
-                {catalog.map((ch) => (
-                  <option key={ch.channel_id} value={ch.channel_id}>
-                    {getChannelDisplayName(ch, locale)} ({ch.channel_id})
-                  </option>
-                ))}
-              </select>
+              <div className="relative mt-1.5">
+                <select
+                  id="relay-channel-select"
+                  data-testid="channel-relay-select"
+                  value={relayChannelId}
+                  onChange={(e) => {
+                    setRelayChannelId(e.target.value);
+                    setRelayValidationError(null);
+                    setRelayError(null);
+                  }}
+                  className="aios-select w-full text-[13px]"
+                >
+                  {catalog.map((ch) => (
+                    <option key={ch.channel_id} value={ch.channel_id}>
+                      {getChannelDisplayName(ch, locale)} ({ch.channel_id})
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                  strokeWidth={1.85}
+                  aria-hidden="true"
+                />
+              </div>
             </div>
 
             <div>
@@ -941,29 +949,36 @@ export function ChannelsHubPanel() {
               </p>
             </div>
 
-            <select
-              value={logChannelFilter}
-              onChange={(e) => setLogChannelFilter(e.target.value)}
-              aria-label={tx({
-                "zh-CN": "按通道筛选流水",
-                "zh-HK": "按通道篩選流水",
-                en: "Filter audit log by channel",
-              })}
-              className="h-8 rounded-sm border border-[var(--hairline-strong)] bg-[var(--bg-surface-tint)] px-2.5 text-[12px] text-[var(--ink-primary)] focus:border-[var(--accent)] focus:outline-none"
-            >
-              <option value="ALL">
-                {tx({
-                  "zh-CN": "全部通道",
-                  "zh-HK": "全部通道",
-                  en: "All Channels",
+            <div className="relative">
+              <select
+                value={logChannelFilter}
+                onChange={(e) => setLogChannelFilter(e.target.value)}
+                aria-label={tx({
+                  "zh-CN": "按通道筛选流水",
+                  "zh-HK": "按通道篩選流水",
+                  en: "Filter audit log by channel",
                 })}
-              </option>
-              {catalog.map((ch) => (
-                <option key={ch.channel_id} value={ch.channel_id}>
-                  {getChannelDisplayName(ch, locale)}
+                className="aios-select h-8 px-2.5 pr-7"
+              >
+                <option value="ALL">
+                  {tx({
+                    "zh-CN": "全部通道",
+                    "zh-HK": "全部通道",
+                    en: "All Channels",
+                  })}
                 </option>
-              ))}
-            </select>
+                {catalog.map((ch) => (
+                  <option key={ch.channel_id} value={ch.channel_id}>
+                    {getChannelDisplayName(ch, locale)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                strokeWidth={1.85}
+                aria-hidden="true"
+              />
+            </div>
           </div>
 
           {filteredOutboundLog.length === 0 ? (

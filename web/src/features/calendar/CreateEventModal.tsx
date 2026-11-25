@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Users } from "lucide-react";
+import { ChevronDown, Users } from "lucide-react";
 import {
   generateClientId,
   isApiError,
@@ -305,7 +305,7 @@ export function CreateEventModal({
               "zh-HK": "例如：HK01 訂單排期核對",
               en: "e.g. HK01 Order Dispatch Review",
             })}
-            className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3.5 text-[13.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none transition-all"
+            className="aios-input mt-1.5 h-10 w-full px-3.5 text-[13.5px]"
           />
         </div>
 
@@ -332,7 +332,7 @@ export function CreateEventModal({
                 setStartsLocal(e.target.value);
                 markEdited();
               }}
-              className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
+              className="aios-input mt-1.5 h-10 w-full font-mono-code text-[12.5px]"
             />
           </div>
 
@@ -358,7 +358,7 @@ export function CreateEventModal({
                 setEndsLocal(e.target.value);
                 markEdited();
               }}
-              className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
+              className="aios-input mt-1.5 h-10 w-full font-mono-code text-[12.5px]"
             />
           </div>
         </div>
@@ -375,29 +375,36 @@ export function CreateEventModal({
                 en: "Linked Team Room (optional · required to invite colleagues)",
               })}
             </label>
-            <select
-              id="cal-new-room"
-              data-testid="calendar-create-room-select"
-              value={selectedRoomId}
-              onChange={(e) => {
-                setSelectedRoomId(e.target.value);
-                markEdited();
-              }}
-              className="mt-1.5 h-10 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
-            >
-              <option value="">
-                {tx({
-                  "zh-CN": "仅个人日程（不关联会话）",
-                  "zh-HK": "僅個人行程（不關聯對話）",
-                  en: "Personal event only (no room)",
-                })}
-              </option>
-              {rooms.map((room) => (
-                <option key={room.id} value={room.id}>
-                  {formatChatRoomTitle(room.title, locale)}
+            <div className="relative mt-1.5">
+              <select
+                id="cal-new-room"
+                data-testid="calendar-create-room-select"
+                value={selectedRoomId}
+                onChange={(e) => {
+                  setSelectedRoomId(e.target.value);
+                  markEdited();
+                }}
+                className="aios-select h-10 w-full text-[13px]"
+              >
+                <option value="">
+                  {tx({
+                    "zh-CN": "仅个人日程（不关联会话）",
+                    "zh-HK": "僅個人行程（不關聯對話）",
+                    en: "Personal event only (no room)",
+                  })}
                 </option>
-              ))}
-            </select>
+                {rooms.map((room) => (
+                  <option key={room.id} value={room.id}>
+                    {formatChatRoomTitle(room.title, locale)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]"
+                strokeWidth={1.85}
+                aria-hidden="true"
+              />
+            </div>
           </div>
         )}
 

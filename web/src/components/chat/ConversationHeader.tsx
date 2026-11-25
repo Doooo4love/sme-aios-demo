@@ -21,12 +21,13 @@ export interface ConversationHeaderProps {
   onOpenProfile?: () => void;
   profileAriaLabel?: string;
   profileButtonTestId?: string;
+  scrolled?: boolean;
 }
 
 /**
  * Authentic macOS Sequoia / iOS Messages floating borderless sticky header:
  * - Zero hairline divider: floats transparently above the message stream
- * - Progressive gradient blur veil fades in smoothly on hover / focus-within
+ * - Progressive gradient blur veil fades gently at rest and intensifies on hover / focus / scroll
  * - Horizontally centered Avatar + cleanly separated frosted Name · Role › capsule
  */
 export function ConversationHeader({
@@ -43,9 +44,13 @@ export function ConversationHeader({
   onOpenProfile,
   profileAriaLabel,
   profileButtonTestId = "conversation-header-profile-btn",
+  scrolled = false,
 }: ConversationHeaderProps) {
   return (
-    <header className="aios-chat-header @container sticky top-0 z-20 -mb-[88px] h-[88px] shrink-0">
+    <header
+      data-scrolled={scrolled ? "true" : "false"}
+      className="aios-chat-header @container sticky top-0 z-20 -mb-[88px] h-[88px] shrink-0"
+    >
       <div aria-hidden="true" className="aios-chat-header-veil" />
 
       <div className="relative z-10 grid h-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 sm:px-5">
@@ -63,7 +68,7 @@ export function ConversationHeader({
             onClick={onOpenProfile}
             disabled={!onOpenProfile}
             className={[
-              "group flex min-w-0 max-w-[clamp(108px,calc(100cqw-244px),260px)] md:max-w-[clamp(200px,calc(100cqw-468px),340px)] flex-col items-center justify-center gap-1.5 rounded-modal px-2 py-1 transition-transform duration-[150ms]",
+              "group flex min-w-0 max-w-[clamp(108px,calc(100cqw-244px),260px)] md:max-w-[clamp(200px,calc(100cqw-468px),340px)] flex-col items-center justify-center gap-2 rounded-modal px-2 py-0.5 transition-transform duration-[150ms]",
               onOpenProfile
                 ? "cursor-pointer active:scale-[0.98]"
                 : "cursor-default",
@@ -87,7 +92,7 @@ export function ConversationHeader({
                 {title}
               </span>
               {subtitle && (
-                <span className="hidden sm:inline min-w-0 shrink-[2] truncate max-w-[132px] text-[11px] font-normal text-[var(--ink-muted)]">
+                <span className="hidden sm:inline min-w-0 shrink-[2] truncate max-w-[min(220px,32cqw)] text-[11px] font-normal text-[var(--ink-muted)]">
                   · {subtitle}
                 </span>
               )}

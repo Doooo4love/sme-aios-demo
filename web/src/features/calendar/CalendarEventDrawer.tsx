@@ -584,7 +584,7 @@ export function CalendarEventDrawer({
                 setTitle(e.target.value);
                 setFormError(null);
               }}
-              className="mt-1 h-9 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 text-[13px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
+              className="aios-input mt-1 w-full"
             />
           </div>
 
@@ -610,7 +610,7 @@ export function CalendarEventDrawer({
                 setStartsLocal(e.target.value);
                 setFormError(null);
               }}
-              className="mt-1 h-9 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
+              className="aios-input mt-1 w-full font-mono-code text-[12.5px]"
             />
           </div>
 
@@ -636,7 +636,7 @@ export function CalendarEventDrawer({
                 setEndsLocal(e.target.value);
                 setFormError(null);
               }}
-              className="mt-1 h-9 w-full rounded-sm bg-[var(--bg-surface-tint)] px-3 font-mono-code text-[12.5px] text-[var(--ink-primary)] ring-1 ring-[var(--hairline-strong)] focus:bg-[var(--bg-surface)] focus:ring-[1.5px] focus:ring-[var(--accent)] focus:outline-none"
+              className="aios-input mt-1 w-full font-mono-code text-[12.5px]"
             />
           </div>
 

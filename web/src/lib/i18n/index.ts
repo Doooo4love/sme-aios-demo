@@ -61,6 +61,7 @@ export {
   MEETING_BOOKED_TOKEN_PREFIX,
   MEETING_BOOKED_TOKEN_SUFFIX,
   encodeMeetingBookedMessage,
+  extractDirectRoomInfo,
   formatChatMessageBody,
   formatChatMessagePreview,
   formatChatRoomTitle,
