@@ -30,6 +30,7 @@ MODULES = {
     "agent-web": Module(("agent.web_search",), scope="personal"),
     "agent-collaboration": Module(("agent.calendar_read", "agent.tasks_read"), scope="personal"),
     "agent-knowledge": Module(("agent.knowledge_read",)),
+    "agent-documents": Module(("agent.documents_parse", "agent.report_export"), scope="personal"),
 }
 MODULE_BY_GRANT = {grant: module for module, spec in MODULES.items() for grant in spec.grants}
 Subject = Annotated[str, Field(min_length=1, max_length=150, pattern=r"^[A-Za-z0-9._:@-]+$")]

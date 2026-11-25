@@ -156,6 +156,21 @@ class Tasks:
         return [dict(row) for row in rows]
 
 
+    def brief(self, actor, start, end):
+        window = start.timestamp(), end.timestamp()
+        with subject_tx(self.workflow, actor) as run:
+            meetings = run("""SELECT COUNT(*) AS n FROM aios_calendar_event e JOIN aios_calendar_member m
+                              ON m.tenant = e.tenant AND m.event_id = e.id
+                              WHERE m.tenant = ? AND m.subject = ? AND e.cancelled = 0
+                              AND e.starts_at < ? AND e.ends_at > ?""",
+                           (actor.tenant, actor.subject, window[1], window[0])).fetchone()["n"]
+        pending = self.workflow.pending_approvals(actor, 101, None)
+        return {"start": start, "end": end, "meetings": meetings, "pending_approvals": min(len(pending), 100),
+                "pending_approvals_capped": len(pending) > 100,
+                "submitted_current_states": self.submitted(actor, 0, window=window, count=True),
+                "as_of": time.time()}
+
+
 def task_routes(workflow, authenticate, visible_proposal, require_policy, directory_actor):
     tasks = Tasks(workflow, directory_actor)
     router = APIRouter(prefix="/v1", tags=["Tasks and notices"])
@@ -226,17 +241,6 @@ def task_routes(workflow, authenticate, visible_proposal, require_policy, direct
     def brief(start: AwareDatetime, end: AwareDatetime, actor: Actor = Depends(authenticate)):
         if not timedelta(0) < end - start <= timedelta(days=8):
             raise HTTPException(422, "Select a daily or weekly window")
-        window = start.timestamp(), end.timestamp()
-        with subject_tx(workflow, actor) as run:
-            meetings = run("""SELECT COUNT(*) AS n FROM aios_calendar_event e JOIN aios_calendar_member m
-                              ON m.tenant = e.tenant AND m.event_id = e.id
-                              WHERE m.tenant = ? AND m.subject = ? AND e.cancelled = 0
-                              AND e.starts_at < ? AND e.ends_at > ?""",
-                           (actor.tenant, actor.subject, window[1], window[0])).fetchone()["n"]
-        pending = workflow.pending_approvals(actor, 101, None)
-        return {"start": start, "end": end, "meetings": meetings, "pending_approvals": min(len(pending), 100),
-                "pending_approvals_capped": len(pending) > 100,
-                "submitted_current_states": tasks.submitted(actor, 0, window=window, count=True),
-                "as_of": time.time()}
+        return tasks.brief(actor, start, end)
 
     return router

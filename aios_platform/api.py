@@ -41,6 +41,7 @@ from .channels import channel_routes
 from .chat import DirectoryLookup, chat_routes
 from .collaboration import InvalidCollaborationRequest, MissingResource
 from .contracts import Actor, Clarify, DraftSalesOrder, Identifier, Plan, ShipmentRead, Strict
+from .document_service import DEFAULT_NOTO, DocumentTools
 from .erp import ERPRejected
 from .events import EventHub
 from .governance import GovernanceService, governance_routes
@@ -103,6 +104,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
               browser: BrowserConfig | None = None, directory_actor=None,
               assistant_agent: AssistantAgent | None = None,
               public_web_search: PublicWebSearch | None = None,
+              document_tools: DocumentTools | None = None,
               event_hub: EventHub | None = None,
               governance: GovernanceService | None = None) -> FastAPI:
     if assurance is not None:
@@ -702,7 +704,7 @@ def build_app(runtime: Services, identity: Identity, planner: Planner, opa: OPA 
     app.include_router(workbench_routes(runtime, authenticate, refresh_actor, require_policy, visible_proposal, prepare_order,
                                        data=workbench_data, chat_available=chat_directory is not None,
                                        planner=workbench_planner, planner_limit=planner_limit,
-                                       assistant=active_assistant, event_hub=hub))
+                                       assistant=active_assistant, event_hub=hub, document_tools=document_tools))
     app.include_router(governance_routes(governance_service, workflow, authenticate, refresh_actor))
     app.include_router(channel_routes(workflow, authenticate, refresh_actor, governance=governance_service,
                                       known_subject=chat_directory, allowed_tenants=frozenset(runtime.profiles)))
@@ -792,6 +794,14 @@ def create_app() -> FastAPI:
                                setting("AIOS_BFF_OIDC_CLIENT_SECRET"))
         browser = BrowserConfig(setting("AIOS_BROWSER_ORIGIN"), bytes.fromhex(setting("AIOS_BROWSER_SESSION_KEY")),
                                 demo=runtime.demo, oidc=oidc)
+    document_tools = None
+    if setting("AIOS_DOCUMENT_TOOLS_ENABLED", "0") == "1":
+        font_index = os.getenv("AIOS_REPORT_FONT_INDEX")
+        document_tools = DocumentTools(
+            font=Path(setting("AIOS_REPORT_FONT", str(DEFAULT_NOTO))),
+            font_index=int(font_index) if font_index is not None else None,
+            ocr_languages=os.getenv("AIOS_DOCUMENT_OCR_LANGUAGES", ""),
+        )
     return build_app(runtime, identity, planner_for(runtime.demo), optional_opa(),
                      planner_limit=int(setting("AIOS_PLANNER_CALLS_PER_MINUTE", "60")),
                      metrics_token=metrics, assurance=assurance, workbench_planner=workbench_planner,
@@ -799,4 +809,5 @@ def create_app() -> FastAPI:
                      chat_directory=workspace_source.known_subject if workspace_source else None,
                      directory_actor=workspace_source.directory_actor if workspace_source else None,
                      workbench_data=workspace_source, assistant_agent=assistant_agent,
-                     event_hub=hub, governance=governance_service, public_web_search=public_web_search)
+                     event_hub=hub, governance=governance_service, public_web_search=public_web_search,
+                     document_tools=document_tools)

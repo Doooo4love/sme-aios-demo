@@ -10,6 +10,7 @@ Grant = Literal[
     "shipment.read", "shipment.reschedule", "order.read", "order.work", "finance.read",
     "mail.read", "decision.read", "chat.use", "operations.manage",
     "agent.web_search", "agent.calendar_read", "agent.tasks_read", "agent.knowledge_read",
+    "agent.documents_parse", "agent.report_export",
     "workbench.access.manage", "workbench.approve.orders", "workbench.approve.shipments",
     "assurance.purchase", "assurance.incoming", "assurance.contract", "assurance.procurement",
     "assurance.finance", "assurance.quality", "assurance.legal", "assurance.audit",
