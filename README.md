@@ -27,6 +27,8 @@ Every core claim across security, KV cache invariance, FinOps savings, SQLite WA
 
 ## Assistant Work Boundary and Public Web Search
 
+[Office/PDF processing and report export](docs/office-documents-and-reports.zh-CN.md) adds four document inputs and four export formats with independent employee grants.
+
 [Assistant tool and access guide](docs/harness-tools.zh-CN.md) covers calculation, timezone conversion, attachment and CSV checks, and employee-scoped calendar, proposals, and knowledge.
 
 Access Admin follows the same personal-chat policy as other roles. The boundary runs before external tools and model calls. It checks personal intent, explicit business purpose, and short follow-ups against the most recent user turn. Ordinary greetings and tasks such as sourcing PS5 stock for the store can proceed. Personal shopping, leisure, entertainment, wellness, and similar requests enter the existing L1/L2/L3 reminder and escalation flow. Client-provided history can add a reminder. It cannot authorize a tool or clear an explicit policy denial.
