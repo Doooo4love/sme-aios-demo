@@ -149,7 +149,9 @@ function summarizeTurnResultForContext(
   result: TurnResult | undefined,
 ): string | null {
   if (!result) return null;
-  if (result.kind === "message") return result.reply.slice(0, 360);
+  if (result.kind === "message") {
+    return result.mode === "public_search" ? null : result.reply.slice(0, 360);
+  }
   if (result.kind === "refusal") {
     return `[refusal:${result.category}] ${result.message.slice(0, 240)}`;
   }
