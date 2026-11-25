@@ -25,36 +25,6 @@
 
 ---
 
-## Agent 工作边界与公开网页搜索
-
-[Office／PDF 文档与报告](docs/office-documents-and-reports.zh-CN.md)支持四种附件输入与四种报告格式，解析和导出可逐员工独立授权。
-
-[Agent 工具与权限指南](docs/harness-tools.zh-CN.md)包含计算、时区、附件与 CSV 检查，及逐员工开启的日历、提案、内部知识和公开搜索权限。
-
-Access Admin 使用与其他角色一致的私人闲聊策略。后端会在调用模型或外部工具前检查明确的私人意图、企业用途和最近一条用户消息中的承接线索。日常寒暄和门店采购 PS5 之类的工作请求可以继续。私人购物、旅游、影视娱乐、健身和类似请求按现有 L1/L2/L3 流程处理。客户端提交的历史只能帮助识别追问，工具授权仍由后端决定。
-
-| 本地回归指标 | 实测 |
-|---|---:|
-| 总体准确率 | **99.25%**（133/134） |
-| 非工作内容召回率 | **98.57%**（69/70） |
-| 工作请求和寒暄的误拦率 | **本次观测 0%**（0/64） |
-| 分类器并发压测 | **20,000** 次判定、16 个线程、0 次结果漂移、**p95 0.138 ms**、约 **9,595 次/秒** |
-
-[合成测试集](fixtures/work_boundary_eval.tsv)覆盖简体中文、繁体中文及粤语、英语、四种角色层级和多轮追问。漏判的是一条缺少用途说明的英文足球赛果提问。这组用例随规则同步开发，属于 Python 3.12.14 上的本地回归结果。线上流量的准确率、端到端吞吐和真实搜索的延迟需单独测量。复现命令如下。
-
-```bash
-python scripts/work_boundary_eval.py --requests 20000 --workers 16
-python -m unittest discover -s tests -p test_public_search.py -v
-```
-
-**公开网页搜索**在助理后端通过工作边界校验后执行。租户启用且账号拥有 `agent.web_search` 时，可输入「帮我联网搜索香港冷链物流公开供应商」或「`/web 香港冷链物流公开供应商`」。后端还会核对租户供应商策略、租户共享速率限制及 FinOps 配额。它向 [DeepSeek Search API](https://api-docs.deepseek.com/api/search/) 发送限长的检索词，返回链接和来源摘要。附件、会话历史及能识别的敏感数据都不会进入搜索请求。来源摘要不会自动进入下一轮模型上下文。上游繁忙或失败时，界面返回具体状态，本次请求不自动重试。
-
-功能默认关闭。仅在助理 API 进程中配置 `AIOS_WEB_SEARCH_TENANTS`（逗号分隔）和独立密钥 `AIOS_WEB_SEARCH_API_KEY_FILE` 或 `AIOS_WEB_SEARCH_API_KEY`，同时核对租户允许的供应商区域和公开数据类别。演示预设的工具权限属于 `harbour/access-admin`，管理员可在员工权限页配置 Agent 公开搜索模块。未经显式配置的员工沿用 OIDC `aios_grants` 声明的默认权限。开通真实流量前应配置企业配额，并在预发布环境验证搜索账号和来源。
-
-现有 harness 继续承担权限、配额和业务工具执行。[Pydantic AI](https://ai.pydantic.dev/toolsets/) 的类型化工具集适合后续多工具编排。[SearXNG](https://docs.searxng.org/dev/search_api.html) 提供 JSON API，自托管需要维护上游搜索引擎。当前版本采用托管 Search API，复用现有栈并省去一个服务。传输测试使用模拟响应。
-
----
-
 ## 在线交互演示与界面实景
 
 立即体验已上线部署的企业演示入口：**[https://aios-demo.hk-demo.workers.dev](https://aios-demo.hk-demo.workers.dev)**
@@ -82,6 +52,43 @@ python -m unittest discover -s tests -p test_public_search.py -v
 | **Tier 1** | **企业团队协作工作台** | [`web/`](web/) + [`aios_platform/`](aios_platform/)（`workflow.py`、`module_access.py`、`chat.py`、`channels.py`） | 多租户多仓 RBAC、原生 macOS iMessage/WhatsApp 双栏协作（含实时已送达/已读回执）、8 渠道企业 IM 中枢、`/` 斜杠技能指令与摘要锁人工审批。 |
 | **Tier 2** | **智能路由与个人长期记忆 AIOS** | [`routing_context.py`](aios_platform/routing_context.py)、[`response_cache.py`](aios_platform/response_cache.py)、[`user_memory.py`](aios_platform/user_memory.py)、[`memory_tidy.py`](aios_platform/memory_tidy.py) | `<2ms` `EffortRouter`（`T0–T3`、默认 `deepseek-flash` / `deepseek-v4-pro` 升级）、4 区 KV 缓存（`Zone 1` 不变前缀）、`L1` 预算前命中、原子 `micro-USD` `QuotaManager` + `80%` 软预算降档、`TenantProviderPolicyStore`、每用户 `MEMORY.md`（`Zone 1.2`）+ 可撤回/`permanent=true` 永久擦除 + 4 层防投毒、L1/L2/L3 越界升级与 `aios-memory-tidy.timer`。 |
 | **Tier 3** | **全跨厂商云端/桌面企业版** | [`llm_provider.py`](aios_platform/llm_provider.py)、[`http_pool.py`](aios_platform/http_pool.py)、[`observability.py`](aios_platform/observability.py)、[`assurance.py`](aios_platform/assurance.py)、[`desktop/`](desktop/)、[`mcp/`](mcp/) | 纯 `httpx + pydantic` 多厂商适配器与熔断自动故障转移、`0013_enterprise_hardening` 全 40 表 PostgreSQL 强制 RLS（`aios_api`/`aios_worker`）+ `database_security_status` 漂移探针、Reserve-First 邮件/Zoom 外部 Outbox（`aios_external_action_outbox`）、跨进程持久 `EventHub`（`aios_durable_event` + `pg_notify`）+ 15s `session_revoked` 实时关流、OTel GenAI 与 Prometheus `/metrics`、Ed25519 受控预审（`:8761`）、独立 Email MCP 与零本地模型密钥 Tauri 2 桌面沙盒 CUA。 |
+
+---
+
+## 受控 Agent 工作台工具、工作边界与 Office/PDF 文档套件
+
+除 ERP 审批流外，助理工作台还提供确定性内置工具、逐员工授权的企业工具集与独立子进程 Office/PDF 解析及工作报告导出——全部位于模型与外部工具调用前的工作边界护栏之下，并共用统一工具目录校验（[Agent 工具与权限指南](docs/harness-tools.zh-CN.md) · [Office／PDF 文档与工作报告](docs/office-documents-and-reports.zh-CN.md)）。
+
+### 1. 模型前工作边界护栏与本地回归基准
+
+Access Admin 使用与其他角色一致的私人闲聊策略。后端会在调用模型或外部工具前检查明确的私人意图、企业用途与最近一条用户消息中的承接线索：日常寒暄与门店采购 PS5 等工作请求放行，私人购物、旅游、影视娱乐、健身等非工作请求进入现有 L1/L2/L3 提醒与升级流程；客户端提交的历史仅辅助识别追问，不能用于工具授权或清除显式策略拒绝。
+
+| 本地回归指标（[`work_boundary_eval.tsv`](fixtures/work_boundary_eval.tsv)） | 实测结果（Python 3.12.14） |
+|---|---:|
+| 总体准确率 | **99.25%**（`133 / 134`） |
+| 非工作内容召回率 | **98.57%**（`69 / 70`） |
+| 工作请求与寒暄误拦率 | **本次观测 0%**（`0 / 64`） |
+| 分类器并发压测 | **20,000** 次判定、**16** 线程、**0** 次结果漂移、**p95 0.138 ms**、约 **9,595 次/秒** |
+
+[合成测试集](fixtures/work_boundary_eval.tsv)覆盖简体中文、繁体中文及粤语、英语、四种角色层级与多轮追问（漏判的是一条缺少企业用途说明的英文足球赛果提问）。因测试用例随规则同步开发，线上流量的准确率、端到端吞吐与真实检索延迟仍需独立度量。本地复现命令见 [`scripts/work_boundary_eval.py`](scripts/work_boundary_eval.py)。
+
+### 2. 内置实用工具与逐员工个人权限（`agent-web` / `agent-collaboration` / `agent-knowledge` / `agent-documents`）
+
+工具描述、参数校验与执行共用同一套目录，在读取企业数据前与回包前双重鉴权。显式模块配置优先于经验证的 OIDC `aios_grants` 基线；撤销权限后保留空授权而非回退到身份默认权限；仓库权限与已验证身份仓库取交集。员工个人授权仅作用于该员工的 Agent，人工日历与提案界面仍沿用原有访问规则；新增工具卡内容不自动注入后续模型上下文，活动记录仅保留哈希与状态。
+
+| 模块 / 作用域 | 权限键与命令入口 | 能力、限额与安全边界 |
+|---|---|---|
+| **内置基础工具**（登录即可使用） | `/calc` · `/time` · `/find` · `/csv` | 进程内 38 位精度 `Decimal` 计算（`/calc`）与带时区偏移量的 IANA 时区换算（`/time`）。`/find` 与 `/csv` 接受最高 `256 KB` UTF-8 TXT/Markdown/CSV/TSV（仅随指令发往自有后端）；`/find` 最多返回 `5` 条带行号摘录，`/csv` 校验行/列/缺失值（上限 `64` 列、`10,000` 数据行）。 |
+| **`agent-web`**（`scope="personal"`） | `agent.web_search` · `/web <检索词>` | **公开网页搜索**：通过工作边界、租户供应商策略及共享速率/FinOps 配额校验后，仅向 [DeepSeek Search API](https://api-docs.deepseek.com/api/search/) 发送限长检索词（剥离附件、会话历史与敏感模式），返回链接与摘要且不自动写入后续模型上下文；上游繁忙或失败时返回状态且不自动重试（传输测试使用模拟响应）。默认关闭（需配置 `AIOS_WEB_SEARCH_TENANTS` 与 `AIOS_WEB_SEARCH_API_KEY` / `AIOS_WEB_SEARCH_API_KEY_FILE`；演示授权归属 `harbour/access-admin`），上线前应设企业预算并完成预发布冒烟。 |
+| **`agent-collaboration`**（`scope="personal"`） | `agent.calendar_read` · `agent.tasks_read` · `/agenda` · `/submitted` | **本人日历与已提交提案**：`/agenda 2026-11-25` 按香港时间查询本人参与的内部日程；`/submitted 5` 按提交人及既有提案范围查询本人已提交提案。 |
+| **`agent-knowledge`**（仓库级作用域） | `agent.knowledge_read` · `/knowledge <仓库> <检索词>` | **内部知识检索**：返回已授权仓库的 `source_id`、`title`、`section` 与 `excerpt`（演示内置 `HK01`/`HK02` 合成 SOP）。生产环境需在已固定的 `WorkspaceSource` 上启用 `AIOS_WORKSPACE_KNOWLEDGE=1` 并实现 `POST /workspace/knowledge-search`（请求仅含 `tenant`、`subject`、`warehouse`、`query`、`limit`），客户索引需在排序前按调用人、仓库与文档 ACL 过滤，AIOS 返回前再校范围并在查询在途撤权时丢弃结果。 |
+| **`agent-documents`**（`scope="personal"`） | `agent.documents_parse` · `agent.report_export` · `/find` · `/report` | **Office/PDF 子进程解析与工作报告导出**：解析与导出可逐员工独立授权并设到期时间；导出仓库汇总需同时具备对应仓库的经营汇总读取权限。详见下文。 |
+
+### 3. Office/PDF 子进程提取与工作报告导出（`PDF` / `DOCX` / `XLSX` / `CSV`）
+
+- **沙盒化 Office/PDF 提取（`agent.documents_parse`）**：支持 `PDF`、`DOCX`、`XLSX`、`PPTX`，单文件上限 **5 MB**、提取文本上限 **120,000** 字符、PDF/幻灯片上限 **60** 页；`/find` 命中附带页码、段落、幻灯片或工作表行号。PDF 优先直读文本层，纯图页通过 `pypdfium2` + `Tesseract` 本地 OCR 回退（每次最多 **5** 页，`AIOS_DOCUMENT_OCR_LANGUAGES=eng+chi_sim+chi_tra`；当前回归已覆盖英文扫描页，中英混排需结合客户样本验收）。OOXML 校验压缩项数量、解压上限、文件类型、宏与嵌入对象。解析运行在独立子进程中，配合净化环境变量、临时目录、资源限制与 **17 秒** 超时（生产高频接收外部文件时应进一步隔离解析进程的操作系统账号、文件系统与网络）；原文件、提取正文与报告二进制均不落库，权限审计仅记录事件与格式。
+- **结构化工作报告导出（`agent.report_export`）**：`/report mine <格式>` 按香港当天统计个人日程、待审批与已提交提案；`/report <仓库> <格式>` 提取已授权仓库的未结运单与快照日期。支持 **`PDF`**、**`DOCX`**、**`XLSX`**（保留数值单元格类型）与 **`CSV`**（带 UTF-8 BOM）。`PDF` 通过 `fpdf2` 嵌入中文字体子集（默认查找 `fonts-noto-cjk`，可通过 `AIOS_REPORT_FONT` 与 `AIOS_REPORT_FONT_INDEX` 指定；若缺失字体，其余三种格式仍可正常导出）。
+- **启用方式**：默认关闭且无需数据库迁移。在工作台 API 虚拟环境安装 `requirements-platform-documents.txt`，设置 `AIOS_DOCUMENT_TOOLS_ENABLED=1` 并核实真实仓库数据源配置即可。
 
 ---
 
@@ -262,6 +269,15 @@ flowchart TD
 | **持久化与个人长期记忆** | **自研：连接池化 SQLite WAL + 文件优先 `MEMORY.md`（`aios_user_memory`）** | Mem0 / Letta / Zep | 零额外向量库/图数据库运维负担；`T0` 正则与命令捕获实现 **0 次每轮抽取模型调用**；`Zone 1` 前缀保持 **100% 字节不变**（`MEMORY.md` 隔离于 `Zone 1.2`）；具备人类可读 Markdown Diff、`409` 乐观锁与一键撤回。 |
 | **Web、MCP 与桌面端栈** | **采用：FastAPI + Next.js 16 · Node `nodemailer` · FastMCP/stdio · Tauri 2** | Electron / 重型一体式 RPA | 成熟前后端分离与同源 BFF（`output: "standalone"`）、原生连接池化 TypeScript 邮件 MCP（`mcp/email-server`）、stdio JSON-RPC 沙盒隔离（`mcp/workspace-server`）以及极轻内存占用的 Tauri 2 桌面外壳（`desktop/`）。 |
 
+### 工作台工具、公开搜索与文档处理开源取舍
+
+| 能力领域 | 当前选型 | 评估 / 演进备选 | 工程与合规取舍理由 |
+|---|---|---|---|
+| **工具编排与目录治理** | **内置工具目录 + Pydantic + 审批账本** | [`Pydantic AI`](https://ai.pydantic.dev/toolsets/) · [MCP Tools](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-11-25/server/tools.mdx) | 当前直接复用既有 RBAC、FinOps 预算与摘要锁账本；`Pydantic AI` 类型化工具集适合后续多工具编排，固定可信 MCP 服务器可按员工授权对接外部团队平台。 |
+| **公开网页搜索** | **托管 [DeepSeek Search API](https://api-docs.deepseek.com/api/search/)** | [`SearXNG`](https://docs.searxng.org/dev/search_api.html) | 复用现有 API 技术栈并省去额外搜索服务运维；需要自托管与上游搜索引擎控制时可选 `SearXNG` JSON API。 |
+| **Office / PDF 解析与导出** | **`python-docx` · `python-pptx` · `openpyxl` · `pypdfium2` · `Tesseract` · `fpdf2`** | [`MarkItDown`](https://github.com/microsoft/markitdown) · [`Docling`](https://docling-project.github.io/docling/usage/supported_formats/) · [`Gotenberg`](https://gotenberg.dev/docs/about) | 轻量级库（`python-docx`、`python-pptx`、只读缓存公式值的 `openpyxl`、`pypdfium2` + `Tesseract`、`fpdf2` 中文字体子集）显著压缩 17 秒子进程沙盒依赖；复杂 PDF 版面/表格重建可选桌面已试配的 `MarkItDown`/`Docling`，高保真 Office 转 PDF 可独立部署受限 `Gotenberg` 服务。 |
+| **细粒度 ACL、长任务与追踪** | **SQLite/PG RBAC · 同步读 + 幂等 Outbox · `gen_ai.*` + OTel** | [`OpenFGA`](https://github.com/openfga/openfga.dev/blob/docs-next/docs-site/modeling/roles-and-permissions.mdx) · [`Temporal`](https://docs.temporal.io/durable-execution) · [`OpenTelemetry`](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/execute-tool.md) | 现由数据库规则执行员工与仓库范围，多团队/项目/文档关系型 ACL 可引入 `OpenFGA`；跨进程暂停恢复批处理长任务可选 `Temporal`（写入仍需幂等键）；`OpenTelemetry` GenAI 语义规范追踪工具名、时延与状态码，同时将原始查询与文档摘录排除在默认属性之外。 |
+
 ---
 
 ## 最小化付费服务起点：批发采购单 OCR 接单工作台（`Tier 0` · `aios_demo/`）
@@ -378,6 +394,9 @@ export AIOS_LLM_API_KEY="sk-your-server-only-key"
 | `AIOS_BROWSER_ORIGIN` / `AIOS_BROWSER_SESSION_KEY` / `AIOS_DEMO_SECRET` | 同源 BFF 会话 | `__Host-aios_session` 加密签名、CSRF 与浏览器 Origin 校验 |
 | `AIOS_SMTP_HOST` / `AIOS_SMTP_PORT` / `AIOS_SMTP_USER` / `AIOS_SMTP_PASS` / `AIOS_SMTP_FROM` | 端口 `587`（TLS/STARTTLS） | [`mcp/email-server/`](mcp/email-server/) 邮件连接池传输配置 |
 | `AIOS_CHANNEL_<ID>_WEBHOOK_SECRET` / `AIOS_MCP_CHANNEL_<ID>_URL` | 按渠道配置 | 8 大企业 IM 渠道入站验签密钥与出站 MCP 中继地址 |
+| `AIOS_WEB_SEARCH_TENANTS` / `AIOS_WEB_SEARCH_API_KEY` / `AIOS_WEB_SEARCH_API_KEY_FILE` | 默认关闭 | 配置启用 `agent-web`（`/web`）的租户白名单（支持 `AIOS_WEB_SEARCH_TENANTS_FILE`）与 DeepSeek Search 独立密钥 |
+| `AIOS_WORKSPACE_KNOWLEDGE` | `0`（演示合成 SOP） | 设为 `1` 后在固定 `WorkspaceSource` 上调用 `POST /workspace/knowledge-search` 供 `agent-knowledge`（`/knowledge`）检索 |
+| `AIOS_DOCUMENT_TOOLS_ENABLED` / `AIOS_REPORT_FONT` / `AIOS_REPORT_FONT_INDEX` / `AIOS_DOCUMENT_OCR_LANGUAGES` | `0` / Noto Sans CJK / `""` | 启用 Office/PDF 解析与报告导出（需 `requirements-platform-documents.txt`）、指定 PDF 中文字体与索引、开启 `Tesseract` 扫描页 OCR（如 `eng+chi_sim+chi_tra`，上限 5 页） |
 
 ### 3. 企业就绪度评测、自动化回归、迁移与夜间 `systemd` 定时任务
 
@@ -385,13 +404,17 @@ export AIOS_LLM_API_KEY="sk-your-server-only-key"
 # 运行零外部 API 密钥的 7 门禁企业就绪度评测基准
 python scripts/enterprise_eval.py --json
 
-# 运行后端全量单元测试与集成测试（192 项）
+# 运行本地工作边界分类器并发基准（20,000 次判定，16 线程）
+python scripts/work_boundary_eval.py --requests 20000 --workers 16
+
+# 运行后端全量单元测试与集成测试（192+ 项）
 python -m unittest discover -s tests -v
 
 # 运行企业就绪度、FinOps 故障转移、Outbox/SSE 吊销、PG RLS、MEMORY.md、路由、桌面与越界专项测试
 python -m unittest tests.test_enterprise_readiness tests.test_finops_and_failover tests.test_infra_resilience -v
 python -m unittest tests.test_outbox_and_revocation tests.test_postgres_enterprise tests.test_migrations tests.test_user_memory -v
 python -m unittest tests.test_routing_provider_context tests.test_assistant_and_sse tests.test_desktop_workspace_harness tests.test_off_topic_escalation tests.test_governance_and_guard -v
+python -m unittest tests.test_public_search tests.test_harness_tools tests.test_documents_and_reports -v
 
 # 执行 Alembic 数据库迁移至 0013_enterprise_hardening（PG 自动安全扩宽 alembic_version 至 VARCHAR(64)）
 python -m alembic upgrade head
@@ -464,6 +487,8 @@ node ./deploy/cloudflare-worker/scripts/generate-reviewer-pass.mjs --force
 | **工作台后端与模块授权机制** | [docs/workbench-backend.zh-CN.md](docs/workbench-backend.zh-CN.md) | — |
 | **员工协作、同源会话与客户连接器** | [docs/workbench-collaboration.zh-CN.md](docs/workbench-collaboration.zh-CN.md) | — |
 | **企业工作台前端交付指南（`web/`）** | [docs/workbench-frontend.zh-CN.md](docs/workbench-frontend.zh-CN.md) | [web/README.md](web/README.md) |
+| **Agent 工作台工具、个人授权与知识检索** | [docs/harness-tools.zh-CN.md](docs/harness-tools.zh-CN.md) | — |
+| **Office/PDF 文档解析与工作报告导出** | [docs/office-documents-and-reports.zh-CN.md](docs/office-documents-and-reports.zh-CN.md) | — |
 | **采购单 OCR 演示脚本与实现边界** | [docs/demo.zh-CN.md](docs/demo.zh-CN.md) | [docs/demo.md](docs/demo.md) |
 | **桌面端 Harness 与本地工作区 MCP** | — | [desktop/README.md](desktop/README.md) · [mcp/workspace-server/README.md](mcp/workspace-server/README.md) |
 | **Cloudflare 评审门禁与 IntegrAI 运维** | [deploy/cloudflare-worker/README.zh-CN.md](deploy/cloudflare-worker/README.zh-CN.md) · [deploy/integrai/RUNBOOK.zh-CN.md](deploy/integrai/RUNBOOK.zh-CN.md) | — |

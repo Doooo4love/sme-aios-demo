@@ -25,36 +25,6 @@ Every core claim across security, KV cache invariance, FinOps savings, SQLite WA
 
 ---
 
-## Assistant Work Boundary and Public Web Search
-
-[Office/PDF processing and report export](docs/office-documents-and-reports.zh-CN.md) adds four document inputs and four export formats with independent employee grants.
-
-[Assistant tool and access guide](docs/harness-tools.zh-CN.md) covers calculation, timezone conversion, attachment and CSV checks, and employee-scoped calendar, proposals, and knowledge.
-
-Access Admin follows the same personal-chat policy as other roles. The boundary runs before external tools and model calls. It checks personal intent, explicit business purpose, and short follow-ups against the most recent user turn. Ordinary greetings and tasks such as sourcing PS5 stock for the store can proceed. Personal shopping, leisure, entertainment, wellness, and similar requests enter the existing L1/L2/L3 reminder and escalation flow. Client-provided history can add a reminder. It cannot authorize a tool or clear an explicit policy denial.
-
-| Local regression result | Measurement |
-|---|---:|
-| Overall accuracy | **99.25%** (133/134) |
-| Non-work recall | **98.57%** (69/70) |
-| Work and greeting false positives | **0 observed** (0/64) |
-| Classifier-only load | **20,000** evaluations, 16 worker threads, 0 decision mismatches, **0.138 ms p95**, about **9,595 evaluations/s** |
-
-The [synthetic fixture](fixtures/work_boundary_eval.tsv) covers Simplified Chinese, Traditional Chinese including Cantonese, and English across four role levels. One public sports-score question was missed. These are local Python 3.12.14 measurements on a curated regression set developed alongside the rules. Production traffic accuracy, API throughput, and provider latency require separate measurement. Reproduce locally with:
-
-```bash
-python scripts/work_boundary_eval.py --requests 20000 --workers 16
-python -m unittest discover -s tests -p test_public_search.py -v
-```
-
-**Public web search** runs on the assistant gateway after the work-boundary check. An opted-in tenant and an account with `agent.web_search` can use `/web Hong Kong cold chain suppliers` or start a turn with “search the web”. The gateway also applies tenant provider policy and shared tenant rate and FinOps quotas. It sends the bounded query alone to the [DeepSeek Search API](https://api-docs.deepseek.com/api/search/), with results formatted as links and snippets. Attachments, conversation history and known sensitive patterns are excluded. Search snippets stay out of automatic model context. A busy or unavailable provider yields a status message and the request is not retried automatically.
-
-Enable on the assistant API only with `AIOS_WEB_SEARCH_TENANTS` (comma-separated tenant IDs) and a dedicated secret mounted via `AIOS_WEB_SEARCH_API_KEY_FILE` or injected as `AIOS_WEB_SEARCH_API_KEY`. Enable only the approved provider region and public data class. The demo grant is held by `harbour/access-admin`; in production, administrators can override access per employee. A verified OIDC `aios_grants` claim supplies the baseline if there is no explicit module override. The tool is disabled by default. Set an organization budget and complete a staged provider smoke test before enabling live traffic.
-
-The existing harness handles policies and results. [Pydantic AI](https://ai.pydantic.dev/toolsets/) provides typed toolsets for future multi-tool orchestration. [SearXNG](https://docs.searxng.org/dev/search_api.html) is a self-hosted option with a JSON API and upstream engine operations. The first adapter uses the managed Search API to reuse the current stack and avoid an extra service. The transport tests simulate provider responses.
-
----
-
 ## Live Interactive Demo & Screenshots Showcase
 
 Experience the deployed enterprise stack at the **Live Demo**: **[https://aios-demo.hk-demo.workers.dev](https://aios-demo.hk-demo.workers.dev)**
@@ -82,6 +52,43 @@ Organizations can adopt Theodic SME AIOS incrementally without disrupting existi
 | **Tier 1** | **Team Workbench** | [`web/`](web/) + [`aios_platform/`](aios_platform/) (`workflow.py`, `module_access.py`, `chat.py`, `channels.py`) | Multi-tenant, multi-warehouse RBAC, native macOS iMessage/WhatsApp collaboration with Delivered/Read receipts, 8-channel IM hub, `/` slash skills, and digest-locked human approvals. |
 | **Tier 2** | **Smart-Routed & Memory AIOS** | [`routing_context.py`](aios_platform/routing_context.py), [`response_cache.py`](aios_platform/response_cache.py), [`user_memory.py`](aios_platform/user_memory.py), [`memory_tidy.py`](aios_platform/memory_tidy.py) | `<2ms` `EffortRouter` (`T0–T3`, `deepseek-flash` default / `deepseek-v4-pro` escalation), 4-Zone KV cache (`Zone 1` invariant prefix), `L1` `BoundedResponseCache` pre-budget hit, atomic `micro-USD` `QuotaManager` + `80%` soft-budget downgrade, `TenantProviderPolicyStore`, per-user `MEMORY.md` (`Zone 1.2`) + reversible/`permanent=true` purge + 4-layer anti-poisoning, L1/L2/L3 escalation, and `aios-memory-tidy.timer`. |
 | **Tier 3** | **Full Multi-Provider Desktop/Cloud Enterprise** | [`llm_provider.py`](aios_platform/llm_provider.py), [`http_pool.py`](aios_platform/http_pool.py), [`observability.py`](aios_platform/observability.py), [`assurance.py`](aios_platform/assurance.py), [`desktop/`](desktop/), [`mcp/`](mcp/) | Pure `httpx + pydantic` adapters + circuit-breaker failovers, `0013_enterprise_hardening` 40-table PostgreSQL Forced RLS (`aios_api`/`aios_worker`) + `database_security_status` drift probe, reserve-first Email/Zoom outbox (`aios_external_action_outbox`), durable `EventHub` (`aios_durable_event` + `pg_notify`) + 15s `session_revoked` SSE guard, OTel GenAI + Prometheus `/metrics`, Ed25519 Governed Assurance (`:8761`), TypeScript Email MCP, and Tauri 2 desktop harness with sandboxed local OOXML/PDF + single-window CUA. |
+
+---
+
+## Governed Agent Workbench Tools, Work Boundary & Office/PDF Suite
+
+Beyond ERP proposals and approvals, the assistant workbench exposes deterministic utilities, per-employee permission-gated tools, and isolated Office/PDF extraction and reporting—all behind the pre-model work-boundary classifier and unified catalog validation ([Assistant Tool & Access Guide](docs/harness-tools.zh-CN.md) · [Office/PDF Processing & Report Export](docs/office-documents-and-reports.zh-CN.md)).
+
+### 1. Pre-Model Work Boundary & Local Regression Benchmarks
+
+Access Admin follows the same personal-chat policy as other roles. The boundary runs before external tools and model calls, checking personal intent, explicit business purpose, and short follow-ups against the most recent user turn. Ordinary greetings and work tasks (such as sourcing PS5 stock for the store) proceed; personal shopping, leisure, entertainment, wellness, and similar requests enter the existing L1/L2/L3 reminder and escalation flow. Client-provided history can help identify follow-ups, but cannot authorize a tool or clear an explicit policy denial.
+
+| Local Regression Metric ([`work_boundary_eval.tsv`](fixtures/work_boundary_eval.tsv)) | Measured Result (Python 3.12.14) |
+|---|---:|
+| Overall accuracy | **99.25%** (`133 / 134`) |
+| Non-work recall | **98.57%** (`69 / 70`) |
+| Work & greeting false positives | **0 observed** (`0 / 64`) |
+| Classifier-only concurrent load | **20,000** evaluations, **16** worker threads, **0** decision mismatches, **0.138 ms p95**, ~**9,595 evaluations/s** |
+
+The [synthetic fixture](fixtures/work_boundary_eval.tsv) spans Simplified Chinese, Traditional Chinese including Cantonese, and English across four role levels and multi-turn follow-ups (one public English sports-score query lacking business purpose was missed). Because these cases were developed alongside the rules, production traffic accuracy, end-to-end API throughput, and real provider latency require separate measurement. Reproduce locally with [`scripts/work_boundary_eval.py`](scripts/work_boundary_eval.py).
+
+### 2. Built-In Utilities & Per-Employee Personal Grants
+
+Tool descriptions, parameter schemas, and execution share a single catalog, re-checking permissions before reading enterprise data and before returning responses. Explicit module overrides take precedence over the verified OIDC `aios_grants` baseline, revocation leaves an empty grant (no fallback to identity defaults), and warehouse grants intersect verified identity warehouses. Personal grants govern the employee's Agent only—human calendar and proposal screens keep their existing access rules. Tool cards stay out of automatic follow-up model context while activity logs record hashes and status.
+
+| Module / Scope | Grant Keys & Entry | Capabilities, Bounds & Security Controls |
+|---|---|---|
+| **Built-In Utilities** (any signed-in user) | `/calc` · `/time` · `/find` · `/csv` | In-process 38-digit `Decimal` `/calc` and IANA timezone `/time` (expects offset timestamps). `/find` & `/csv` accept up to `256 KB` UTF-8 TXT/Markdown/CSV/TSV forwarded to our own backend only; `/find` returns up to `5` line-numbered excerpts and `/csv` validates rows, columns, and missing values up to `64` columns and `10,000` data rows. |
+| **`agent-web`** (`scope="personal"`) | `agent.web_search` · `/web <query>` | **Public Web Search**: Runs after work-boundary, tenant provider policy, and shared rate/FinOps quota checks. Sends the bounded query alone to the [DeepSeek Search API](https://api-docs.deepseek.com/api/search/) (excluding attachments, history, and known sensitive patterns) and returns links + snippets without injecting them into automatic model context; busy/unavailable providers return status without automatic retry (transport tests simulate provider responses). Disabled by default (`AIOS_WEB_SEARCH_TENANTS`, `AIOS_WEB_SEARCH_API_KEY` / `AIOS_WEB_SEARCH_API_KEY_FILE`; demo grant on `harbour/access-admin`); set org budget and run a staged smoke test before live traffic. |
+| **`agent-collaboration`** (`scope="personal"`) | `agent.calendar_read` · `agent.tasks_read` · `/agenda` · `/submitted` | **Personal Calendar & Submitted Proposals**: `/agenda 2026-11-25` queries internal calendar events by personal participation in Hong Kong Time; `/submitted 5` lists proposals filtered by submitter and existing proposal scope. |
+| **`agent-knowledge`** (warehouse-scoped) | `agent.knowledge_read` · `/knowledge <wh> <query>` | **Internal Knowledge Retrieval**: Returns `source_id`, `title`, `section`, and `excerpt` for authorized warehouses (demo includes synthetic `HK01`/`HK02` SOPs). Production activates `AIOS_WORKSPACE_KNOWLEDGE=1` and `POST /workspace/knowledge-search` (`tenant`, `subject`, `warehouse`, `query`, `limit`) on a pinned `WorkspaceSource`, requiring pre-ranking caller/warehouse/ACL filtering plus response scope re-validation and in-flight revocation drop. |
+| **`agent-documents`** (`scope="personal"`) | `agent.documents_parse` · `agent.report_export` · `/find` · `/report` | **Office/PDF Subprocess Extraction & Report Export**: Independently toggleable parse and export grants (with optional expiry); warehouse reports also require that warehouse's operations-summary read grant. Details below. |
+
+### 3. Office/PDF Subprocess Extraction & Report Export (`PDF` / `DOCX` / `XLSX` / `CSV`)
+
+- **Sandboxed Office/PDF Extraction (`agent.documents_parse`)**: Accepts `PDF`, `DOCX`, `XLSX`, and `PPTX` up to **5 MB**, **120,000** extracted characters, and **60** PDF/slide pages; `/find` hits cite page, paragraph, slide, or sheet row numbers. PDFs prefer existing text layers and fall back to local `pypdfium2` + `Tesseract` OCR on up to **5** image-only pages (`AIOS_DOCUMENT_OCR_LANGUAGES=eng+chi_sim+chi_tra`; English scans covered in regression, mixed CJK+EN scans require customer validation). OOXML inputs validate zip entry counts, decompression limits, file types, macros, and embedded objects. Extraction runs in an isolated subprocess with a sanitized environment, temp directory, resource limits, and a **17-second** timeout (high-volume untrusted intake should further isolate the worker OS account, filesystem, and network); source files, extracted text, and report binaries are never written to the database, and audit logs record events and formats only.
+- **Structured Report Export (`agent.report_export`)**: `/report mine <fmt>` summarizes personal HKT daily meetings, pending approvals, and submitted proposals; `/report <warehouse> <fmt>` exports open shipments and snapshot dates for an authorized warehouse. Supports **`PDF`**, **`DOCX`**, **`XLSX`** (preserving numeric cell types), and **`CSV`** (with UTF-8 BOM). `PDF` uses `fpdf2` with embedded CJK font subsetting (`fonts-noto-cjk` / `AIOS_REPORT_FONT` / `AIOS_REPORT_FONT_INDEX`); if no CJK font is available, the other three formats remain operational.
+- **Activation**: Disabled by default (`0` database migrations). Install `requirements-platform-documents.txt` in the workbench API venv and set `AIOS_DOCUMENT_TOOLS_ENABLED=1` alongside real warehouse data sources.
 
 ---
 
@@ -262,6 +269,15 @@ flowchart TD
 | **Persistence & Long-Term Memory** | **Built: Pooled SQLite WAL + File-First `MEMORY.md` (`aios_user_memory`)** | Mem0 / Letta / Zep | Zero extra vector/graph infrastructure; `0` per-turn extraction LLM calls via `T0` staging; `100%` byte-invariant `Zone 1` prefix (`MEMORY.md` isolated in `Zone 1.2`); human-readable Markdown diffs with `409` optimistic locking & 1-click Undo. |
 | **App, MCP & Desktop Stack** | **Adopted: FastAPI + Next.js 16 · Node `nodemailer` · FastMCP/stdio · Tauri 2** | Electron / heavy monolithic RPA | Proven async/SSR split (`output: "standalone"` + same-origin BFF), hardened TypeScript SMTP pool (`mcp/email-server`), stdio JSON-RPC workspace isolation (`mcp/workspace-server`), and native memory-light Tauri 2 shell (`desktop/`). |
 
+### Workbench Tools, Search & Document Processing Trade-Offs
+
+| Capability Area | Current Choice | Evaluated / Future Option | Trade-Off Rationale |
+|---|---|---|---|
+| **Tool Orchestration & Schema Governance** | **Built-in catalog + Pydantic + approval ledger** | [`Pydantic AI`](https://ai.pydantic.dev/toolsets/) · [MCP Tools](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-11-25/server/tools.mdx) | Reuses existing RBAC, FinOps budgets, and digest-locked approvals today; `Pydantic AI` typed toolsets fit future multi-tool orchestration and pinned MCP servers can integrate external team platforms per employee. |
+| **Public Web Search** | **Managed [DeepSeek Search API](https://api-docs.deepseek.com/api/search/)** | [`SearXNG`](https://docs.searxng.org/dev/search_api.html) | Reuses the current API stack without running an extra search service; `SearXNG` provides a self-hosted JSON API when upstream engine operations are desired. |
+| **Office & PDF Extraction / Export** | **`python-docx` · `python-pptx` · `openpyxl` · `pypdfium2` · `Tesseract` · `fpdf2`** | [`MarkItDown`](https://github.com/microsoft/markitdown) · [`Docling`](https://docling-project.github.io/docling/usage/supported_formats/) · [`Gotenberg`](https://gotenberg.dev/docs/about) | Lightweight libraries (`python-docx`, `python-pptx` read-only/cached-formula `openpyxl`, `pypdfium2` + `Tesseract`, `fpdf2` CJK-subset PDFs) minimize deployment layers inside the 17s sandboxed subprocess; `MarkItDown`/`Docling` (already optional in desktop) fit complex layouts/tables and `Gotenberg` fits high-fidelity Office-to-PDF conversion in a dedicated isolated service. |
+| **Fine-Grained ACLs, Long Jobs & Tracing** | **SQLite/PG RBAC · synchronous reads + idempotent outbox · `gen_ai.*` + OTel** | [`OpenFGA`](https://github.com/openfga/openfga.dev/blob/docs-next/docs-site/modeling/roles-and-permissions.mdx) · [`Temporal`](https://docs.temporal.io/durable-execution) · [`OpenTelemetry`](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/execute-tool.md) | DB rules enforce employee/warehouse scope today while `OpenFGA` fits multi-team/project/document relational ACLs; `Temporal` fits cross-process resumable batch pipelines alongside idempotency keys; `OpenTelemetry` GenAI tool spans track tool name, latency, and status while keeping raw queries and document excerpts out of default attributes. |
+
 ---
 
 ## Entry-Level Paid Starter: Wholesale PO OCR Intake (`Tier 0`, `aios_demo/`)
@@ -378,6 +394,9 @@ Secrets support `*_FILE` injection (e.g. `AIOS_LLM_API_KEY_FILE`, `AIOS_PLATFORM
 | `AIOS_BROWSER_ORIGIN` / `AIOS_BROWSER_SESSION_KEY` / `AIOS_DEMO_SECRET` | Same-origin BFF | Cookie signing (`__Host-aios_session`), CSRF & origin enforcement |
 | `AIOS_SMTP_HOST` / `AIOS_SMTP_PORT` / `AIOS_SMTP_USER` / `AIOS_SMTP_PASS` / `AIOS_SMTP_FROM` | Port `587` (TLS/STARTTLS) | Pooled SMTP transport for [`mcp/email-server/`](mcp/email-server/) |
 | `AIOS_CHANNEL_<ID>_WEBHOOK_SECRET` / `AIOS_MCP_CHANNEL_<ID>_URL` | Per-channel | Signed webhook ingress & outbound MCP relay across the 8 enterprise IM channels |
+| `AIOS_WEB_SEARCH_TENANTS` / `AIOS_WEB_SEARCH_API_KEY` / `AIOS_WEB_SEARCH_API_KEY_FILE` | Disabled by default | Opts in tenant IDs (`AIOS_WEB_SEARCH_TENANTS_FILE` supported) and dedicated DeepSeek Search API key for `agent-web` (`/web`) |
+| `AIOS_WORKSPACE_KNOWLEDGE` | `0` (synthetic demo SOPs) | Set `1` to query `POST /workspace/knowledge-search` on pinned `WorkspaceSource` for `agent-knowledge` (`/knowledge`) |
+| `AIOS_DOCUMENT_TOOLS_ENABLED` / `AIOS_REPORT_FONT` / `AIOS_REPORT_FONT_INDEX` / `AIOS_DOCUMENT_OCR_LANGUAGES` | `0` / Noto Sans CJK / `""` | Enables Office/PDF extraction & report export (`requirements-platform-documents.txt`), configures CJK PDF font + index, and enables `Tesseract` scanned-page OCR (`eng+chi_sim+chi_tra`, max `5` pages) |
 
 ### 3. Enterprise Eval, Automated Tests, Migrations & Nightly `systemd` Timer
 
@@ -385,13 +404,17 @@ Secrets support `*_FILE` injection (e.g. `AIOS_LLM_API_KEY_FILE`, `AIOS_PLATFORM
 # Run deterministic, zero-API-key 7-gate Enterprise Readiness Eval
 python scripts/enterprise_eval.py --json
 
-# Run full backend Python test suite (192 tests)
+# Run local work-boundary classifier benchmark (20,000 evaluations, 16 threads)
+python scripts/work_boundary_eval.py --requests 20000 --workers 16
+
+# Run full backend Python test suite (192+ tests)
 python -m unittest discover -s tests -v
 
 # Run targeted resilience, FinOps, outbox/SSE revocation, PG RLS, MEMORY.md, routing, desktop & boundary suites
 python -m unittest tests.test_enterprise_readiness tests.test_finops_and_failover tests.test_infra_resilience -v
 python -m unittest tests.test_outbox_and_revocation tests.test_postgres_enterprise tests.test_migrations tests.test_user_memory -v
 python -m unittest tests.test_routing_provider_context tests.test_assistant_and_sse tests.test_desktop_workspace_harness tests.test_off_topic_escalation tests.test_governance_and_guard -v
+python -m unittest tests.test_public_search tests.test_harness_tools tests.test_documents_and_reports -v
 
 # Apply Alembic migrations through 0013_enterprise_hardening (PG alembic_version VARCHAR(64) safe)
 python -m alembic upgrade head
@@ -464,6 +487,8 @@ Full Cloudflare Worker, Zero Trust Access fallback, and Ubuntu VPS runbook (`01-
 | **Workbench Backend & Module Access** | — | [docs/workbench-backend.zh-CN.md](docs/workbench-backend.zh-CN.md) |
 | **Collaboration, OIDC Sessions & Customer Connectors** | — | [docs/workbench-collaboration.zh-CN.md](docs/workbench-collaboration.zh-CN.md) |
 | **Enterprise Frontend Delivery Guide (`web/`)** | [web/README.md](web/README.md) | [docs/workbench-frontend.zh-CN.md](docs/workbench-frontend.zh-CN.md) |
+| **Agent Workbench Tools, Grants & Knowledge** | — | [docs/harness-tools.zh-CN.md](docs/harness-tools.zh-CN.md) |
+| **Office/PDF Extraction & Report Export** | — | [docs/office-documents-and-reports.zh-CN.md](docs/office-documents-and-reports.zh-CN.md) |
 | **PO OCR Operator Demo Script & Boundaries** | [docs/demo.md](docs/demo.md) | [docs/demo.zh-CN.md](docs/demo.zh-CN.md) |
 | **Desktop Harness & Local Workspace MCP** | [desktop/README.md](desktop/README.md) · [mcp/workspace-server/README.md](mcp/workspace-server/README.md) | — |
 | **Cloudflare Worker Gate & IntegrAI Ops** | — | [deploy/cloudflare-worker/README.zh-CN.md](deploy/cloudflare-worker/README.zh-CN.md) · [deploy/integrai/RUNBOOK.zh-CN.md](deploy/integrai/RUNBOOK.zh-CN.md) |

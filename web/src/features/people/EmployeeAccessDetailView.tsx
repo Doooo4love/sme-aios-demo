@@ -887,13 +887,6 @@ export function EmployeeAccessDetailView({
               nowUnix,
               locale,
             );
-            const stateSummary = personalScope && stateInfo.status === "active"
-              ? tx({
-                  "zh-CN": "该配置仅对当前员工的 Agent 生效。",
-                  "zh-HK": "設定僅適用於目前員工的 Agent。",
-                  en: "This assignment is active for the selected employee's Agent.",
-                })
-              : stateInfo.summary;
             const draft =
               drafts[moduleId] ?? buildDraftFromAssignment(persisted);
             const dirty = isDraftDirty(draft, persisted);

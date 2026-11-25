@@ -379,7 +379,7 @@ CREATE POLICY aios_quota_policy_tenant ON aios_quota_policy TO aios_api
 REVOKE ALL ON aios_quota_policy FROM PUBLIC, aios_api, aios_worker;
 GRANT SELECT, INSERT, UPDATE ON aios_quota_policy TO aios_api;
 
--- ContextManager uses workflow.tx (tenant-scoped); enforce tenant and optional subject isolation.
+-- ContextManager uses workflow.tx (tenant-scoped) — enforce tenant and optional subject isolation.
 ALTER TABLE aios_agent_session_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE aios_agent_session_state FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS aios_agent_session_state_tenant ON aios_agent_session_state;

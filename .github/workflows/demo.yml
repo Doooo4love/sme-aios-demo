@@ -36,7 +36,7 @@ jobs:
       - name: Audit production dependencies for known advisories
         run: |
           python -m pip install pip-audit
-          python -m pip_audit -r requirements-platform.txt
+          python -m pip_audit -r requirements-platform.txt -r requirements-platform-documents.txt
       - name: OCR, routing, ledger and API tests with SQLite
         run: python -m unittest discover -s tests -v
       - name: Run deterministic enterprise readiness evaluation harness (zero API keys)
@@ -77,7 +77,10 @@ jobs:
               )
               schema = conn.execute("SELECT current_schema()").fetchone()[0]
               conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO aios_api, aios_worker").format(sql.Identifier(schema)))
-              sql_text = Path("deploy/platform/postgres-security.sql").read_text(encoding="utf-8")
+              raw_sql = Path("deploy/platform/postgres-security.sql").read_text(encoding="utf-8")
+              sql_text = "\n".join(
+                  line for line in raw_sql.splitlines() if not line.lstrip().startswith("--")
+              )
               for stmt in sql_text.split(";"):
                   if stmt.strip():
                       conn.execute(stmt)

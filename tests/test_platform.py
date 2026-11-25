@@ -34,6 +34,13 @@ ROOT = Path(__file__).resolve().parents[1]
 TEST_DSN = os.getenv("AIOS_PLATFORM_TEST_DSN")
 
 
+def _split_sql_statements(sql_text: str) -> list[str]:
+    stripped = "\n".join(
+        line for line in sql_text.splitlines() if not line.lstrip().startswith("--")
+    )
+    return [stmt.strip() for stmt in stripped.split(";") if stmt.strip()]
+
+
 class PlatformTests(unittest.TestCase):
     def setUp(self):
         scratch = TemporaryDirectory()
@@ -882,9 +889,8 @@ class PlatformTests(unittest.TestCase):
                 for name in names:
                     conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
                         sql.Identifier(schema), sql.Identifier(name)))
-                for statement in secure_sql.split(";"):
-                    if statement.strip():
-                        conn.execute(statement)
+                for statement in _split_sql_statements(secure_sql):
+                    conn.execute(statement)
                 conn.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(names[0])))
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM aios_proposal").fetchone()[0], 0)
                 conn.execute("SELECT set_config('aios.tenant', 'harbour', true)")
@@ -919,9 +925,10 @@ class PlatformTests(unittest.TestCase):
                     sql.Identifier(name), sql.Literal(credentials[name])))
                 admin.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
                     sql.Identifier(schema), sql.Identifier(name)))
-            for statement in (ROOT / "deploy/platform/postgres-security.sql").read_text().split(";"):
-                if statement.strip():
-                    admin.execute(statement)
+            for statement in _split_sql_statements(
+                (ROOT / "deploy/platform/postgres-security.sql").read_text()
+            ):
+                admin.execute(statement)
 
         def drop_roles():
             with psycopg.connect(dsn) as admin:

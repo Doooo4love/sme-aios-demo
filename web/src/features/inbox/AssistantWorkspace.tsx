@@ -2229,7 +2229,7 @@ export function AssistantWorkspace() {
                 <button
                   type="button"
                   aria-label={tx({ "zh-CN": "移除附件", "zh-HK": "移除附件", en: "Remove attachment" })}
-                  className="rounded-full p-1 hover:bg-[var(--bg-hover)]"
+                  className="rounded-full p-1 hover:bg-[var(--bg-hover)] cursor-pointer"
                   onClick={() => {
                     contextFileSelection.current += 1;
                     setContextFile(null);
@@ -2319,7 +2319,7 @@ export function AssistantWorkspace() {
                             setContextMenuOpen(false);
                             updateComposer(`/report mine ${capabilities?.report_formats?.includes("pdf") ? "pdf" : "xlsx"}`);
                           }}
-                          className="flex w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left text-[13px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                          className="flex w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left text-[13px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                         >
                           <FilePlus2 className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.85} />
                           <span>{tx({ "zh-CN": "导出工作报告", "zh-HK": "匯出工作報告", en: "Export work report" })}</span>
