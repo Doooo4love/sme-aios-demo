@@ -19,6 +19,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 from starlette.responses import JSONResponse
 
+from .document_service import INPUT_LIMIT as DOCUMENT_INPUT_LIMIT
+
 LOG = logging.getLogger("aios.platform")
 JSON_LIMIT = 65_536
 WORKBENCH_TURN_JSON_LIMIT = 2_097_152
@@ -421,7 +423,10 @@ class RequestEnvelope:
                 and raw_path in {"/v1/profile/avatar", "/v1/agent-profile/avatar"}
             )
             if method in {"POST", "PUT", "PATCH"} and not image and raw_path.startswith(BOUNDED_JSON_PATHS):
-                body_limit = WORKBENCH_TURN_JSON_LIMIT if raw_path == "/v1/workbench/turns" else JSON_LIMIT
+                body_limit = {
+                    "/v1/workbench/turns": WORKBENCH_TURN_JSON_LIMIT,
+                    "/v1/workbench/documents/parse": DOCUMENT_INPUT_LIMIT,
+                }.get(raw_path, JSON_LIMIT)
                 body = bytearray()
                 while True:
                     remaining = 15 - (time.monotonic() - started)

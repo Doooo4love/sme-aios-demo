@@ -16,6 +16,10 @@ export const PREFERRED_MODULE_ORDER: readonly string[] = [
   "invoice-review",
   "warehouse-insights",
   "approvals",
+  "agent-web",
+  "agent-collaboration",
+  "agent-knowledge",
+  "agent-documents",
 ];
 
 /**

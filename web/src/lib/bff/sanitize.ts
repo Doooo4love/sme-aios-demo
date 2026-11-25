@@ -26,6 +26,11 @@ const FORBIDDEN_KEY_SET: ReadonlySet<string> = new Set([
 ]);
 
 const SAFE_5XX_CODES: ReadonlySet<string> = new Set([
+  "DOCUMENT_BUSY",
+  "DOCUMENT_TOOLS_UNAVAILABLE",
+  "DOCUMENT_TIMEOUT",
+  "REPORT_BUSY",
+  "REPORT_FORMAT_UNAVAILABLE",
   "STORAGE_UNAVAILABLE",
   "DIRECTORY_UNAVAILABLE",
   "AVATAR_BUSY",
@@ -118,6 +123,12 @@ export function sanitizeCapabilitiesPayload(payload: unknown): Record<string, un
         : [],
     },
     chat_available: Boolean(payload.chat_available),
+    document_processing: payload.document_processing === true,
+    report_formats: Array.isArray(payload.report_formats)
+      ? payload.report_formats.filter(
+          (fmt) => typeof fmt === "string" && ["pdf", "docx", "xlsx", "csv"].includes(fmt),
+        )
+      : [],
   };
 }
 

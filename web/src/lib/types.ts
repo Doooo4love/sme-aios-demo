@@ -10,6 +10,12 @@ export type Grant =
   | "decision.read"
   | "chat.use"
   | "operations.manage"
+  | "agent.web_search"
+  | "agent.calendar_read"
+  | "agent.tasks_read"
+  | "agent.knowledge_read"
+  | "agent.documents_parse"
+  | "agent.report_export"
   | "workbench.access.manage"
   | "workbench.approve.orders"
   | "workbench.approve.shipments"
@@ -47,7 +53,12 @@ export type WorkbenchToolId =
   | "order.draft.prepare"
   | "finance.invoice.read"
   | "mail.inbox.read"
-  | "decision.warehouse.summary";
+  | "decision.warehouse.summary"
+  | "utility.calculate"
+  | "utility.time"
+  | "calendar.agenda.read"
+  | "tasks.submitted.read"
+  | "knowledge.search";
 
 export interface ToolCapability {
   id: WorkbenchToolId | (string & {});
@@ -57,6 +68,8 @@ export interface ToolCapability {
   warehouses: string[];
 }
 
+export type WorkbenchReportFormat = "csv" | "xlsx" | "docx" | "pdf";
+
 export interface Capabilities {
   tools: ToolCapability[];
   order_read_warehouses: string[];
@@ -65,6 +78,8 @@ export interface Capabilities {
     "shipment.reschedule": string[];
   };
   chat_available: boolean;
+  document_processing?: boolean;
+  report_formats?: WorkbenchReportFormat[];
 }
 
 export type ProposalState =
@@ -268,7 +283,7 @@ export interface EmailDraftPayload {
 export interface AssistantMessageResult {
   kind: "message";
   reply: string;
-  mode: "chat" | "workflow_guidance" | "proactive_reminder" | "email_draft" | "public_search";
+  mode: "chat" | "workflow_guidance" | "proactive_reminder" | "email_draft" | "public_search" | "tool_result";
   pending_work: PendingWorkSnapshot | null;
   suggested_actions: SuggestedAction[];
   email_draft: EmailDraftPayload | null;
@@ -493,11 +508,16 @@ export type ModuleAccessId =
   | "dispatch"
   | "invoice-review"
   | "warehouse-insights"
-  | "approvals";
+  | "approvals"
+  | "agent-web"
+  | "agent-collaboration"
+  | "agent-knowledge"
+  | "agent-documents";
 
 export interface ModuleCatalogEntry {
   grants: Grant[];
   roles: Role[] | null;
+  scope?: "warehouse" | "personal";
 }
 
 export interface ModuleAccessCatalog {

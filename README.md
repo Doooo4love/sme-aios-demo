@@ -27,6 +27,10 @@ Every core claim across security, KV cache invariance, FinOps savings, SQLite WA
 
 ## Assistant Work Boundary and Public Web Search
 
+[Office/PDF processing and report export](docs/office-documents-and-reports.zh-CN.md) adds four document inputs and four export formats with independent employee grants.
+
+[Assistant tool and access guide](docs/harness-tools.zh-CN.md) covers calculation, timezone conversion, attachment and CSV checks, and employee-scoped calendar, proposals, and knowledge.
+
 Access Admin follows the same personal-chat policy as other roles. The boundary runs before external tools and model calls. It checks personal intent, explicit business purpose, and short follow-ups against the most recent user turn. Ordinary greetings and tasks such as sourcing PS5 stock for the store can proceed. Personal shopping, leisure, entertainment, wellness, and similar requests enter the existing L1/L2/L3 reminder and escalation flow. Client-provided history can add a reminder. It cannot authorize a tool or clear an explicit policy denial.
 
 | Local regression result | Measurement |
@@ -45,7 +49,7 @@ python -m unittest discover -s tests -p test_public_search.py -v
 
 **Public web search** runs on the assistant gateway after the work-boundary check. An opted-in tenant and an account with `agent.web_search` can use `/web Hong Kong cold chain suppliers` or start a turn with “search the web”. The gateway also applies tenant provider policy and shared tenant rate and FinOps quotas. It sends the bounded query alone to the [DeepSeek Search API](https://api-docs.deepseek.com/api/search/), with results formatted as links and snippets. Attachments, conversation history and known sensitive patterns are excluded. Search snippets stay out of automatic model context. A busy or unavailable provider yields a status message and the request is not retried automatically.
 
-Enable on the assistant API only with `AIOS_WEB_SEARCH_TENANTS` (comma-separated tenant IDs) and a dedicated secret mounted via `AIOS_WEB_SEARCH_API_KEY_FILE` or injected as `AIOS_WEB_SEARCH_API_KEY`. Enable only the approved provider region and public data class. The demo grant is held by `harbour/access-admin`; in OIDC, assign `agent.web_search` per user through the verified `aios_grants` claim. The tool is disabled by default. Set an organization budget and complete a staged provider smoke test before enabling live traffic.
+Enable on the assistant API only with `AIOS_WEB_SEARCH_TENANTS` (comma-separated tenant IDs) and a dedicated secret mounted via `AIOS_WEB_SEARCH_API_KEY_FILE` or injected as `AIOS_WEB_SEARCH_API_KEY`. Enable only the approved provider region and public data class. The demo grant is held by `harbour/access-admin`; in production, administrators can override access per employee. A verified OIDC `aios_grants` claim supplies the baseline if there is no explicit module override. The tool is disabled by default. Set an organization budget and complete a staged provider smoke test before enabling live traffic.
 
 The existing harness handles policies and results. [Pydantic AI](https://ai.pydantic.dev/toolsets/) provides typed toolsets for future multi-tool orchestration. [SearXNG](https://docs.searxng.org/dev/search_api.html) is a self-hosted option with a JSON API and upstream engine operations. The first adapter uses the managed Search API to reuse the current stack and avoid an extra service. The transport tests simulate provider responses.
 

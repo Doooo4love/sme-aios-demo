@@ -31,6 +31,8 @@ import {
 } from "lucide-react";
 import {
   callWorkbenchTool,
+  downloadWorkbenchReport,
+  parseOfficeAttachment,
   generateClientId,
   generateIdempotencyKey,
   getAuthGeneration,
@@ -39,6 +41,7 @@ import {
   parseNaturalLanguageZoomBooking,
   submitWorkbenchTurn,
   type ApiError,
+  type WorkbenchTextAttachment,
 } from "@/lib/api-client";
 import { sortWarehouses } from "@/lib/format";
 import { LOCALE_META, useLocale } from "@/lib/i18n";
@@ -106,6 +109,16 @@ const DEFAULT_AGENT_NAMES = new Set([
   "Personal Agent",
 ]);
 
+const FORM_TOOL_IDS = new Set([
+  "shipment.read", "shipment.reschedule", "order.draft.prepare",
+  "finance.invoice.read", "mail.inbox.read", "decision.warehouse.summary",
+]);
+const ATTACHMENT_COMMAND = /^\/(?:find|csv)(?:\s|$)/i;
+const MAX_ATTACHMENT_BYTES = 256_000;
+const MAX_OFFICE_BYTES = 5_000_000;
+const OFFICE_EXTENSION = /\.(pdf|docx|xlsx|pptx)$/i;
+const REPORT_COMMAND = /^\/report(?:\s|$)/i;
+
 function isZoomMeetingIntent(input: string): boolean {
   const text = input.trim();
   if (!text) return false;
@@ -150,7 +163,9 @@ function summarizeTurnResultForContext(
 ): string | null {
   if (!result) return null;
   if (result.kind === "message") {
-    return result.mode === "public_search" ? null : result.reply.slice(0, 360);
+    return result.mode === "public_search" || result.mode === "tool_result"
+      ? null
+      : result.reply.slice(0, 360);
   }
   if (result.kind === "refusal") {
     return `[refusal:${result.category}] ${result.message.slice(0, 240)}`;
@@ -300,6 +315,64 @@ export function AssistantWorkspace() {
 
   // + Add Context Popover & Modals
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextFile, setContextFile] = useState<WorkbenchTextAttachment | null>(null);
+  const [contextFileError, setContextFileError] = useState<string | null>(null);
+  const [contextFileWarning, setContextFileWarning] = useState(false);
+  const [contextFileLoading, setContextFileLoading] = useState(false);
+  const [reportStatus, setReportStatus] = useState<string | null>(null);
+  const reportBusy = useRef<number | null>(null);
+  const contextFileInput = useRef<HTMLInputElement>(null);
+  const contextFileSelection = useRef(0);
+
+  const handleContextFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    const generation = getAuthGeneration();
+    const selection = ++contextFileSelection.current;
+    setContextFileError(null);
+    setContextFileWarning(false);
+    setContextFile(null);
+    const rich = OFFICE_EXTENSION.test(file.name);
+    setContextFileLoading(rich);
+    try {
+      const limit = rich ? MAX_OFFICE_BYTES : MAX_ATTACHMENT_BYTES;
+      if (file.size === 0 || file.size > limit || file.name.length > 180 ||
+          (!rich && !/\.(txt|md|csv|tsv)$/i.test(file.name))) {
+        throw new Error("Unsupported attachment");
+      }
+      const parsed = rich ? await parseOfficeAttachment(file) : null;
+      const content = parsed?.content ?? new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+      if (!content.trim() || content.includes("\0")) throw new Error("Invalid text attachment");
+      if (generation === getAuthGeneration() && selection === contextFileSelection.current) {
+        setContextFile({ doc_id: generateClientId("attachment"), title: file.name, content });
+        setContextFileWarning(Boolean(parsed?.warnings.length));
+      }
+    } catch (error) {
+      if (generation === getAuthGeneration() && selection === contextFileSelection.current) {
+        const code = isApiError(error) ? error.code : null;
+        const needsText = code === "DOCUMENT_NO_TEXT";
+        setContextFileError(needsText ? tx({
+          "zh-CN": "未提取到文字。扫描件需要启用 OCR。",
+          "zh-HK": "未擷取到文字。掃描檔需要啟用 OCR。",
+          en: "No text could be extracted. Scanned documents require OCR.",
+        }) : rich ? tx({
+          "zh-CN": "无法解析该文件。请检查权限，并选择不超过 5 MB 的未加密 PDF、DOCX、XLSX 或 PPTX。",
+          "zh-HK": "未能解析檔案。請檢查權限，並選擇不超過 5 MB 的未加密 PDF、DOCX、XLSX 或 PPTX。",
+          en: "Could not parse the file. Check access and use an unencrypted PDF, DOCX, XLSX or PPTX up to 5 MB.",
+        }) : tx({
+          "zh-CN": "请选择不超过 256 KB 的 UTF-8 文本、Markdown、CSV 或 TSV 文件。",
+          "zh-HK": "請選擇不超過 256 KB 的 UTF-8 文字、Markdown、CSV 或 TSV 檔案。",
+          en: "Choose a UTF-8 text, Markdown, CSV or TSV file up to 256 KB.",
+        }));
+      }
+    } finally {
+      if (generation === getAuthGeneration() && selection === contextFileSelection.current) {
+        setContextFileLoading(false);
+      }
+    }
+  };
+
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [structuredModalOpen, setStructuredModalOpen] = useState(false);
   const [zoomBarOpen, setZoomBarOpen] = useState(false);
@@ -332,6 +405,13 @@ export function AssistantWorkspace() {
 
   useEffect(() => {
     clearAllPollTimers();
+    contextFileSelection.current += 1;
+    setContextFile(null);
+    setContextFileError(null);
+    setContextFileWarning(false);
+    setContextFileLoading(false);
+    setReportStatus(null);
+    reportBusy.current = null;
     setContextMenuOpen(false);
     setHistoryModalOpen(false);
     setStructuredModalOpen(false);
@@ -352,7 +432,7 @@ export function AssistantWorkspace() {
   }, [clearAllPollTimers]);
 
   const availableTools = useMemo(
-    () => (capabilities?.tools ?? []).filter((tool) => tool.available),
+    () => (capabilities?.tools ?? []).filter((tool) => tool.available && FORM_TOOL_IDS.has(tool.id)),
     [capabilities],
   );
 
@@ -662,12 +742,55 @@ export function AssistantWorkspace() {
     [localizeError, tx],
   );
 
+  const exportReport = useCallback(async (text: string) => {
+    const match = /^\/report\s+([a-z0-9_-]{1,64})\s+(pdf|docx|xlsx|csv)$/i.exec(text);
+    if (!match) {
+      setReportStatus(tx({
+        "zh-CN": "输入 /report mine pdf 导出个人日报，或把 mine 换成仓库编号。支持 PDF、DOCX、XLSX、CSV。",
+        "zh-HK": "輸入 /report mine pdf 匯出個人日報，或把 mine 換成倉庫編號。支援 PDF、DOCX、XLSX、CSV。",
+        en: "Use /report mine pdf for your daily brief, or replace mine with a warehouse ID. Formats: PDF, DOCX, XLSX, CSV.",
+      }));
+      return;
+    }
+    if (reportBusy.current !== null) return;
+    const [, scope, format] = match;
+    if (!scope || !format) return;
+    const generation = getAuthGeneration();
+    reportBusy.current = generation;
+    setReportStatus(tx({ "zh-CN": "正在生成报告…", "zh-HK": "正在產生報告…", en: "Generating report…" }));
+    const warehouse = scope.toLowerCase() === "mine" ? undefined : scope.toUpperCase();
+    try {
+      const blob = await downloadWorkbenchReport(format.toLowerCase(), locale, warehouse);
+      if (generation !== getAuthGeneration()) return;
+      if (!blob) throw new Error("Unavailable report");
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = (warehouse ? `warehouse-${warehouse}` : "personal-brief") + "." + format.toLowerCase();
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      setReportStatus(tx({ "zh-CN": "报告已准备，下载已开始。", "zh-HK": "報告已就緒，已開始下載。", en: "Report ready. Download started." }));
+    } catch (error) {
+      if (generation !== getAuthGeneration()) return;
+      const forbidden = isApiError(error) && error.status === 403;
+      setReportStatus(forbidden
+        ? tx({ "zh-CN": "当前账号没有导出此报告的权限。", "zh-HK": "目前帳戶沒有匯出此報告的權限。", en: "Your account cannot export this report." })
+        : tx({ "zh-CN": "报告暂不可下载。请检查格式或稍后再试。", "zh-HK": "報告暫時無法下載。請檢查格式或稍後再試。", en: "Report unavailable. Check the format or try again shortly." }));
+    } finally {
+      if (reportBusy.current === generation) reportBusy.current = null;
+    }
+  }, [locale, tx]);
+
   const executeTurn = useCallback(
     async (text: string, existingEntry?: { id: string; clientId: string }) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
       if (!existingEntry) {
+        if (REPORT_COMMAND.test(trimmed)) {
+          await exportReport(trimmed);
+          return;
+        }
         if (/^\/memory\s+(?:edit|open|settings)\s*$/i.test(trimmed)) {
           router.push("/settings/memory");
           return;
@@ -677,7 +800,7 @@ export function AssistantWorkspace() {
           await executeZoomBookingParse(meetingSlashMatch[1].trim());
           return;
         }
-        if (isZoomMeetingIntent(trimmed)) {
+        if (!trimmed.startsWith("/") && isZoomMeetingIntent(trimmed)) {
           await executeZoomBookingParse(trimmed);
           return;
         }
@@ -723,6 +846,7 @@ export function AssistantWorkspace() {
         const result = await submitWorkbenchTurn(trimmed, clientId, {
           locale,
           conversationContext,
+          activeDocument: ATTACHMENT_COMMAND.test(trimmed) ? contextFile ?? undefined : undefined,
         });
         if (startGen !== getAuthGeneration()) return;
         const nowSec = Math.floor(Date.now() / 1000);
@@ -820,6 +944,8 @@ export function AssistantWorkspace() {
     },
     [
       clearSelectedObject,
+      contextFile,
+      exportReport,
       executeZoomBookingParse,
       handleAccessChanged,
       loadHistory,
@@ -2080,6 +2206,41 @@ export function AssistantWorkspace() {
               />
             </div>
 
+            <input
+              ref={contextFileInput} type="file" hidden onChange={handleContextFile}
+              accept={capabilities?.document_processing ? ".txt,.md,.csv,.tsv,.pdf,.docx,.xlsx,.pptx" : ".txt,.md,.csv,.tsv"}
+            />
+            {contextFileLoading && (
+              <p className="px-4 pb-1 text-[12px] text-[var(--ink-muted)]" role="status">
+                {tx({ "zh-CN": "正在提取文档文字…", "zh-HK": "正在擷取文件文字…", en: "Extracting document text…" })}
+              </p>
+            )}
+            {contextFileError && <p className="px-4 pb-1 text-[12px] text-[var(--ink-muted)]" role="alert">{contextFileError}</p>}
+            {contextFileWarning && (
+              <p className="px-4 pb-1 text-[12px] text-[var(--ink-muted)]" role="status">
+                {tx({ "zh-CN": "请核对原文。无文本页、超限内容或未缓存公式值可能未提取。", "zh-HK": "請核對原文。無文字頁、超限內容或未快取公式值可能未擷取。", en: "Check the original. Blank text layers, extraction limits or uncached formulas may omit content." })}
+              </p>
+            )}
+            {reportStatus && <p className="px-4 pb-1 text-[12px] text-[var(--ink-muted)]" role="status">{reportStatus}</p>}
+            {contextFile && (
+              <div className="flex min-w-0 items-center gap-2 px-4 pb-1 text-[12px] text-[var(--ink-muted)]">
+                <span className="max-w-[65%] truncate">{contextFile.title}</span>
+                <span className="shrink-0 font-mono-code">{/\.(csv|tsv)$/i.test(contextFile.title) ? "/find · /csv" : "/find"}</span>
+                <button
+                  type="button"
+                  aria-label={tx({ "zh-CN": "移除附件", "zh-HK": "移除附件", en: "Remove attachment" })}
+                  className="rounded-full p-1 hover:bg-[var(--bg-hover)]"
+                  onClick={() => {
+                    contextFileSelection.current += 1;
+                    setContextFile(null);
+                    setContextFileWarning(false);
+                  }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-0.5">
               <Popover.Root
                 open={contextMenuOpen}
@@ -2135,6 +2296,35 @@ export function AssistantWorkspace() {
                         </Link>
                       )}
 
+                      <button
+                        type="button"
+                        data-testid="context-menu-attachment"
+                        onClick={() => {
+                          setContextMenuOpen(false);
+                          contextFileInput.current?.click();
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left text-[13px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                      >
+                        <FilePlus2 className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.85} />
+                        <span>{capabilities?.document_processing
+                          ? tx({ "zh-CN": "选择文档或表格", "zh-HK": "選擇文件或表格", en: "Choose a document or table" })
+                          : tx({ "zh-CN": "选择文本或表格", "zh-HK": "選擇文字或表格", en: "Choose a text file or table" })}</span>
+                      </button>
+
+                      {Boolean(capabilities?.report_formats?.length) && (
+                        <button
+                          type="button"
+                          data-testid="context-menu-report"
+                          onClick={() => {
+                            setContextMenuOpen(false);
+                            updateComposer(`/report mine ${capabilities?.report_formats?.includes("pdf") ? "pdf" : "xlsx"}`);
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left text-[13px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                        >
+                          <FilePlus2 className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.85} />
+                          <span>{tx({ "zh-CN": "导出工作报告", "zh-HK": "匯出工作報告", en: "Export work report" })}</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         data-testid="context-menu-brief"

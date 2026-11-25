@@ -7,7 +7,7 @@ from pydantic import Field
 from .assurance_policy import Case
 from .contracts import Actor, Strict
 from .providers import https_base, post_json
-from .workbench_tools import DecisionRecord, InboxRecord, InvoiceRecord
+from .workbench_tools import DecisionRecord, InboxRecord, InvoiceRecord, KnowledgeRecord
 
 
 class DirectoryUnavailable(ConnectionError):
@@ -20,10 +20,11 @@ class DirectoryEntry(Strict):
 
 
 class WorkspaceSource:
-    def __init__(self, origin: str, token: str, tenant: str):
+    def __init__(self, origin: str, token: str, tenant: str, *, knowledge_enabled: bool = False):
         self.origin = https_base(origin)
         self.headers = {"Authorization": "Bearer " + token}
         self.tenant = tenant
+        self.knowledge_enabled = knowledge_enabled
 
     def read(self, resource, tenant, **parameters):
         if tenant != self.tenant:
@@ -42,7 +43,7 @@ class WorkspaceSource:
             employee = DirectoryEntry.model_validate(item)
         except (HTTPError, ValueError, OSError) as error:
             raise DirectoryUnavailable from error
-        actor = employee.actor.model_copy(update={"module_scopes": {}})
+        actor = employee.actor.model_copy(update={"module_scopes": {}, "personal_module_grants": {}})
         return actor if employee.active and (actor.tenant, actor.subject) == (tenant, subject) else None
 
     def known_subject(self, tenant, subject):
@@ -60,6 +61,11 @@ class WorkspaceSource:
     def summary(self, actor, call):
         item = self.read("warehouse-summary", actor.tenant, subject=actor.subject, warehouse=call.warehouse)
         return DecisionRecord.model_validate(item) if item is not None else None
+
+    def knowledge(self, actor, call):
+        item = self.read("knowledge-search", actor.tenant, subject=actor.subject,
+                         warehouse=call.warehouse, query=call.query, limit=call.limit)
+        return KnowledgeRecord.model_validate(item)
 
     def cases(self, tenant, sites, kind, after, limit):
         if not sites:

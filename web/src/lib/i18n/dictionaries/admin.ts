@@ -285,6 +285,42 @@ export const MODULE_ACCESS_META_I18N: Readonly<
       en: "View open shipment counts and operational summary snapshots per warehouse.",
     },
   },
+  "agent-web": {
+    index: "06",
+    title: { "zh-CN": "Agent 公开搜索", "zh-HK": "Agent 公開搜尋", en: "Agent web search" },
+    description: {
+      "zh-CN": "允许员工通过 Agent 查询公开业务资料。",
+      "zh-HK": "允許員工透過 Agent 搜尋公開業務資料。",
+      en: "Allow the employee to search public business sources.",
+    },
+  },
+  "agent-collaboration": {
+    index: "07",
+    title: { "zh-CN": "Agent 协作读取", "zh-HK": "Agent 協作讀取", en: "Agent collaboration" },
+    description: {
+      "zh-CN": "分别开放员工本人日历和已提交提案。",
+      "zh-HK": "分別開放員工自己的行事曆及已提交提案。",
+      en: "Give the Agent separate access to the employee's calendar and submitted proposals.",
+    },
+  },
+  "agent-knowledge": {
+    index: "08",
+    title: { "zh-CN": "Agent 内部知识", "zh-HK": "Agent 內部知識", en: "Agent internal knowledge" },
+    description: {
+      "zh-CN": "查询被授权仓库的企业知识来源与摘录。",
+      "zh-HK": "搜尋獲授權倉庫的企業知識來源及摘錄。",
+      en: "Read cited knowledge excerpts within authorized warehouses.",
+    },
+  },
+  "agent-documents": {
+    index: "09",
+    title: { "zh-CN": "Agent 文档与报告", "zh-HK": "Agent 文件與報告", en: "Agent documents & reports" },
+    description: {
+      "zh-CN": "分别开放 Office/PDF 附件解析与工作报告下载。",
+      "zh-HK": "分別開放 Office/PDF 附件解析與工作報告下載。",
+      en: "Grant Office/PDF attachment parsing and report downloads independently.",
+    },
+  },
   approvals: {
     index: "05",
     title: { "zh-CN": "审批", "zh-HK": "審批", en: "Approvals" },
@@ -329,6 +365,12 @@ export const GRANT_LABELS_I18N: Readonly<
     "zh-HK": "讀取倉庫營運摘要",
     en: "Read warehouse insights",
   },
+  "agent.web_search": { "zh-CN": "查询公开网页", "zh-HK": "搜尋公開網頁", en: "Search the public web" },
+  "agent.calendar_read": { "zh-CN": "读取本人日历", "zh-HK": "讀取本人行事曆", en: "Read own calendar" },
+  "agent.tasks_read": { "zh-CN": "读取本人已提交提案", "zh-HK": "讀取本人已提交提案", en: "Read own submitted proposals" },
+  "agent.documents_parse": { "zh-CN": "解析 Office/PDF", "zh-HK": "解析 Office/PDF", en: "Parse Office/PDF" },
+  "agent.report_export": { "zh-CN": "下载工作报告", "zh-HK": "下載工作報告", en: "Download work reports" },
+  "agent.knowledge_read": { "zh-CN": "读取仓库知识库", "zh-HK": "讀取倉庫知識庫", en: "Search warehouse knowledge" },
   "workbench.approve.orders": {
     "zh-CN": "审批销售订单草稿",
     "zh-HK": "審批銷售訂單草稿",
