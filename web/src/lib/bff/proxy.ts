@@ -12,9 +12,17 @@ import {
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const MAX_PROXY_BODY_BYTES = 8_500_000;
+const DOCUMENT_PARSE_PATH = "/v1/workbench/documents/parse";
+const REPORT_EXPORT_PATH = "/v1/workbench/reports/export";
+const REPORT_MEDIA_TYPES = new Set([
+  "text/csv", "application/pdf",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
 const SSE_UPSTREAM_PATH = "/v1/workbench/events/stream";
 const LONG_UPSTREAM_PATHS = new Set([
   "/v1/workbench/turns",
+  DOCUMENT_PARSE_PATH,
   "/v1/memory/tidy",
 ]);
 const LONG_UPSTREAM_TIMEOUT_MS = 65_000;
@@ -31,6 +39,8 @@ const ALLOWED_V1_PATTERNS: readonly RegExp[] = [
   /^\/v1\/workbench\/approvals$/,
   /^\/v1\/workbench\/calls$/,
   /^\/v1\/workbench\/turns$/,
+  /^\/v1\/workbench\/documents\/parse$/,
+  /^\/v1\/workbench\/reports\/export$/,
   /^\/v1\/workbench\/history$/,
   /^\/v1\/workbench\/history\/[^/]+$/,
   /^\/v1\/workbench\/module-access\/catalog$/,
@@ -199,6 +209,34 @@ function copyCommonMetadataHeaders(
   outgoingHeaders.set("Cache-Control", "no-store");
 }
 
+async function boundedDocumentBody(request: Request, limit: number): Promise<ArrayBuffer | null> {
+  const reader = request.body?.getReader();
+  if (!reader) return new ArrayBuffer(0);
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > limit) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const joined = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return joined.buffer;
+}
+
 export async function proxyToAios(
   req: Request,
   normalizedPath: string,
@@ -270,10 +308,11 @@ export async function proxyToAios(
 
   let bodyBuffer: ArrayBuffer | undefined;
   if (!SAFE_METHODS.has(method)) {
+    const bodyLimit = normalizedPath === DOCUMENT_PARSE_PATH ? 5_000_000 : MAX_PROXY_BODY_BYTES;
     const contentLengthHeader = req.headers.get("content-length");
     if (contentLengthHeader) {
       const parsedLen = Number.parseInt(contentLengthHeader, 10);
-      if (Number.isFinite(parsedLen) && parsedLen > MAX_PROXY_BODY_BYTES) {
+      if (Number.isFinite(parsedLen) && parsedLen > bodyLimit) {
         return new Response(
           JSON.stringify({
             detail: {
@@ -293,8 +332,10 @@ export async function proxyToAios(
         );
       }
     }
-    const raw = await req.arrayBuffer();
-    if (raw.byteLength > MAX_PROXY_BODY_BYTES) {
+    const raw = normalizedPath === DOCUMENT_PARSE_PATH
+      ? await boundedDocumentBody(req, bodyLimit)
+      : await req.arrayBuffer();
+    if (raw === null || raw.byteLength > bodyLimit) {
       return new Response(
         JSON.stringify({
           detail: {
@@ -395,6 +436,20 @@ export async function proxyToAios(
         status: upstreamRes.status,
         headers: outgoingHeaders,
       });
+    }
+
+    if (upstreamRes.ok && normalizedPath === REPORT_EXPORT_PATH) {
+      const mediaType = upstreamContentType.split(";", 1)[0] ?? "";
+      const disposition = upstreamRes.headers.get("content-disposition") ?? "";
+      if (!REPORT_MEDIA_TYPES.has(mediaType) ||
+          !/^attachment; filename="[a-z0-9.-]{1,90}"$/.test(disposition)) {
+        return new Response(null, { status: 502, headers: outgoingHeaders });
+      }
+      binaryBytes = await upstreamRes.arrayBuffer();
+      outgoingHeaders.set("Content-Type", upstreamContentType);
+      outgoingHeaders.set("Content-Disposition", disposition);
+      outgoingHeaders.set("X-Content-Type-Options", "nosniff");
+      return new Response(binaryBytes, { status: upstreamRes.status, headers: outgoingHeaders });
     }
 
     // Binary image / octet-stream passthrough (avatars, etc.)
