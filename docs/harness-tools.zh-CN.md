@@ -50,7 +50,7 @@
 | [Temporal](https://docs.temporal.io/durable-execution) | 适合跨进程暂停和恢复的批处理长任务。写入活动仍需幂等键，普通读取继续走同步接口。 |
 | [OpenTelemetry](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/execute-tool.md) | 可追踪工具名、时延与结果码。输入内容、查询和文档摘录应排除在默认追踪属性外。 |
 
-尚需集成真实企业知识索引、云端 Office/PDF 转换、受控报告导出，以及客户指定的 CRM、工单或共享盘。每个连接器都需明确权限映射与沙盒验收。
+尚需集成真实企业知识索引、复杂版面的高保真转换，以及客户指定的 CRM、工单或共享盘。每个连接器都需明确权限映射与沙盒验收。
 
 ## 验证
 
