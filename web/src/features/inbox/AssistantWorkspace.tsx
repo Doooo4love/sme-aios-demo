@@ -39,6 +39,7 @@ import {
   parseNaturalLanguageZoomBooking,
   submitWorkbenchTurn,
   type ApiError,
+  type WorkbenchTextAttachment,
 } from "@/lib/api-client";
 import { sortWarehouses } from "@/lib/format";
 import { LOCALE_META, useLocale } from "@/lib/i18n";
@@ -106,6 +107,13 @@ const DEFAULT_AGENT_NAMES = new Set([
   "Personal Agent",
 ]);
 
+const FORM_TOOL_IDS = new Set([
+  "shipment.read", "shipment.reschedule", "order.draft.prepare",
+  "finance.invoice.read", "mail.inbox.read", "decision.warehouse.summary",
+]);
+const ATTACHMENT_COMMAND = /^\/(?:find|csv)(?:\s|$)/i;
+const MAX_ATTACHMENT_BYTES = 256_000;
+
 function isZoomMeetingIntent(input: string): boolean {
   const text = input.trim();
   if (!text) return false;
@@ -150,7 +158,9 @@ function summarizeTurnResultForContext(
 ): string | null {
   if (!result) return null;
   if (result.kind === "message") {
-    return result.mode === "public_search" ? null : result.reply.slice(0, 360);
+    return result.mode === "public_search" || result.mode === "tool_result"
+      ? null
+      : result.reply.slice(0, 360);
   }
   if (result.kind === "refusal") {
     return `[refusal:${result.category}] ${result.message.slice(0, 240)}`;
@@ -300,6 +310,34 @@ export function AssistantWorkspace() {
 
   // + Add Context Popover & Modals
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextFile, setContextFile] = useState<WorkbenchTextAttachment | null>(null);
+  const [contextFileError, setContextFileError] = useState(false);
+  const contextFileInput = useRef<HTMLInputElement>(null);
+  const contextFileSelection = useRef(0);
+
+  const handleContextFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    const generation = getAuthGeneration();
+    const selection = ++contextFileSelection.current;
+    setContextFileError(false);
+    setContextFile(null);
+    try {
+      if (file.size === 0 || file.size > MAX_ATTACHMENT_BYTES || !/\.(txt|md|csv|tsv)$/i.test(file.name)) {
+        throw new Error("Unsupported attachment");
+      }
+      const content = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+      if (!content.trim() || content.includes("\0")) throw new Error("Invalid text attachment");
+      if (generation === getAuthGeneration() && selection === contextFileSelection.current) {
+        setContextFile({ doc_id: generateClientId("attachment"), title: file.name.slice(-240), content });
+      }
+    } catch {
+      if (generation === getAuthGeneration() && selection === contextFileSelection.current) {
+        setContextFileError(true);
+      }
+    }
+  };
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [structuredModalOpen, setStructuredModalOpen] = useState(false);
   const [zoomBarOpen, setZoomBarOpen] = useState(false);
@@ -332,6 +370,9 @@ export function AssistantWorkspace() {
 
   useEffect(() => {
     clearAllPollTimers();
+    contextFileSelection.current += 1;
+    setContextFile(null);
+    setContextFileError(false);
     setContextMenuOpen(false);
     setHistoryModalOpen(false);
     setStructuredModalOpen(false);
@@ -352,7 +393,7 @@ export function AssistantWorkspace() {
   }, [clearAllPollTimers]);
 
   const availableTools = useMemo(
-    () => (capabilities?.tools ?? []).filter((tool) => tool.available),
+    () => (capabilities?.tools ?? []).filter((tool) => tool.available && FORM_TOOL_IDS.has(tool.id)),
     [capabilities],
   );
 
@@ -677,7 +718,7 @@ export function AssistantWorkspace() {
           await executeZoomBookingParse(meetingSlashMatch[1].trim());
           return;
         }
-        if (isZoomMeetingIntent(trimmed)) {
+        if (!trimmed.startsWith("/") && isZoomMeetingIntent(trimmed)) {
           await executeZoomBookingParse(trimmed);
           return;
         }
@@ -723,6 +764,7 @@ export function AssistantWorkspace() {
         const result = await submitWorkbenchTurn(trimmed, clientId, {
           locale,
           conversationContext,
+          activeDocument: ATTACHMENT_COMMAND.test(trimmed) ? contextFile ?? undefined : undefined,
         });
         if (startGen !== getAuthGeneration()) return;
         const nowSec = Math.floor(Date.now() / 1000);
@@ -820,6 +862,7 @@ export function AssistantWorkspace() {
     },
     [
       clearSelectedObject,
+      contextFile,
       executeZoomBookingParse,
       handleAccessChanged,
       loadHistory,
@@ -2080,6 +2123,34 @@ export function AssistantWorkspace() {
               />
             </div>
 
+            <input ref={contextFileInput} type="file" accept=".txt,.md,.csv,.tsv" hidden onChange={handleContextFile} />
+            {contextFileError && (
+              <p className="px-4 pb-1 text-[12px] text-[var(--ink-muted)]" role="alert">
+                {tx({
+                  "zh-CN": "请选择不超过 256 KB 的 UTF-8 文本、Markdown、CSV 或 TSV 文件。",
+                  "zh-HK": "請選擇不超過 256 KB 的 UTF-8 文字、Markdown、CSV 或 TSV 檔案。",
+                  en: "Choose a UTF-8 text, Markdown, CSV or TSV file up to 256 KB.",
+                })}
+              </p>
+            )}
+            {contextFile && (
+              <div className="flex min-w-0 items-center gap-2 px-4 pb-1 text-[12px] text-[var(--ink-muted)]">
+                <span className="max-w-[65%] truncate">{contextFile.title}</span>
+                <span className="shrink-0 font-mono-code">/find · /csv</span>
+                <button
+                  type="button"
+                  aria-label={tx({ "zh-CN": "移除附件", "zh-HK": "移除附件", en: "Remove attachment" })}
+                  className="rounded-full p-1 hover:bg-[var(--bg-hover)]"
+                  onClick={() => {
+                    contextFileSelection.current += 1;
+                    setContextFile(null);
+                  }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-0.5">
               <Popover.Root
                 open={contextMenuOpen}
@@ -2134,6 +2205,19 @@ export function AssistantWorkspace() {
                           </span>
                         </Link>
                       )}
+
+                      <button
+                        type="button"
+                        data-testid="context-menu-attachment"
+                        onClick={() => {
+                          setContextMenuOpen(false);
+                          contextFileInput.current?.click();
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left text-[13px] font-medium text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                      >
+                        <FilePlus2 className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.85} />
+                        <span>{tx({ "zh-CN": "选择文本或表格", "zh-HK": "選擇文字或表格", en: "Choose a text file or table" })}</span>
+                      </button>
 
                       <button
                         type="button"
