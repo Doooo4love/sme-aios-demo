@@ -467,3 +467,8 @@ CREATE POLICY aios_tenant_provider_policy_tenant ON aios_tenant_provider_policy 
     WITH CHECK (tenant = current_setting('aios.tenant', true));
 REVOKE ALL ON aios_tenant_provider_policy FROM PUBLIC, aios_api, aios_worker;
 GRANT SELECT, INSERT, UPDATE ON aios_tenant_provider_policy TO aios_api;
+
+-- Allow read-only Alembic revision inspection by aios_api for /v1/operations/system-health.
+CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(64) NOT NULL PRIMARY KEY);
+REVOKE ALL ON alembic_version FROM PUBLIC, aios_api, aios_worker;
+GRANT SELECT ON alembic_version TO aios_api;
